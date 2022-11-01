@@ -2,6 +2,7 @@ mod camera;
 mod state;
 mod texture;
 mod vertex;
+mod renderer;
 
 use crate::state::State;
 
@@ -27,6 +28,8 @@ pub async fn run() {
         .with_inner_size(winit::dpi::PhysicalSize::new(1600, 900))
         .build(&event_loop)
         .unwrap();
+
+    window.set_cursor_visible(false);
 
     let mut state = State::new(&window).await; // NEW!
     let mut last_render_time = instant::Instant::now();
@@ -72,7 +75,7 @@ pub async fn run() {
                 let now = instant::Instant::now();
                 let dt = now - last_render_time;
                 last_render_time = now;
-                state.update(dt);
+                state.update(dt, &window);
                 match state.render() {
                     Ok(_) => {}
                     // Reconfigure the surface if it's lost or outdated

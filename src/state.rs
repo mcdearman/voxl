@@ -193,10 +193,10 @@ impl State {
             source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
         });
 
-        let camera = camera::Camera::new((0.0, 5.0, 10.0), cgmath::Deg(0.0), cgmath::Deg(-20.0));
+        let camera = camera::Camera::new((-5.0, 5.0, 10.0), cgmath::Deg(0.0), cgmath::Deg(-20.0));
         let projection =
             camera::Projection::new(config.width, config.height, cgmath::Deg(45.0), 0.1, 100.0);
-        let camera_controller = camera::CameraController::new(4.0, 2.0);
+        let camera_controller = camera::CameraController::new(10.0, 1.0);
 
         let mut camera_uniform = CameraUniform::new();
         camera_uniform.update_view_proj(&camera, &projection);
@@ -401,8 +401,8 @@ impl State {
         }
     }
 
-    pub fn update(&mut self, dt: instant::Duration) {
-        self.camera_controller.update_camera(&mut self.camera, dt);
+    pub fn update(&mut self, dt: instant::Duration, window: &Window) {
+        self.camera_controller.update_camera(&mut self.camera, dt, window);
         self.camera_uniform
             .update_view_proj(&self.camera, &self.projection);
         self.queue.write_buffer(
