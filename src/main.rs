@@ -25,7 +25,7 @@ pub async fn run() {
     let title = env!("CARGO_PKG_NAME");
     let window = winit::window::WindowBuilder::new()
         .with_title(title)
-        .with_inner_size(winit::dpi::PhysicalSize::new(1600, 900))
+        .with_inner_size(winit::dpi::LogicalSize::new(800, 450))
         .build(&event_loop)
         .unwrap();
 
