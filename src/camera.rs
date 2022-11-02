@@ -41,7 +41,7 @@ impl Camera {
             self.position,
             Vector3::new(cos_pitch * sin_yaw, sin_pitch, -cos_pitch * cos_yaw).normalize(),
             Vector3::unit_y(),
-        ) 
+        )
     }
 }
 
@@ -172,7 +172,7 @@ impl CameraController {
         };
     }
 
-    pub fn update_camera(&mut self, camera: &mut Camera, dt: Duration, window: &winit::window::Window) {
+    pub fn update_camera(&mut self, camera: &mut Camera, dt: Duration) {
         let dt = dt.as_secs_f32();
 
         // Move forward/backward and left/right
@@ -199,10 +199,6 @@ impl CameraController {
         // Rotate
         camera.yaw += Rad(self.rotate_horizontal) * self.sensitivity * dt;
         camera.pitch += Rad(-self.rotate_vertical) * self.sensitivity * dt;
-        let size = window.inner_size();
-        let width = size.width;
-        let height = size.height;
-        window.set_cursor_position(winit::dpi::PhysicalPosition::new(width / 2, height / 2));
 
         // If process_mouse isn't called every frame, these values
         // will not get set to zero, and the camera will rotate
@@ -218,4 +214,3 @@ impl CameraController {
         }
     }
 }
-

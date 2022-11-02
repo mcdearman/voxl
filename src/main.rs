@@ -1,8 +1,8 @@
 mod camera;
+mod renderer;
 mod state;
 mod texture;
 mod vertex;
-mod renderer;
 
 use crate::state::State;
 
@@ -30,6 +30,9 @@ pub async fn run() {
         .unwrap();
 
     window.set_cursor_visible(false);
+    window
+        .set_cursor_grab(winit::window::CursorGrabMode::Confined)
+        .expect("failed to set cursor grab mode");
 
     let mut state = State::new(&window).await; // NEW!
     let mut last_render_time = instant::Instant::now();
@@ -75,7 +78,7 @@ pub async fn run() {
                 let now = instant::Instant::now();
                 let dt = now - last_render_time;
                 last_render_time = now;
-                state.update(dt, &window);
+                state.update(dt);
                 match state.render() {
                     Ok(_) => {}
                     // Reconfigure the surface if it's lost or outdated
