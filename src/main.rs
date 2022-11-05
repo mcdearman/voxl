@@ -1,10 +1,9 @@
 mod camera;
 mod renderer;
-mod state;
 mod texture;
 mod vertex;
 
-use crate::state::State;
+use crate::renderer::Renderer;
 
 use winit::{
     event::*,
@@ -34,7 +33,7 @@ pub async fn run() {
         .set_cursor_grab(winit::window::CursorGrabMode::Confined)
         .expect("failed to set cursor grab mode");
 
-    let mut state = State::new(&window).await; // NEW!
+    let mut render_state = Renderer::new(&window).await; // NEW!
     let mut last_render_time = instant::Instant::now();
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Poll;
@@ -44,14 +43,14 @@ pub async fn run() {
             Event::DeviceEvent {
                 event: DeviceEvent::MouseMotion{ delta, },
                 .. // We're not using device_id currently
-            } => if state.mouse_pressed {
-                state.camera_controller.process_mouse(delta.0, delta.1)
+            } => if render_state.mouse_pressed {
+                render_state.camera_controller.process_mouse(delta.0, delta.1)
             }
             // UPDATED!
             Event::WindowEvent {
                 ref event,
                 window_id,
-            } if window_id == window.id() && !state.input(event) => {
+            } if window_id == window.id() && !render_state.input(event) => {
                 match event {
                     #[cfg(not(target_arch="wasm32"))]
                     WindowEvent::CloseRequested
@@ -65,10 +64,10 @@ pub async fn run() {
                         ..
                     } => *control_flow = ControlFlow::Exit,
                     WindowEvent::Resized(physical_size) => {
-                        state.resize(*physical_size);
+                        render_state.resize(*physical_size);
                     }
                     WindowEvent::ScaleFactorChanged { new_inner_size, .. } => {
-                        state.resize(**new_inner_size);
+                        render_state.resize(**new_inner_size);
                     }
                     _ => {}
                 }
@@ -78,11 +77,11 @@ pub async fn run() {
                 let now = instant::Instant::now();
                 let dt = now - last_render_time;
                 last_render_time = now;
-                state.update(dt);
-                match state.render() {
+                render_state.update(dt);
+                match render_state.render() {
                     Ok(_) => {}
                     // Reconfigure the surface if it's lost or outdated
-                    Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => state.resize(state.size),
+                    Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => render_state.resize(render_state.size),
                     // The system is out of memory, we should probably quit
                     Err(wgpu::SurfaceError::OutOfMemory) => *control_flow = ControlFlow::Exit,
                     // We're ignoring timeouts
