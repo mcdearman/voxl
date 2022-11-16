@@ -1,18 +1,13 @@
-use crate::{
-    camera::{self, Camera, CameraController, CameraUniform, Projection},
+use crate::gfx::render::{
+    camera,
+    camera::{Camera, CameraController, CameraUniform, Projection},
     texture::Texture,
+    vertex::{create_vertices, Vertex},
 };
-
 use cgmath::prelude::*;
 use std::iter;
 use wgpu::util::DeviceExt;
-use winit::{
-    event::*,
-    event_loop::{ControlFlow, EventLoop},
-    window::{Window, WindowBuilder},
-};
-
-use crate::vertex::*;
+use winit::{event::*, window::Window};
 
 struct Instance {
     position: cgmath::Vector3<f32>,
@@ -144,7 +139,7 @@ impl Renderer {
         surface.configure(&device, &config);
 
         surface.configure(&device, &config);
-        let diffuse_bytes = include_bytes!("atlas.png");
+        let diffuse_bytes = include_bytes!("../../../res/textures/atlas.png");
         let diffuse_texture =
             Texture::from_bytes(&device, &queue, diffuse_bytes, "atlas.png").unwrap();
 
@@ -190,7 +185,7 @@ impl Renderer {
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(include_str!("../../../res/shaders/voxel.wgsl").into()),
         });
 
         let camera = camera::Camera::new((-5.0, 5.0, 10.0), cgmath::Deg(0.0), cgmath::Deg(-20.0));
@@ -273,7 +268,7 @@ impl Renderer {
                 format: Texture::DEPTH_FORMAT,
                 depth_write_enabled: true,
                 depth_compare: wgpu::CompareFunction::Less, // 1.
-                stencil: wgpu::StencilState::default(), // 2.
+                stencil: wgpu::StencilState::default(),     // 2.
                 bias: wgpu::DepthBiasState::default(),
             }),
             multisample: wgpu::MultisampleState {
@@ -369,7 +364,8 @@ impl Renderer {
             self.config.height = new_size.height;
             self.projection.resize(new_size.width, new_size.height);
             self.surface.configure(&self.device, &self.config);
-            self.depth_texture = Texture::create_depth_texture(&self.device, &self.config, "depth_texture");
+            self.depth_texture =
+                Texture::create_depth_texture(&self.device, &self.config, "depth_texture");
         }
     }
 

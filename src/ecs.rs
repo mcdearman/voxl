@@ -1,8 +1,4 @@
-pub enum Entity {
-    Voxel(u64),
-    Chunk(Vec<Voxel>)
-}
-
-pub struct World {
-    entities: Vec<Entity>,
-}
+mod ecs;
+mod entity;
+mod chunk;
+mod voxel;
