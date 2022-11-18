@@ -1,4 +1,4 @@
-mod ecs;
-mod entity;
-mod chunk;
-mod voxel;
+pub mod ecs;
+pub mod entity;
+pub mod chunk;
+pub mod voxel;
