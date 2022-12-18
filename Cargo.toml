@@ -17,7 +17,7 @@ instant = "0.1"
 cfg-if = "1"
 anyhow = "1.0"
 etagere = "0.2.7"
-hecs = "0.9.0"
+bevy = "0.9.0"
 
 [dependencies.image]
 version = "0.24"
