@@ -105,7 +105,9 @@ impl Renderer {
     pub async fn new(window: &Window) -> Self {
         let size = window.inner_size();
 
+        // let instance = wgpu::Instance::default();
         let instance = wgpu::Instance::new(wgpu::Backends::all());
+        // let surface = unsafe { instance.create_surface(window) }.expect("surface couldn't be created");
         let surface = unsafe { instance.create_surface(window) };
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
@@ -128,6 +130,9 @@ impl Renderer {
             .await
             .unwrap();
 
+        // let swapchain_capabilities = surface.get_capabilities(&adapter);
+        // let swapchain_format = swapchain_capabilities.formats[0];
+
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format: surface.get_supported_formats(&adapter)[0],
@@ -135,6 +140,7 @@ impl Renderer {
             height: size.height,
             present_mode: wgpu::PresentMode::Fifo,
             alpha_mode: wgpu::CompositeAlphaMode::Auto,
+            // view_formats: vec![],
         };
         surface.configure(&device, &config);
 
@@ -185,7 +191,9 @@ impl Renderer {
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../../../res/shaders/voxel.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(
+                include_str!("../../../res/shaders/voxel.wgsl").into(),
+            ),
         });
 
         let camera = camera::Camera::new((-5.0, 5.0, 10.0), cgmath::Deg(0.0), cgmath::Deg(-20.0));
@@ -267,14 +275,14 @@ impl Renderer {
             depth_stencil: Some(wgpu::DepthStencilState {
                 format: Texture::DEPTH_FORMAT,
                 depth_write_enabled: true,
-                depth_compare: wgpu::CompareFunction::Less, 
-                stencil: wgpu::StencilState::default(),     
+                depth_compare: wgpu::CompareFunction::Less,
+                stencil: wgpu::StencilState::default(),
                 bias: wgpu::DepthBiasState::default(),
             }),
             multisample: wgpu::MultisampleState {
-                count: 1,                         
-                mask: !0,                         
-                alpha_to_coverage_enabled: false, 
+                count: 1,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
             },
             multiview: None,
         });
