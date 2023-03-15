@@ -7,5 +7,4 @@ use crate::ecs::entity::Entity;
 
 pub struct ECS {
     entities: Vec<Entity>,
-    
 }

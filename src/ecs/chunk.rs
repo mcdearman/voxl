@@ -1,5 +1,5 @@
 use super::voxel::Voxel;
 
 pub struct Chunk {
-    voxels: Vec<Voxel>
+    voxels: Vec<Voxel>,
 }

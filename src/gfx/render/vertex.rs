@@ -17,7 +17,8 @@ impl Vertex {
 
     pub fn desc<'a>() -> wgpu::VertexBufferLayout<'a> {
         use std::mem;
-        const ATTRIBUTE_LAYOUT: &'static [wgpu::VertexAttribute] = &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x2, 2 => Sint32];
+        const ATTRIBUTE_LAYOUT: &'static [wgpu::VertexAttribute] =
+            &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x2, 2 => Sint32];
         wgpu::VertexBufferLayout {
             array_stride: mem::size_of::<Vertex>() as wgpu::BufferAddress,
             step_mode: wgpu::VertexStepMode::Vertex,
