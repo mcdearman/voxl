@@ -27,9 +27,10 @@ pub async fn run() {
         .unwrap();
 
     window.set_cursor_visible(false);
-    window
-        .set_cursor_grab(winit::window::CursorGrabMode::Confined)
-        .expect("failed to set cursor grab mode");
+
+    // window
+    //     .set_cursor_grab(winit::window::CursorGrabMode::Confined)
+    //     .expect("failed to set cursor grab mode"); <- this always errors on linux
 
     let mut render_state = Renderer::new(&window).await; // NEW!
     let mut last_render_time = instant::Instant::now();

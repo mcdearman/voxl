@@ -1,0 +1,42 @@
+[2023-03-15T01:54:27Z ERROR wgpu::backend::direct] Handling wgpu errors as fatal by default
+thread 'main' panicked at 'wgpu error: Validation Error
+
+Caused by:
+    In Device::create_sampler
+    invalid lod clamp lod_min_clamp:-100 lod_max_clamp:100, must satisfy lod_min_clamp >= 0 and lod_max_clamp >= lod_min_clamp 
+
+', /home/chris/.cargo/registry/src/github.com-1ecc6299db9ec823/wgpu-0.15.1/src/backend/direct.rs:3024:5
+stack backtrace:
+   0: rust_begin_unwind
+             at /rustc/2c8cc343237b8f7d5a3c3703e3a87f2eb2c54a74/library/std/src/panicking.rs:575:5
+   1: core::panicking::panic_fmt
+             at /rustc/2c8cc343237b8f7d5a3c3703e3a87f2eb2c54a74/library/core/src/panicking.rs:64:14
+   2: wgpu::backend::direct::default_error_handler
+             at /home/chris/.cargo/registry/src/github.com-1ecc6299db9ec823/wgpu-0.15.1/src/backend/direct.rs:3024:5
+   3: core::ops::function::Fn::call
+             at /rustc/2c8cc343237b8f7d5a3c3703e3a87f2eb2c54a74/library/core/src/ops/function.rs:79:5
+   4: <alloc::boxed::Box<F,A> as core::ops::function::Fn<Args>>::call
+             at /rustc/2c8cc343237b8f7d5a3c3703e3a87f2eb2c54a74/library/alloc/src/boxed.rs:2002:9
+   5: wgpu::backend::direct::ErrorSinkRaw::handle_error
+             at /home/chris/.cargo/registry/src/github.com-1ecc6299db9ec823/wgpu-0.15.1/src/backend/direct.rs:3010:17
+   6: wgpu::backend::direct::Context::handle_error
+             at /home/chris/.cargo/registry/src/github.com-1ecc6299db9ec823/wgpu-0.15.1/src/backend/direct.rs:296:9
+   7: <wgpu::backend::direct::Context as wgpu::context::Context>::device_create_sampler
+             at /home/chris/.cargo/registry/src/github.com-1ecc6299db9ec823/wgpu-0.15.1/src/backend/direct.rs:1333:13
+   8: <T as wgpu::context::DynContext>::device_create_sampler
+             at /home/chris/.cargo/registry/src/github.com-1ecc6299db9ec823/wgpu-0.15.1/src/context.rs:2240:31
+   9: wgpu::Device::create_sampler
+             at /home/chris/.cargo/registry/src/github.com-1ecc6299db9ec823/wgpu-0.15.1/src/lib.rs:2164:13
+  10: voxl::gfx::render::texture::Texture::create_depth_texture
+             at ./src/gfx/render/texture.rs:114:23
+  11: voxl::gfx::render::renderer::Renderer::new::{{closure}}
+             at ./src/gfx/render/renderer.rs:344:29
+  12: voxl::run::{{closure}}
+             at ./src/main.rs:35:50
+  13: pollster::block_on
+             at /home/chris/.cargo/registry/src/github.com-1ecc6299db9ec823/pollster-0.3.0/src/lib.rs:128:15
+  14: voxl::main
+             at ./src/main.rs:96:5
+  15: core::ops::function::FnOnce::call_once
+             at /rustc/2c8cc343237b8f7d5a3c3703e3a87f2eb2c54a74/library/core/src/ops/function.rs:250:5
+note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
