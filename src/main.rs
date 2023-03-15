@@ -71,7 +71,6 @@ pub async fn run() {
                     _ => {}
                 }
             }
-            // UPDATED!
             Event::RedrawRequested(window_id) if window_id == window.id() => {
                 let now = instant::Instant::now();
                 let dt = now - last_render_time;
