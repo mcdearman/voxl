@@ -2,7 +2,7 @@ use cgmath::*;
 use instant::Duration;
 use std::f32::consts::FRAC_PI_2;
 use winit::dpi::PhysicalPosition;
-use winit::{event::*, window};
+use winit::event::*;
 
 #[rustfmt::skip]
 pub const OPENGL_TO_WGPU_MATRIX: cgmath::Matrix4<f32> = cgmath::Matrix4::new(
