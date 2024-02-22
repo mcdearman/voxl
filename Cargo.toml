@@ -9,10 +9,10 @@ edition = "2021"
 winit = "0.28.2"
 env_logger = "0.10.0"
 log = "0.4.17"
-wgpu = "0.15.1"
+wgpu = "=0.15.1"
 pollster = "0.3.0"
 cgmath = "0.18"
-bytemuck = { version = "1.13.1", features = [ "derive" ] }
+bytemuck = { version = "1.13.1", features = ["derive"] }
 instant = "0.1.12"
 cfg-if = "1"
 anyhow = "1.0.69"
