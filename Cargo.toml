@@ -6,17 +6,17 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-winit = "0.28.2"
 env_logger = "0.10.0"
 log = "0.4.17"
-wgpu = "=0.15.1"
 pollster = "0.3.0"
 cgmath = "0.18"
 bytemuck = { version = "1.13.1", features = ["derive"] }
 instant = "0.1.12"
 cfg-if = "1"
 anyhow = "1.0.69"
-# etagere = "0.2.7"
+winit = "0.30.12"
+wgpu = "26.0.1"
+etagere = "0.2.15"
 
 [dependencies.image]
 version = "0.24"

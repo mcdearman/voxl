@@ -47,17 +47,17 @@ impl Texture {
         });
 
         queue.write_texture(
-            wgpu::ImageCopyTexture {
+            wgpu::TexelCopyTextureInfo {
                 aspect: wgpu::TextureAspect::All,
                 texture: &texture,
                 mip_level: 0,
                 origin: wgpu::Origin3d::ZERO,
             },
             &rgba,
-            wgpu::ImageDataLayout {
+            wgpu::TexelCopyBufferLayout {
                 offset: 0,
-                bytes_per_row: std::num::NonZeroU32::new(4 * texture_size),
-                rows_per_image: std::num::NonZeroU32::new(texture_size),
+                bytes_per_row: Some(4 * texture_size),
+                rows_per_image: Some(texture_size),
             },
             size,
         );

@@ -2,7 +2,6 @@ mod ecs;
 mod gfx;
 
 use crate::gfx::render::renderer::Renderer;
-
 use winit::{
     event::*,
     event_loop::{ControlFlow, EventLoop},
