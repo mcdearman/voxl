@@ -78,6 +78,7 @@ const INSTANCE_DISPLACEMENT: cgmath::Vector3<f32> = cgmath::Vector3::new(
 );
 
 pub struct Renderer {
+    pub window: Arc<Window>,
     pub surface: wgpu::Surface<'static>,
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
@@ -112,7 +113,7 @@ impl Renderer {
         });
 
         let surface = instance
-            .create_surface(window)
+            .create_surface(window.clone())
             .expect("failed to create surface");
 
         let adapter = instance
@@ -360,6 +361,7 @@ impl Renderer {
         let depth_texture = Texture::create_depth_texture(&device, &config, "depth_texture");
 
         Self {
+            window,
             surface,
             device,
             queue,
@@ -385,22 +387,14 @@ impl Renderer {
         }
     }
 
-    // pub fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
-    //     if new_size.width > 0 && new_size.height > 0 {
-    //         self.size = new_size;
-    //         self.config.width = new_size.width;
-    //         self.config.height = new_size.height;
-    //         self.projection.resize(new_size.width, new_size.height);
-    //         self.surface.configure(&self.device, &self.config);
-    //         self.depth_texture =
-    //             Texture::create_depth_texture(&self.device, &self.config, "depth_texture");
-    //     }
-    // }
     pub fn resize(&mut self, width: u32, height: u32) {
         if width > 0 && height > 0 {
             self.config.width = width;
             self.config.height = height;
             self.surface.configure(&self.device, &self.config);
+            self.projection.resize(width, height);
+            self.depth_texture =
+                Texture::create_depth_texture(&self.device, &self.config, "depth_texture");
             self.is_surface_configured = true;
         }
     }
@@ -416,7 +410,7 @@ impl Renderer {
                         ..
                     },
                 ..
-            } => self.camera_controller.process_keyboard(*code, *key_state),
+            } => self.camera_controller.handle_key(*code, *key_state),
             WindowEvent::MouseWheel { delta, .. } => {
                 self.camera_controller.process_scroll(delta);
                 true
@@ -433,6 +427,13 @@ impl Renderer {
         }
     }
 
+    pub fn handle_mouse_button(&mut self, button: MouseButton, pressed: bool) {
+        match button {
+            MouseButton::Left => self.mouse_pressed = pressed,
+            _ => {}
+        }
+    }
+
     pub fn update(&mut self, dt: instant::Duration) {
         self.camera_controller.update_camera(&mut self.camera, dt);
         self.camera_uniform
@@ -445,6 +446,8 @@ impl Renderer {
     }
 
     pub fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
+        self.window.request_redraw();
+
         let output = self.surface.get_current_texture()?;
         let view = output
             .texture

@@ -52,10 +52,10 @@ impl ApplicationHandler<Renderer> for App {
         }
 
         let window = Arc::new(event_loop.create_window(window_attributes).unwrap());
-        window
-            .set_cursor_grab(winit::window::CursorGrabMode::Confined)
-            //     // .or_else(|_| window.set_cursor_grab(winit::window::CursorGrabMode::Locked))
-            .expect("failed to set cursor grab mode");
+        // window
+        //     .set_cursor_grab(winit::window::CursorGrabMode::Confined)
+        //     //     // .or_else(|_| window.set_cursor_grab(winit::window::CursorGrabMode::Locked))
+        //     .expect("failed to set cursor grab mode");
         window.set_cursor_visible(false);
 
         #[cfg(not(target_arch = "wasm32"))]
@@ -109,8 +109,16 @@ impl ApplicationHandler<Renderer> for App {
             None => return,
         };
 
-        if let DeviceEvent::MouseMotion { delta: (dx, dy) } = event {
-            state.camera_controller.process_mouse(dx, dy);
+        // println!("device event: {:?}", event);
+        // println!("mouse pressed: {}", state.mouse_pressed);
+
+        match event {
+            DeviceEvent::MouseMotion { delta: (dx, dy) } => {
+                if state.mouse_pressed {
+                    state.camera_controller.process_mouse(dx, dy);
+                }
+            }
+            _ => {}
         }
     }
 
@@ -129,14 +137,14 @@ impl ApplicationHandler<Renderer> for App {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(size) => state.resize(size.width, size.height),
             WindowEvent::RedrawRequested => {
-                let now = instant::Instant::now();
-                let dt = now - self.last_render_time;
-                self.last_render_time = now;
+                let dt = self.last_render_time.elapsed();
+                self.last_render_time = instant::Instant::now();
                 state.update(dt);
                 match state.render() {
                     Ok(_) => {}
                     // Reconfigure the surface if it's lost or outdated
                     Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
+                        // let size = state.window.inner_size();
                         state.resize(state.size.width, state.size.height)
                     }
                     // The system is out of memory, we should probably quit
@@ -146,6 +154,11 @@ impl ApplicationHandler<Renderer> for App {
                     Err(other) => log::warn!("Surface error: {:?}", other),
                 }
             }
+            WindowEvent::MouseInput {
+                state: btn_state,
+                button,
+                ..
+            } => state.handle_mouse_button(button, btn_state.is_pressed()),
             WindowEvent::KeyboardInput {
                 event:
                     KeyEvent {
@@ -156,7 +169,9 @@ impl ApplicationHandler<Renderer> for App {
                 ..
             } => match (code, key_state.is_pressed()) {
                 (KeyCode::Escape, true) => event_loop.exit(),
-                _ => {}
+                _ => {
+                    state.camera_controller.handle_key(code, key_state);
+                }
             },
             _ => {}
         }
