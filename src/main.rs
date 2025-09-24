@@ -35,7 +35,11 @@ impl App {
 impl ApplicationHandler<Renderer> for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         #[allow(unused_mut)]
-        let mut window_attributes = Window::default_attributes();
+        let mut window_attributes =
+            Window::default_attributes().with_inner_size(winit::dpi::LogicalSize {
+                width: 800,
+                height: 450,
+            });
 
         #[cfg(target_arch = "wasm32")]
         {
@@ -52,10 +56,10 @@ impl ApplicationHandler<Renderer> for App {
         }
 
         let window = Arc::new(event_loop.create_window(window_attributes).unwrap());
-        // window
-        //     .set_cursor_grab(winit::window::CursorGrabMode::Confined)
-        //     //     // .or_else(|_| window.set_cursor_grab(winit::window::CursorGrabMode::Locked))
-        //     .expect("failed to set cursor grab mode");
+        window
+            .set_cursor_grab(winit::window::CursorGrabMode::Confined)
+            .or_else(|_| window.set_cursor_grab(winit::window::CursorGrabMode::Locked))
+            .expect("failed to set cursor grab mode");
         window.set_cursor_visible(false);
 
         #[cfg(not(target_arch = "wasm32"))]
