@@ -1,4 +1,3 @@
-mod ecs;
 mod gfx;
 
 use std::sync::Arc;
