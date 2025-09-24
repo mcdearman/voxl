@@ -5,9 +5,9 @@ use crate::gfx::render::{
     vertex::{create_vertices, Vertex},
 };
 use cgmath::prelude::*;
-use std::iter;
+use std::{iter, sync::Arc};
 use wgpu::util::DeviceExt;
-use winit::{event::*, window::Window};
+use winit::{event::*, keyboard::PhysicalKey, window::Window};
 
 struct Instance {
     position: cgmath::Vector3<f32>,
@@ -99,19 +99,22 @@ pub struct Renderer {
     diffuse_bind_group: wgpu::BindGroup,
     depth_texture: Texture,
     pub mouse_pressed: bool,
+    is_surface_configured: bool,
 }
 
 impl Renderer {
-    pub async fn new(window: &Window) -> Self {
+    pub async fn new(window: Arc<Window>) -> Self {
         let size = window.inner_size();
 
-        // let instance = wgpu::Instance::default();
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
             backends: wgpu::Backends::all(),
             ..Default::default()
         });
-        // let surface = unsafe { instance.create_surface(window) }.expect("surface couldn't be created");
-        let surface = unsafe { instance.create_surface(window) }.expect("failed to create surface");
+
+        let surface = instance
+            .create_surface(window)
+            .expect("failed to create surface");
+
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::default(),
@@ -125,19 +128,29 @@ impl Renderer {
             .request_device(&wgpu::DeviceDescriptor {
                 label: None,
                 required_features: wgpu::Features::empty(),
-                required_limits: wgpu::Limits::default(),
+                required_limits: if cfg!(target_arch = "wasm32") {
+                    wgpu::Limits::downlevel_webgl2_defaults()
+                } else {
+                    wgpu::Limits::default()
+                },
                 memory_hints: wgpu::MemoryHints::default(),
                 trace: wgpu::Trace::Off,
             })
             .await
             .unwrap();
 
-        let swapchain_capabilities = surface.get_capabilities(&adapter);
-        let swapchain_format = swapchain_capabilities.formats[0];
+        let surface_caps = surface.get_capabilities(&adapter);
+        // let swapchain_format = swapchain_capabilities.formats[0];
+        let surface_format = surface_caps
+            .formats
+            .iter()
+            .find(|f| f.is_srgb())
+            .copied()
+            .unwrap_or(surface_caps.formats[0]);
 
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            format: swapchain_format,
+            format: surface_format,
             width: size.width,
             height: size.height,
             present_mode: wgpu::PresentMode::Fifo,
@@ -249,19 +262,21 @@ impl Renderer {
             layout: Some(&render_pipeline_layout),
             vertex: wgpu::VertexState {
                 module: &shader,
-                entry_point: "vs_main",                          // 1.
-                buffers: &[Vertex::desc(), InstanceRaw::desc()],do!(), // 2.
+                entry_point: Some("vs_main"),
+                buffers: &[Vertex::desc(), InstanceRaw::desc()],
+                compilation_options: Default::default(),
             },
             fragment: Some(wgpu::FragmentState {
                 // 3.
                 module: &shader,
-                entry_point: "fs_main",
+                entry_point: Some("fs_main"),
                 targets: &[Some(wgpu::ColorTargetState {
                     // 4.
                     format: config.format,
                     blend: Some(wgpu::BlendState::REPLACE),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
+                compilation_options: Default::default(),
             }),
             primitive: wgpu::PrimitiveState {
                 topology: wgpu::PrimitiveTopology::TriangleList, // 1.
@@ -288,6 +303,7 @@ impl Renderer {
                 alpha_to_coverage_enabled: false,
             },
             multiview: None,
+            cache: None,
         });
 
         let (vertices, indices) = create_vertices();
@@ -365,18 +381,27 @@ impl Renderer {
             diffuse_bind_group,
             depth_texture,
             mouse_pressed: false,
+            is_surface_configured: true,
         }
     }
 
-    pub fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
-        if new_size.width > 0 && new_size.height > 0 {
-            self.size = new_size;
-            self.config.width = new_size.width;
-            self.config.height = new_size.height;
-            self.projection.resize(new_size.width, new_size.height);
+    // pub fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
+    //     if new_size.width > 0 && new_size.height > 0 {
+    //         self.size = new_size;
+    //         self.config.width = new_size.width;
+    //         self.config.height = new_size.height;
+    //         self.projection.resize(new_size.width, new_size.height);
+    //         self.surface.configure(&self.device, &self.config);
+    //         self.depth_texture =
+    //             Texture::create_depth_texture(&self.device, &self.config, "depth_texture");
+    //     }
+    // }
+    pub fn resize(&mut self, width: u32, height: u32) {
+        if width > 0 && height > 0 {
+            self.config.width = width;
+            self.config.height = height;
             self.surface.configure(&self.device, &self.config);
-            self.depth_texture =
-                Texture::create_depth_texture(&self.device, &self.config, "depth_texture");
+            self.is_surface_configured = true;
         }
     }
 
@@ -384,14 +409,14 @@ impl Renderer {
     pub fn input(&mut self, event: &WindowEvent) -> bool {
         match event {
             WindowEvent::KeyboardInput {
-                input:
-                    KeyboardInput {
-                        virtual_keycode: Some(key),
-                        state,
+                event:
+                    KeyEvent {
+                        physical_key: PhysicalKey::Code(code),
+                        state: key_state,
                         ..
                     },
                 ..
-            } => self.camera_controller.process_keyboard(*key, *state),
+            } => self.camera_controller.process_keyboard(*code, *key_state),
             WindowEvent::MouseWheel { delta, .. } => {
                 self.camera_controller.process_scroll(delta);
                 true
@@ -445,18 +470,21 @@ impl Renderer {
                                 b: 0.0,
                                 a: 1.0,
                             }),
-                            store: true,
+                            store: wgpu::StoreOp::Store,
                         },
+                        depth_slice: None,
                     }),
                 ],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                     view: &self.depth_texture.view,
                     depth_ops: Some(wgpu::Operations {
                         load: wgpu::LoadOp::Clear(1.0),
-                        store: true,
+                        store: wgpu::StoreOp::Store,
                     }),
                     stencil_ops: None,
                 }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
             });
             render_pass.set_pipeline(&self.render_pipeline);
             render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
