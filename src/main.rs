@@ -1,206 +1,295 @@
-mod gfx;
+use voxl::prelude::*;
 
-use std::sync::Arc;
-
-use crate::gfx::render::renderer::Renderer;
-use winit::{
-    application::ApplicationHandler,
-    event::{self, *},
-    event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
-    keyboard::{KeyCode, PhysicalKey},
-    window::Window,
-};
-
-pub struct App {
-    #[cfg(target_arch = "wasm32")]
-    proxy: Option<winit::event_loop::EventLoopProxy<State>>,
-    renderer: Option<Renderer>,
-    last_render_time: instant::Instant,
+fn main() -> anyhow::Result<()> {
+    App::new()
+        .add_plugins(DefaultPlugins)
+        .insert_resource(WindowSettings {
+            title: "voxl".into(),
+            ..Default::default()
+        })
+        .add_systems(Stage::Startup, setup)
+        .add_systems(
+            Stage::Update,
+            (
+                grab_cursor,
+                fly_camera,
+                spin,
+                shoot,
+                expire,
+                announce_spinners,
+                show_fps,
+            ),
+        )
+        .add_systems(Stage::FixedUpdate, bounce)
+        .run()
 }
 
-impl App {
-    pub fn new(#[cfg(target_arch = "wasm32")] event_loop: &EventLoop<State>) -> Self {
-        #[cfg(target_arch = "wasm32")]
-        let proxy = Some(event_loop.create_proxy());
+struct Spin {
+    axis: Vec3,
+    speed: f32,
+}
+impl Component for Spin {}
+
+struct FlyCamera {
+    speed: f32,
+    sensitivity: f32,
+    yaw: f32,
+    pitch: f32,
+}
+impl Component for FlyCamera {}
+
+impl FlyCamera {
+    fn looking(direction: Vec3) -> Self {
+        let d = direction.normalize();
         Self {
-            renderer: None,
-            last_render_time: instant::Instant::now(),
-            #[cfg(target_arch = "wasm32")]
-            proxy,
+            speed: 8.0,
+            sensitivity: 0.002,
+            yaw: (-d.x).atan2(-d.z),
+            pitch: d.y.asin(),
         }
+    }
+
+    fn rotation(&self) -> Quat {
+        Quat::from_euler(EulerRot::YXZ, self.yaw, self.pitch, 0.0)
     }
 }
 
-impl ApplicationHandler<Renderer> for App {
-    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        #[allow(unused_mut)]
-        let mut window_attributes =
-            Window::default_attributes().with_inner_size(winit::dpi::LogicalSize {
-                width: 800,
-                height: 450,
-            });
+struct Ball {
+    velocity: Vec3,
+    radius: f32,
+    restitution: f32,
+}
+impl Component for Ball {}
 
-        #[cfg(target_arch = "wasm32")]
-        {
-            use wasm_bindgen::JsCast;
-            use winit::platform::web::WindowAttributesExtWebSys;
+struct Lifetime(f32);
+impl Component for Lifetime {}
 
-            const CANVAS_ID: &str = "canvas";
+struct DemoAssets {
+    sphere: Handle<Mesh>,
+}
 
-            let window = wgpu::web_sys::window().unwrap_throw();
-            let document = window.document().unwrap_throw();
-            let canvas = document.get_element_by_id(CANVAS_ID).unwrap_throw();
-            let html_canvas_element = canvas.unchecked_into();
-            window_attributes = window_attributes.with_canvas(Some(html_canvas_element));
-        }
+fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>) {
+    let cube = meshes.add(Mesh::cube(1.0));
+    let sphere = meshes.add(Mesh::uv_sphere(0.5, 32, 16));
+    let plane = meshes.add(Mesh::plane(1.0));
+    commands.insert_resource(DemoAssets { sphere });
 
-        let window = Arc::new(event_loop.create_window(window_attributes).unwrap());
-        window
-            .set_cursor_grab(winit::window::CursorGrabMode::Confined)
-            .or_else(|_| window.set_cursor_grab(winit::window::CursorGrabMode::Locked))
-            .expect("failed to set cursor grab mode");
-        window.set_cursor_visible(false);
+    commands.spawn((
+        Transform::IDENTITY.with_scale(Vec3::new(60.0, 1.0, 60.0)),
+        Mesh3d(plane),
+        Material::color(Color::hex(0x5b7f4a)),
+    ));
 
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            // If we are not on web we can use pollster to
-            // await the
-            self.renderer = Some(pollster::block_on(Renderer::new(window)));
-        }
-
-        #[cfg(target_arch = "wasm32")]
-        {
-            // Run the future asynchronously and use the
-            // proxy to send the results to the event loop
-            if let Some(proxy) = self.proxy.take() {
-                wasm_bindgen_futures::spawn_local(async move {
-                    assert!(proxy
-                        .send_event(
-                            State::new(window)
-                                .await
-                                .expect("Unable to create canvas!!!")
-                        )
-                        .is_ok())
-                });
-            }
-        }
-        event_loop.listen_device_events(winit::event_loop::DeviceEvents::WhenFocused);
-    }
-
-    #[allow(unused_mut)]
-    fn user_event(&mut self, _event_loop: &ActiveEventLoop, mut event: Renderer) {
-        // This is where proxy.send_event() ends up
-        #[cfg(target_arch = "wasm32")]
-        {
-            event.window.request_redraw();
-            event.resize(
-                event.window.inner_size().width,
-                event.window.inner_size().height,
-            );
-        }
-        self.renderer = Some(event);
-    }
-
-    fn device_event(
-        &mut self,
-        _el: &ActiveEventLoop,
-        _id: winit::event::DeviceId,
-        event: DeviceEvent,
-    ) {
-        let state = match &mut self.renderer {
-            Some(canvas) => canvas,
-            None => return,
-        };
-
-        // println!("device event: {:?}", event);
-        // println!("mouse pressed: {}", state.mouse_pressed);
-
-        match event {
-            DeviceEvent::MouseMotion { delta: (dx, dy) } => {
-                if state.mouse_pressed {
-                    state.camera_controller.process_mouse(dx, dy);
-                }
-            }
-            _ => {}
+    for x in -5i32..=5 {
+        for z in -5..=5 {
+            let (fx, fz) = (x as f32, z as f32);
+            let height = 0.6 + ((fx * 0.7).sin() + (fz * 0.5).cos()).abs();
+            commands.spawn((
+                Transform::from_xyz(fx * 2.0, height, fz * 2.0).with_scale(Vec3::splat(0.8)),
+                Mesh3d(cube),
+                Material::color(Color::srgb((fx + 5.0) / 10.0, 0.45, (fz + 5.0) / 10.0)),
+                Spin {
+                    axis: Vec3::new(fx, 4.0, fz).normalize(),
+                    speed: 0.5 + (x + z).rem_euclid(3) as f32 * 0.4,
+                },
+            ));
         }
     }
 
-    fn window_event(
-        &mut self,
-        event_loop: &ActiveEventLoop,
-        _window_id: winit::window::WindowId,
-        event: WindowEvent,
-    ) {
-        let state = match &mut self.renderer {
-            Some(canvas) => canvas,
-            None => return,
-        };
-
-        match event {
-            WindowEvent::CloseRequested => event_loop.exit(),
-            WindowEvent::Resized(size) => state.resize(size.width, size.height),
-            WindowEvent::RedrawRequested => {
-                let dt = self.last_render_time.elapsed();
-                self.last_render_time = instant::Instant::now();
-                state.update(dt);
-                match state.render() {
-                    Ok(_) => {}
-                    // Reconfigure the surface if it's lost or outdated
-                    Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
-                        // let size = state.window.inner_size();
-                        state.resize(state.size.width, state.size.height)
-                    }
-                    // The system is out of memory, we should probably quit
-                    Err(wgpu::SurfaceError::OutOfMemory) => event_loop.exit(),
-                    // We're ignoring timeouts
-                    Err(wgpu::SurfaceError::Timeout) => log::warn!("Surface timeout"),
-                    Err(other) => log::warn!("Surface error: {:?}", other),
-                }
-            }
-            WindowEvent::MouseInput {
-                state: btn_state,
-                button,
-                ..
-            } => state.handle_mouse_button(button, btn_state.is_pressed()),
-            WindowEvent::KeyboardInput {
-                event:
-                    KeyEvent {
-                        physical_key: PhysicalKey::Code(code),
-                        state: key_state,
-                        ..
-                    },
-                ..
-            } => match (code, key_state.is_pressed()) {
-                (KeyCode::Escape, true) => event_loop.exit(),
-                _ => {
-                    state.camera_controller.handle_key(code, key_state);
-                }
+    // A spinning pivot with a child: the child orbits because its transform is relative.
+    let pivot = commands
+        .spawn((
+            Transform::from_xyz(0.0, 5.0, 0.0),
+            Spin {
+                axis: Vec3::Y,
+                speed: 1.2,
             },
-            _ => {}
+        ))
+        .id();
+    commands.spawn((
+        Transform::from_xyz(4.0, 0.0, 0.0),
+        Mesh3d(sphere),
+        Material::color(Color::hex(0xe8e8f0)),
+        Parent(pivot),
+    ));
+
+    commands.spawn((
+        Transform::from_xyz(-6.0, 6.0, -6.0),
+        Mesh3d(sphere),
+        Material::color(Color::hex(0xd9534f)),
+        Ball {
+            velocity: Vec3::ZERO,
+            radius: 0.5,
+            restitution: 1.0,
+        },
+    ));
+
+    commands.spawn((
+        Transform::IDENTITY.looking_at(Vec3::new(-0.4, -1.0, -0.3), Vec3::Y),
+        DirectionalLight {
+            intensity: 2.5,
+            ..Default::default()
+        },
+    ));
+
+    let position = Vec3::new(14.0, 8.0, 18.0);
+    let camera = FlyCamera::looking(-position);
+    commands.spawn((
+        Transform::from_translation(position).with_rotation(camera.rotation()),
+        Camera::default(),
+        camera,
+    ));
+}
+
+fn grab_cursor(
+    window: Res<Window>,
+    buttons: Res<ButtonInput<MouseButton>>,
+    keys: Res<ButtonInput<KeyCode>>,
+    mut focus: EventReader<WindowFocused>,
+    mut exit: EventWriter<AppExit>,
+) {
+    if buttons.just_pressed(MouseButton::Left) && !window.cursor_grabbed() {
+        window.set_cursor_grabbed(true);
+    }
+    if keys.just_pressed(KeyCode::Escape) {
+        if window.cursor_grabbed() {
+            window.set_cursor_grabbed(false);
+        } else {
+            exit.send(AppExit);
+        }
+    }
+    if focus.read().any(|f| !f.0) && window.cursor_grabbed() {
+        window.set_cursor_grabbed(false);
+    }
+}
+
+fn fly_camera(
+    time: Res<Time>,
+    keys: Res<ButtonInput<KeyCode>>,
+    mouse: Res<Mouse>,
+    window: Res<Window>,
+    mut cameras: Query<(&mut Transform, &mut FlyCamera)>,
+) {
+    for (mut transform, mut camera) in &mut cameras {
+        if window.cursor_grabbed() && mouse.delta != Vec2::ZERO {
+            let sensitivity = camera.sensitivity;
+            camera.yaw -= mouse.delta.x * sensitivity;
+            camera.pitch = (camera.pitch - mouse.delta.y * sensitivity).clamp(-1.54, 1.54);
+            transform.rotation = camera.rotation();
+        }
+
+        let (forward, right) = (transform.forward(), transform.right());
+        let bindings = [
+            (KeyCode::KeyW, forward),
+            (KeyCode::KeyS, -forward),
+            (KeyCode::KeyD, right),
+            (KeyCode::KeyA, -right),
+            (KeyCode::Space, Vec3::Y),
+            (KeyCode::ShiftLeft, Vec3::NEG_Y),
+        ];
+        let direction: Vec3 = bindings
+            .iter()
+            .filter(|(key, _)| keys.pressed(*key))
+            .map(|(_, dir)| *dir)
+            .sum();
+        if direction != Vec3::ZERO {
+            let boost = if keys.pressed(KeyCode::ControlLeft) {
+                4.0
+            } else {
+                1.0
+            };
+            transform.translation +=
+                direction.normalize() * camera.speed * boost * time.delta_secs();
         }
     }
 }
 
-pub fn run() -> anyhow::Result<()> {
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        env_logger::init();
+fn spin(time: Res<Time>, mut query: Query<(&mut Transform, &Spin)>) {
+    for (mut transform, spin) in &mut query {
+        transform.rotation *= Quat::from_axis_angle(spin.axis, spin.speed * time.delta_secs());
     }
-    #[cfg(target_arch = "wasm32")]
-    {
-        console_log::init_with_level(log::Level::Info).unwrap_throw();
-    }
-
-    let event_loop = EventLoop::with_user_event().build()?;
-    let mut app = App::new(
-        #[cfg(target_arch = "wasm32")]
-        &event_loop,
-    );
-    event_loop.run_app(&mut app)?;
-
-    Ok(())
 }
 
-fn main() {
-    run().unwrap();
+fn shoot(
+    mut commands: Commands,
+    buttons: Res<ButtonInput<MouseButton>>,
+    keys: Res<ButtonInput<KeyCode>>,
+    window: Res<Window>,
+    assets: Res<DemoAssets>,
+    camera: Query<&Transform, With<FlyCamera>>,
+) {
+    let fire = keys.just_pressed(KeyCode::KeyF)
+        || (window.cursor_grabbed() && buttons.just_pressed(MouseButton::Right));
+    let Some(camera) = camera.get_single().filter(|_| fire) else {
+        return;
+    };
+    commands.spawn((
+        Transform::from_translation(camera.translation + camera.forward())
+            .with_scale(Vec3::splat(0.4)),
+        Mesh3d(assets.sphere),
+        Material::color(Color::hex(0xffc53d)),
+        Ball {
+            velocity: camera.forward() * 25.0,
+            radius: 0.2,
+            restitution: 0.7,
+        },
+        Lifetime(6.0),
+    ));
+}
+
+fn expire(mut commands: Commands, time: Res<Time>, mut query: Query<(Entity, &mut Lifetime)>) {
+    for (entity, mut lifetime) in &mut query {
+        lifetime.0 -= time.delta_secs();
+        if lifetime.0 <= 0.0 {
+            commands.despawn(entity);
+        }
+    }
+}
+
+/// Simple physics in the fixed-rate stage.
+fn bounce(fixed: Res<FixedTime>, mut balls: Query<(&mut Transform, &mut Ball)>) {
+    let dt = fixed.timestep_secs();
+    for (mut transform, mut ball) in &mut balls {
+        ball.velocity.y -= 9.81 * dt;
+        transform.translation += ball.velocity * dt;
+        if transform.translation.y < ball.radius && ball.velocity.y < 0.0 {
+            transform.translation.y = ball.radius;
+            let restitution = ball.restitution;
+            ball.velocity.y *= -restitution;
+            ball.velocity.x *= 0.98;
+            ball.velocity.z *= 0.98;
+        }
+    }
+}
+
+/// `Added<T>` only matches components added since this system last ran.
+fn announce_spinners(query: Query<Entity, Added<Spin>>) {
+    let count = query.count();
+    if count > 0 {
+        log::info!("{count} new spinning entities");
+    }
+}
+
+#[derive(Default)]
+struct FpsCounter {
+    frames: u32,
+    elapsed: f32,
+}
+
+fn show_fps(
+    time: Res<Time>,
+    window: Res<Window>,
+    mut counter: Local<FpsCounter>,
+    entities: Query<Entity>,
+) {
+    counter.frames += 1;
+    counter.elapsed += time.delta_secs();
+    if counter.elapsed >= 0.5 {
+        window.set_title(&format!(
+            "voxl — {:.0} fps — {} entities — click to look, F to shoot",
+            counter.frames as f32 / counter.elapsed,
+            entities.count(),
+        ));
+        *counter = FpsCounter::default();
+    }
 }
