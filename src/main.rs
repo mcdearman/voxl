@@ -1,12 +1,9 @@
-use voxl::prelude::*;
+use voxl::{prelude::*, render::Screenshot, voxel::ChunkStreaming};
 
 fn main() -> anyhow::Result<()> {
     App::new()
         .add_plugins(DefaultPlugins)
-        .insert_resource(WindowSettings {
-            title: "voxl".into(),
-            ..Default::default()
-        })
+        .add_plugins(VoxelPlugin::default())
         .add_systems(Stage::Startup, setup)
         .add_systems(
             Stage::Update,
@@ -14,15 +11,19 @@ fn main() -> anyhow::Result<()> {
                 grab_cursor,
                 fly_camera,
                 spin,
+                select_block,
+                edit_blocks,
                 shoot,
                 expire,
-                announce_spinners,
-                show_fps,
+                show_stats,
+                take_screenshot,
             ),
         )
         .add_systems(Stage::FixedUpdate, bounce)
         .run()
 }
+
+const REACH: f32 = 8.0;
 
 struct Spin {
     axis: Vec3,
@@ -42,7 +43,7 @@ impl FlyCamera {
     fn looking(direction: Vec3) -> Self {
         let d = direction.normalize();
         Self {
-            speed: 8.0,
+            speed: 12.0,
             sensitivity: 0.002,
             yaw: (-d.x).atan2(-d.z),
             pitch: d.y.asin(),
@@ -68,89 +69,71 @@ struct DemoAssets {
     sphere: Handle<Mesh>,
 }
 
-fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>) {
+/// The block placed by right-click. Number keys change it.
+struct SelectedBlock(BlockId);
+
+fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, registry: Res<BlockRegistry>) {
     let cube = meshes.add(Mesh::cube(1.0));
     let sphere = meshes.add(Mesh::uv_sphere(0.5, 32, 16));
-    let plane = meshes.add(Mesh::plane(1.0));
     commands.insert_resource(DemoAssets { sphere });
+    commands.insert_resource(SelectedBlock(registry.find("stone").unwrap()));
 
-    commands.spawn((
-        Transform::IDENTITY.with_scale(Vec3::new(60.0, 1.0, 60.0)),
-        Mesh3d(plane),
-        Material::color(Color::hex(0x5b7f4a)),
-    ));
-
-    for x in -5i32..=5 {
-        for z in -5..=5 {
-            let (fx, fz) = (x as f32, z as f32);
-            let height = 0.6 + ((fx * 0.7).sin() + (fz * 0.5).cos()).abs();
-            commands.spawn((
-                Transform::from_xyz(fx * 2.0, height, fz * 2.0).with_scale(Vec3::splat(0.8)),
-                Mesh3d(cube),
-                Material::color(Color::srgb((fx + 5.0) / 10.0, 0.45, (fz + 5.0) / 10.0)),
-                Spin {
-                    axis: Vec3::new(fx, 4.0, fz).normalize(),
-                    speed: 0.5 + (x + z).rem_euclid(3) as f32 * 0.4,
-                },
-            ));
-        }
-    }
-
-    // A spinning pivot with a child: the child orbits because its transform is relative.
+    // Ordinary mesh entities share the scene with the terrain: a ring of spinning cubes
+    // orbiting a pivot, with each cube's transform relative to it.
     let pivot = commands
         .spawn((
-            Transform::from_xyz(0.0, 5.0, 0.0),
+            Transform::from_xyz(28.0, 84.0, -28.0),
             Spin {
                 axis: Vec3::Y,
-                speed: 1.2,
+                speed: 0.3,
             },
         ))
         .id();
-    commands.spawn((
-        Transform::from_xyz(4.0, 0.0, 0.0),
-        Mesh3d(sphere),
-        Material::color(Color::hex(0xe8e8f0)),
-        Parent(pivot),
-    ));
+    for i in 0..12 {
+        let angle = i as f32 / 12.0 * std::f32::consts::TAU;
+        commands.spawn((
+            Transform::from_xyz(angle.cos() * 10.0, 0.0, angle.sin() * 10.0),
+            Mesh3d(cube),
+            Material::color(Color::srgb(
+                0.5 + angle.cos() * 0.4,
+                0.5,
+                0.5 + angle.sin() * 0.4,
+            )),
+            Spin {
+                axis: Vec3::new(angle.cos(), 1.0, angle.sin()).normalize(),
+                speed: 1.5,
+            },
+            Parent(pivot),
+        ));
+    }
 
     commands.spawn((
-        Transform::from_xyz(-6.0, 6.0, -6.0),
-        Mesh3d(sphere),
-        Material::color(Color::hex(0xd9534f)),
-        Ball {
-            velocity: Vec3::ZERO,
-            radius: 0.5,
-            restitution: 1.0,
-        },
-    ));
-
-    commands.spawn((
-        Transform::IDENTITY.looking_at(Vec3::new(-0.4, -1.0, -0.3), Vec3::Y),
+        Transform::IDENTITY.looking_at(Vec3::new(-0.5, -1.0, -0.3), Vec3::Y),
         DirectionalLight {
-            intensity: 2.5,
+            intensity: 1.6,
             ..Default::default()
         },
     ));
+    commands.insert_resource(AmbientLight {
+        intensity: 0.45,
+        ..Default::default()
+    });
 
-    let position = Vec3::new(14.0, 8.0, 18.0);
-    let camera = FlyCamera::looking(-position);
+    let camera = FlyCamera::looking(Vec3::new(1.0, -0.35, -1.0));
     commands.spawn((
-        Transform::from_translation(position).with_rotation(camera.rotation()),
+        Transform::from_xyz(0.0, 95.0, 0.0).with_rotation(camera.rotation()),
         Camera::default(),
+        ChunkViewer,
         camera,
     ));
 }
 
 fn grab_cursor(
     window: Res<Window>,
-    buttons: Res<ButtonInput<MouseButton>>,
     keys: Res<ButtonInput<KeyCode>>,
     mut focus: EventReader<WindowFocused>,
     mut exit: EventWriter<AppExit>,
 ) {
-    if buttons.just_pressed(MouseButton::Left) && !window.cursor_grabbed() {
-        window.set_cursor_grabbed(true);
-    }
     if keys.just_pressed(KeyCode::Escape) {
         if window.cursor_grabbed() {
             window.set_cursor_grabbed(false);
@@ -194,7 +177,7 @@ fn fly_camera(
             .sum();
         if direction != Vec3::ZERO {
             let boost = if keys.pressed(KeyCode::ControlLeft) {
-                4.0
+                5.0
             } else {
                 1.0
             };
@@ -210,30 +193,85 @@ fn spin(time: Res<Time>, mut query: Query<(&mut Transform, &Spin)>) {
     }
 }
 
+fn select_block(
+    keys: Res<ButtonInput<KeyCode>>,
+    registry: Res<BlockRegistry>,
+    mut selected: ResMut<SelectedBlock>,
+) {
+    let choices = [
+        (KeyCode::Digit1, "stone"),
+        (KeyCode::Digit2, "dirt"),
+        (KeyCode::Digit3, "grass"),
+        (KeyCode::Digit4, "sand"),
+    ];
+    for (key, name) in choices {
+        if keys.just_pressed(key) {
+            selected.0 = registry.find(name).unwrap();
+        }
+    }
+}
+
+/// Left click breaks the block under the crosshair, right click places one against it.
+fn edit_blocks(
+    window: Res<Window>,
+    buttons: Res<ButtonInput<MouseButton>>,
+    registry: Res<BlockRegistry>,
+    selected: Res<SelectedBlock>,
+    mut voxels: ResMut<VoxelWorld>,
+    camera: Query<&Transform, With<FlyCamera>>,
+) {
+    if !window.cursor_grabbed() {
+        if buttons.just_pressed(MouseButton::Left) {
+            window.set_cursor_grabbed(true);
+        }
+        return;
+    }
+    let (breaking, placing) = (
+        buttons.just_pressed(MouseButton::Left),
+        buttons.just_pressed(MouseButton::Right),
+    );
+    if !breaking && !placing {
+        return;
+    }
+    let Some(camera) = camera.get_single() else {
+        return;
+    };
+    let Some(hit) = voxels.raycast(&registry, camera.translation, camera.forward(), REACH) else {
+        return;
+    };
+    if breaking {
+        voxels.set_block(hit.block, BlockId::AIR);
+    } else if hit.normal != IVec3::ZERO {
+        voxels.set_block(hit.adjacent(), selected.0);
+    }
+}
+
 fn shoot(
     mut commands: Commands,
-    buttons: Res<ButtonInput<MouseButton>>,
     keys: Res<ButtonInput<KeyCode>>,
-    window: Res<Window>,
     assets: Res<DemoAssets>,
     camera: Query<&Transform, With<FlyCamera>>,
 ) {
-    let fire = keys.just_pressed(KeyCode::KeyF)
-        || (window.cursor_grabbed() && buttons.just_pressed(MouseButton::Right));
-    let Some(camera) = camera.get_single().filter(|_| fire) else {
+    if !keys.just_pressed(KeyCode::KeyF) {
+        return;
+    }
+    let Some(camera) = camera.get_single() else {
         return;
     };
     commands.spawn((
         Transform::from_translation(camera.translation + camera.forward())
-            .with_scale(Vec3::splat(0.4)),
+            .with_scale(Vec3::splat(0.6)),
         Mesh3d(assets.sphere),
         Material::color(Color::hex(0xffc53d)),
         Ball {
-            velocity: camera.forward() * 25.0,
-            radius: 0.2,
-            restitution: 0.7,
+            velocity: camera.forward() * 30.0,
+            radius: 0.3,
+            restitution: 0.6,
         },
-        Lifetime(6.0),
+        // Balls move at the fixed rate; this blends between steps so they look smooth at
+        // any frame rate.
+        Interpolate::default(),
+        Lifetime(15.0),
     ));
 }
 
@@ -246,27 +284,60 @@ fn expire(mut commands: Commands, time: Res<Time>, mut query: Query<(Entity, &mu
     }
 }
 
-/// Simple physics in the fixed-rate stage.
-fn bounce(fixed: Res<FixedTime>, mut balls: Query<(&mut Transform, &mut Ball)>) {
+/// Fixed-rate physics against the voxel grid. Each axis moves on its own: if the leading edge
+/// of the ball would end up inside a solid block, that axis bounces instead.
+fn bounce(
+    fixed: Res<FixedTime>,
+    voxels: Res<VoxelWorld>,
+    registry: Res<BlockRegistry>,
+    mut balls: Query<(&mut Transform, &mut Ball)>,
+) {
     let dt = fixed.timestep_secs();
     for (mut transform, mut ball) in &mut balls {
-        ball.velocity.y -= 9.81 * dt;
-        transform.translation += ball.velocity * dt;
-        if transform.translation.y < ball.radius && ball.velocity.y < 0.0 {
-            transform.translation.y = ball.radius;
-            let restitution = ball.restitution;
-            ball.velocity.y *= -restitution;
-            ball.velocity.x *= 0.98;
-            ball.velocity.z *= 0.98;
+        ball.velocity.y -= 20.0 * dt;
+        for axis in 0..3 {
+            let step = ball.velocity[axis] * dt;
+            let mut probe = transform.translation;
+            probe[axis] += step + ball.radius * step.signum();
+            if voxels.is_solid(&registry, probe.floor().as_ivec3()) {
+                let restitution = ball.restitution;
+                ball.velocity[axis] *= -restitution;
+                if axis == 1 {
+                    // Rolling friction, and come to rest instead of bouncing forever.
+                    ball.velocity.x *= 0.9;
+                    ball.velocity.z *= 0.9;
+                    if ball.velocity.y.abs() < 1.0 {
+                        ball.velocity.y = 0.0;
+                    }
+                }
+            } else {
+                transform.translation[axis] += step;
+            }
         }
     }
 }
 
-/// `Added<T>` only matches components added since this system last ran.
-fn announce_spinners(query: Query<Entity, Added<Spin>>) {
-    let count = query.count();
-    if count > 0 {
-        log::info!("{count} new spinning entities");
+/// F2 saves a screenshot. Setting `VOXL_SCREENSHOT=<path>` instead saves one a few seconds
+/// after launch and quits, which is handy for checking rendering from a script.
+fn take_screenshot(
+    time: Res<Time>,
+    keys: Res<ButtonInput<KeyCode>>,
+    mut screenshot: ResMut<Screenshot>,
+    mut exit: EventWriter<AppExit>,
+    mut automatic: Local<Option<bool>>,
+) {
+    if keys.just_pressed(KeyCode::F2) {
+        screenshot.request(format!("screenshot-{}.png", time.frame_count()));
+    }
+    if let Ok(path) = std::env::var("VOXL_SCREENSHOT") {
+        match *automatic {
+            None if time.elapsed_secs() > 6.0 => {
+                screenshot.request(path);
+                *automatic = Some(true);
+            }
+            Some(true) if screenshot.path.is_none() => exit.send(AppExit),
+            _ => {}
+        }
     }
 }
 
@@ -276,20 +347,31 @@ struct FpsCounter {
     elapsed: f32,
 }
 
-fn show_fps(
+#[allow(clippy::too_many_arguments)]
+fn show_stats(
     time: Res<Time>,
     window: Res<Window>,
+    voxels: Res<VoxelWorld>,
+    streaming: Res<ChunkStreaming>,
+    registry: Res<BlockRegistry>,
+    selected: Res<SelectedBlock>,
     mut counter: Local<FpsCounter>,
     entities: Query<Entity>,
 ) {
     counter.frames += 1;
     counter.elapsed += time.delta_secs();
     if counter.elapsed >= 0.5 {
-        window.set_title(&format!(
-            "voxl — {:.0} fps — {} entities — click to look, F to shoot",
+        let stats = format!(
+            "voxl — {:.0} fps — {} chunks ({} in flight) — {} entities — placing {} (1-4) — click: break/place, F: ball",
             counter.frames as f32 / counter.elapsed,
+            voxels.chunk_count(),
+            streaming.in_flight(),
             entities.count(),
-        ));
+            registry.get(selected.0).map_or("?", |b| b.name.as_str()),
+        );
+        // Run with RUST_LOG=voxl=debug to get these in the terminal too.
+        log::debug!("{stats}");
+        window.set_title(&stats);
         *counter = FpsCounter::default();
     }
 }

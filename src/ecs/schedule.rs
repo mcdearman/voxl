@@ -96,3 +96,53 @@ impl_into_systems_tuple!(
     (S6, M6),
     (S7, M7)
 );
+impl_into_systems_tuple!(
+    (S0, M0),
+    (S1, M1),
+    (S2, M2),
+    (S3, M3),
+    (S4, M4),
+    (S5, M5),
+    (S6, M6),
+    (S7, M7),
+    (S8, M8)
+);
+impl_into_systems_tuple!(
+    (S0, M0),
+    (S1, M1),
+    (S2, M2),
+    (S3, M3),
+    (S4, M4),
+    (S5, M5),
+    (S6, M6),
+    (S7, M7),
+    (S8, M8),
+    (S9, M9)
+);
+impl_into_systems_tuple!(
+    (S0, M0),
+    (S1, M1),
+    (S2, M2),
+    (S3, M3),
+    (S4, M4),
+    (S5, M5),
+    (S6, M6),
+    (S7, M7),
+    (S8, M8),
+    (S9, M9),
+    (S10, M10)
+);
+impl_into_systems_tuple!(
+    (S0, M0),
+    (S1, M1),
+    (S2, M2),
+    (S3, M3),
+    (S4, M4),
+    (S5, M5),
+    (S6, M6),
+    (S7, M7),
+    (S8, M8),
+    (S9, M9),
+    (S10, M10),
+    (S11, M11)
+);

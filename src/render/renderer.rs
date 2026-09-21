@@ -6,19 +6,10 @@ use wgpu::util::DeviceExt;
 use super::{
     gpu::{Gpu, DEPTH_FORMAT},
     mesh::{Mesh, Vertex},
+    view::ViewBinding,
     RenderFrame,
 };
 use crate::assets::Assets;
-
-#[repr(C)]
-#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-struct ViewUniform {
-    view_proj: [[f32; 4]; 4],
-    camera_position: [f32; 4],
-    light_direction: [f32; 4],
-    light_color: [f32; 4],
-    ambient_color: [f32; 4],
-}
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -63,53 +54,21 @@ struct GpuMesh {
 /// Draws every `Mesh3d` with one instanced draw call per mesh.
 pub struct MeshRenderer {
     pipeline: wgpu::RenderPipeline,
-    view_buffer: wgpu::Buffer,
-    view_bind_group: wgpu::BindGroup,
     instance_buffer: wgpu::Buffer,
     instance_capacity: usize,
     meshes: HashMap<u32, GpuMesh>,
     instances: Vec<InstanceRaw>,
     batches: Vec<(u32, Range<u32>)>,
-    /// Set when the surface needs reconfiguring; handled by an exclusive system after drawing.
-    pub(crate) surface_lost: bool,
 }
 
 impl MeshRenderer {
-    pub fn new(gpu: &Gpu) -> Self {
+    pub fn new(gpu: &Gpu, view: &ViewBinding) -> Self {
         let device = &gpu.device;
         let shader = device.create_shader_module(wgpu::include_wgsl!("shader.wgsl"));
 
-        let view_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("view uniform"),
-            size: std::mem::size_of::<ViewUniform>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let view_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("view layout"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            }],
-        });
-        let view_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("view bind group"),
-            layout: &view_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: view_buffer.as_entire_binding(),
-            }],
-        });
-
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("mesh pipeline layout"),
-            bind_group_layouts: &[&view_layout],
+            bind_group_layouts: &[&view.layout],
             push_constant_ranges: &[],
         });
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -150,14 +109,11 @@ impl MeshRenderer {
         let instance_capacity = 64;
         Self {
             pipeline,
-            view_buffer,
-            view_bind_group,
             instance_buffer: create_instance_buffer(device, instance_capacity),
             instance_capacity,
             meshes: HashMap::new(),
             instances: Vec::new(),
             batches: Vec::new(),
-            surface_lost: false,
         }
     }
 
@@ -196,86 +152,24 @@ impl MeshRenderer {
         }
     }
 
-    pub fn render(&mut self, gpu: &Gpu, frame: &mut RenderFrame) {
-        let view = ViewUniform {
-            view_proj: frame.view_proj.to_cols_array_2d(),
-            camera_position: frame.camera_position.extend(1.0).into(),
-            light_direction: frame.light_direction.extend(0.0).into(),
-            light_color: frame.light_color.extend(1.0).into(),
-            ambient_color: frame.ambient_color.extend(1.0).into(),
-        };
-        gpu.queue
-            .write_buffer(&self.view_buffer, 0, bytemuck::bytes_of(&view));
-
-        self.build_batches(gpu, frame);
-
-        let output = match gpu.surface.get_current_texture() {
-            Ok(output) => output,
-            Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
-                self.surface_lost = true;
-                return;
-            }
-            Err(wgpu::SurfaceError::Timeout) => return,
-            Err(err) => {
-                log::error!("failed to acquire a frame: {err}");
-                return;
-            }
-        };
-        let target = output
-            .texture
-            .create_view(&wgpu::TextureViewDescriptor::default());
-        let mut encoder = gpu
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("frame"),
-            });
-        {
-            let c = frame.clear_color;
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("main pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &target,
-                    resolve_target: None,
-                    depth_slice: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: c.r as f64,
-                            g: c.g as f64,
-                            b: c.b as f64,
-                            a: c.a as f64,
-                        }),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &gpu.depth_view,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(1.0),
-                        store: wgpu::StoreOp::Store,
-                    }),
-                    stencil_ops: None,
-                }),
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            });
-            pass.set_pipeline(&self.pipeline);
-            pass.set_bind_group(0, &self.view_bind_group, &[]);
-            pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
-            for (mesh_id, range) in &self.batches {
-                let Some(mesh) = self.meshes.get(mesh_id) else {
-                    continue;
-                };
-                pass.set_vertex_buffer(0, mesh.vertices.slice(..));
-                pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
-                pass.draw_indexed(0..mesh.index_count, 0, range.clone());
-            }
+    pub fn draw(&self, pass: &mut wgpu::RenderPass<'_>) {
+        if self.batches.is_empty() {
+            return;
         }
-        gpu.queue.submit([encoder.finish()]);
-        output.present();
+        pass.set_pipeline(&self.pipeline);
+        pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
+        for (mesh_id, range) in &self.batches {
+            let Some(mesh) = self.meshes.get(mesh_id) else {
+                continue;
+            };
+            pass.set_vertex_buffer(0, mesh.vertices.slice(..));
+            pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
+            pass.draw_indexed(0..mesh.index_count, 0, range.clone());
+        }
     }
 
     /// Sorts objects by mesh so each mesh becomes one contiguous range in the instance buffer.
-    fn build_batches(&mut self, gpu: &Gpu, frame: &mut RenderFrame) {
+    pub fn build_batches(&mut self, gpu: &Gpu, frame: &mut RenderFrame) {
         frame.objects.sort_unstable_by_key(|(mesh, _, _)| *mesh);
         self.instances.clear();
         self.batches.clear();

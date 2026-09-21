@@ -5,6 +5,9 @@ struct View {
     light_direction: vec4<f32>,
     light_color: vec4<f32>,
     ambient_color: vec4<f32>,
+    fog_color: vec4<f32>,
+    // x: start distance, y: end distance
+    fog: vec4<f32>,
 };
 
 @group(0) @binding(0)
@@ -64,5 +67,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let checker = select(0.92, 1.0, (i32(floor(in.uv.x * 8.0)) + i32(floor(in.uv.y * 8.0))) % 2 == 0);
     let base = in.color.rgb * checker;
 
-    return vec4<f32>(base * (view.ambient_color.rgb + diffuse) + specular, in.color.a);
+    let lit = base * (view.ambient_color.rgb + diffuse) + specular;
+    let distance = length(view.camera_position.xyz - in.world_position);
+    let fog = smoothstep(view.fog.x, view.fog.y, distance);
+    return vec4<f32>(mix(lit, view.fog_color.rgb, fog), in.color.a);
 }

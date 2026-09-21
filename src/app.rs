@@ -17,16 +17,32 @@ pub enum Stage {
     Startup,
     First,
     PreUpdate,
-    /// Runs zero or more times per frame at the rate set by `FixedTime`.
+    /// The three fixed stages run together, zero or more times per frame, at the rate set by
+    /// `FixedTime`. Simulation goes in `FixedUpdate`; the other two are for engine bookkeeping.
+    FixedFirst,
     FixedUpdate,
+    FixedLast,
     Update,
     PostUpdate,
     Last,
+    /// Copies what the renderer needs out of the ECS.
+    Extract,
+    /// Uploads buffers and builds draw lists.
+    Prepare,
+    /// Records and submits the frame.
     Render,
 }
 
-const FRAME_STAGES: [Stage; 3] = [Stage::First, Stage::PreUpdate, Stage::FixedUpdate];
-const LATE_STAGES: [Stage; 4] = [Stage::Update, Stage::PostUpdate, Stage::Last, Stage::Render];
+const EARLY_STAGES: [Stage; 2] = [Stage::First, Stage::PreUpdate];
+const FIXED_STAGES: [Stage; 3] = [Stage::FixedFirst, Stage::FixedUpdate, Stage::FixedLast];
+const LATE_STAGES: [Stage; 6] = [
+    Stage::Update,
+    Stage::PostUpdate,
+    Stage::Last,
+    Stage::Extract,
+    Stage::Prepare,
+    Stage::Render,
+];
 
 pub trait Plugin {
     fn build(&self, app: &mut App);
@@ -122,12 +138,11 @@ impl App {
                 fixed_steps = fixed.accumulate(delta);
             }
         }
-        for stage in FRAME_STAGES {
-            if stage == Stage::FixedUpdate {
-                for _ in 0..fixed_steps {
-                    self.run_stage(stage);
-                }
-            } else {
+        for stage in EARLY_STAGES {
+            self.run_stage(stage);
+        }
+        for _ in 0..fixed_steps {
+            for stage in FIXED_STAGES {
                 self.run_stage(stage);
             }
         }
@@ -157,7 +172,8 @@ impl App {
         let mut out = String::new();
         for stage in [Stage::PreStartup, Stage::Startup]
             .into_iter()
-            .chain(FRAME_STAGES)
+            .chain(EARLY_STAGES)
+            .chain(FIXED_STAGES)
             .chain(LATE_STAGES)
         {
             if let Some(schedule) = self.schedules.get(&stage) {

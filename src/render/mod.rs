@@ -1,12 +1,18 @@
 mod gpu;
 mod mesh;
 mod renderer;
+mod screenshot;
+mod texture;
+mod view;
 
 use glam::{Mat4, Vec3};
 
-pub use gpu::Gpu;
+pub use gpu::{Gpu, DEPTH_FORMAT};
 pub use mesh::{Mesh, Mesh3d, Vertex};
 pub use renderer::MeshRenderer;
+pub use screenshot::Screenshot;
+pub use texture::TextureArray;
+pub use view::ViewBinding;
 
 use crate::{
     app::{App, Plugin, Stage},
@@ -139,6 +145,23 @@ impl Default for ClearColor {
     }
 }
 
+/// Blends distant surfaces into the clear color between `start` and `end` world units.
+/// Off by default (the range is far beyond any camera's far plane).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Fog {
+    pub start: f32,
+    pub end: f32,
+}
+
+impl Default for Fog {
+    fn default() -> Self {
+        Self {
+            start: 1e9,
+            end: 2e9,
+        }
+    }
+}
+
 /// What the renderer needs from the world for one frame, collected by `extract`.
 /// The draw code only ever sees this, never the ECS.
 #[derive(Default)]
@@ -149,10 +172,18 @@ pub struct RenderFrame {
     pub light_color: Vec3,
     pub ambient_color: Vec3,
     pub clear_color: Color,
+    pub fog: Fog,
     /// (mesh id, model matrix, color)
     pub objects: Vec<(u32, Mat4, Color)>,
     pub has_camera: bool,
 }
+
+/// A function that records draw calls into the main pass. The view is already bound at group 0.
+pub type DrawFn = fn(&World, &mut wgpu::RenderPass<'_>);
+
+/// The draw functions run every frame, in order. Plugins push their own to add a pipeline.
+#[derive(Default)]
+pub struct DrawFunctions(pub Vec<DrawFn>);
 
 fn init_gpu(world: &mut World) {
     let window = world.resource::<Window>().handle().clone();
@@ -160,8 +191,10 @@ fn init_gpu(world: &mut World) {
         .get_resource::<WindowSettings>()
         .is_none_or(|s| s.vsync);
     let gpu = pollster::block_on(Gpu::new(window, vsync)).expect("failed to initialize the GPU");
-    let renderer = MeshRenderer::new(&gpu);
+    let view = ViewBinding::new(&gpu);
+    let renderer = MeshRenderer::new(&gpu, &view);
     world.insert_resource(gpu);
+    world.insert_resource(view);
     world.insert_resource(renderer);
 }
 
@@ -177,12 +210,14 @@ fn extract(
     gpu: Res<Gpu>,
     clear: Res<ClearColor>,
     ambient: Res<AmbientLight>,
+    fog: Res<Fog>,
     cameras: Query<(&Camera, &GlobalTransform)>,
     lights: Query<(&DirectionalLight, &GlobalTransform)>,
     objects: Query<(&Mesh3d, &GlobalTransform, Option<&Material>)>,
 ) {
     let frame = &mut *frame;
     frame.clear_color = clear.0;
+    frame.fog = *fog;
     frame.ambient_color = Vec3::from_slice(&ambient.color.to_array()) * ambient.intensity;
 
     let camera = cameras.iter().find(|(camera, _)| camera.active);
@@ -213,24 +248,99 @@ fn extract(
         }));
 }
 
-fn draw(
+fn prepare_view(gpu: Res<Gpu>, view: Res<ViewBinding>, frame: Res<RenderFrame>) {
+    view.write(&gpu, &frame);
+}
+
+fn prepare_meshes(
     gpu: Res<Gpu>,
     mut renderer: ResMut<MeshRenderer>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut frame: ResMut<RenderFrame>,
 ) {
     renderer.sync_meshes(&gpu, &mut meshes);
-    if frame.has_camera {
-        renderer.render(&gpu, &mut frame);
-    }
+    renderer.build_batches(&gpu, &mut frame);
 }
 
-fn reconfigure_lost_surface(world: &mut World) {
-    let lost = world
-        .get_resource_mut::<MeshRenderer>()
-        .is_some_and(|r| std::mem::take(&mut r.surface_lost));
-    if lost {
-        world.resource_mut::<Gpu>().reconfigure();
+fn draw_meshes(world: &World, pass: &mut wgpu::RenderPass<'_>) {
+    world.resource::<MeshRenderer>().draw(pass);
+}
+
+/// Records one pass containing every registered draw function, then presents.
+fn render(world: &mut World) {
+    let frame = world.resource::<RenderFrame>();
+    if !frame.has_camera {
+        return;
+    }
+    let clear = frame.clear_color;
+    let gpu = world.resource::<Gpu>();
+    let output = match gpu.surface.get_current_texture() {
+        Ok(output) => output,
+        Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
+            world.resource_mut::<Gpu>().reconfigure();
+            return;
+        }
+        Err(wgpu::SurfaceError::Timeout) => return,
+        Err(err) => {
+            log::error!("failed to acquire a frame: {err}");
+            return;
+        }
+    };
+    let target = output
+        .texture
+        .create_view(&wgpu::TextureViewDescriptor::default());
+    let mut encoder = gpu
+        .device
+        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("frame"),
+        });
+    {
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("main pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &target,
+                resolve_target: None,
+                depth_slice: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color {
+                        r: clear.r as f64,
+                        g: clear.g as f64,
+                        b: clear.b as f64,
+                        a: clear.a as f64,
+                    }),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: &gpu.depth_view,
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(1.0),
+                    store: wgpu::StoreOp::Store,
+                }),
+                stencil_ops: None,
+            }),
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+        pass.set_bind_group(0, &world.resource::<ViewBinding>().bind_group, &[]);
+        for draw in &world.resource::<DrawFunctions>().0 {
+            draw(world, &mut pass);
+        }
+    }
+    let path = world.resource::<Screenshot>().path.clone();
+    let readback = path
+        .as_ref()
+        .and_then(|_| screenshot::copy_to_buffer(gpu, &mut encoder, &output.texture));
+    gpu.queue.submit([encoder.finish()]);
+    if let (Some(path), Some(readback)) = (&path, readback) {
+        match screenshot::save(gpu, readback, path) {
+            Ok(()) => log::info!("saved screenshot to {}", path.display()),
+            Err(err) => log::error!("failed to save screenshot: {err:#}"),
+        }
+    }
+    output.present();
+    if path.is_some() {
+        world.resource_mut::<Screenshot>().path = None;
     }
 }
 
@@ -241,9 +351,18 @@ impl Plugin for RenderPlugin {
         app.init_resource::<Assets<Mesh>>()
             .init_resource::<ClearColor>()
             .init_resource::<AmbientLight>()
+            .init_resource::<Fog>()
+            .init_resource::<Screenshot>()
             .init_resource::<RenderFrame>()
             .add_systems(Stage::PreStartup, init_gpu)
             .add_systems(Stage::PreUpdate, resize)
-            .add_systems(Stage::Render, (extract, draw, reconfigure_lost_surface));
+            .add_systems(Stage::Extract, extract)
+            .add_systems(Stage::Prepare, (prepare_view, prepare_meshes))
+            .add_systems(Stage::Render, render);
+        app.world.init_resource::<DrawFunctions>();
+        app.world
+            .resource_mut::<DrawFunctions>()
+            .0
+            .push(draw_meshes);
     }
 }

@@ -2,7 +2,8 @@ use glam::{Mat3, Mat4, Quat, Vec3};
 
 use crate::{
     app::{App, Plugin, Stage},
-    ecs::{Commands, Component, Entity, Query, With, Without},
+    ecs::{Commands, Component, Entity, Query, Res, With, Without},
+    time::FixedTime,
 };
 
 /// Local position, rotation and scale. Relative to `Parent` if the entity has one.
@@ -105,6 +106,55 @@ pub struct Parent(pub Entity);
 
 impl Component for Parent {}
 
+/// Smooths an entity that is moved in `FixedUpdate`. Each frame its `Transform` is set to a blend
+/// of the last two fixed steps, so motion stays smooth when the display and simulation rates
+/// differ. The true simulated value is restored before every fixed step.
+///
+/// Only move such entities from the fixed stages, or call `Interpolate::reset` after teleporting
+/// them; writes from `Update` are overwritten.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Interpolate {
+    /// `(previous, current)` simulated transforms. `None` until the first fixed step.
+    steps: Option<(Transform, Transform)>,
+}
+
+impl Component for Interpolate {}
+
+impl Interpolate {
+    /// Forgets the recorded steps so the next one doesn't blend from the old location.
+    pub fn reset(&mut self) {
+        self.steps = None;
+    }
+}
+
+fn restore_simulated_transforms(mut query: Query<(&mut Transform, &Interpolate)>) {
+    for (mut transform, interpolate) in &mut query {
+        if let Some((_, current)) = interpolate.steps {
+            *transform = current;
+        }
+    }
+}
+
+fn record_simulated_transforms(mut query: Query<(&Transform, &mut Interpolate)>) {
+    for (transform, mut interpolate) in &mut query {
+        let previous = interpolate.steps.map_or(*transform, |(_, current)| current);
+        interpolate.steps = Some((previous, *transform));
+    }
+}
+
+fn interpolate_transforms(fixed: Res<FixedTime>, mut query: Query<(&mut Transform, &Interpolate)>) {
+    let t = fixed.overstep_fraction();
+    for (mut transform, interpolate) in &mut query {
+        if let Some((previous, current)) = interpolate.steps {
+            *transform = Transform {
+                translation: previous.translation.lerp(current.translation, t),
+                rotation: previous.rotation.slerp(current.rotation, t),
+                scale: previous.scale.lerp(current.scale, t),
+            };
+        }
+    }
+}
+
 const MAX_DEPTH: usize = 64;
 
 fn add_global_transforms(
@@ -143,9 +193,15 @@ pub struct TransformPlugin;
 
 impl Plugin for TransformPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(
-            Stage::PostUpdate,
-            (add_global_transforms, propagate_transforms),
-        );
+        app.add_systems(Stage::FixedFirst, restore_simulated_transforms)
+            .add_systems(Stage::FixedLast, record_simulated_transforms)
+            .add_systems(
+                Stage::PostUpdate,
+                (
+                    interpolate_transforms,
+                    add_global_transforms,
+                    propagate_transforms,
+                ),
+            );
     }
 }
