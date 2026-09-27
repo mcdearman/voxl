@@ -1,16 +1,4 @@
-struct View {
-    view_proj: mat4x4<f32>,
-    camera_position: vec4<f32>,
-    light_direction: vec4<f32>,
-    light_color: vec4<f32>,
-    ambient_color: vec4<f32>,
-    fog_color: vec4<f32>,
-    // x: start distance, y: end distance
-    fog: vec4<f32>,
-};
-
-@group(0) @binding(0)
-var<uniform> view: View;
+// Voxel chunks. Prepended with render::PBR_WGSL.
 
 @group(1) @binding(0)
 var block_textures: texture_2d_array<f32>;
@@ -60,13 +48,10 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let normal = NORMALS[in.packed & 7u];
     let layer = in.packed >> 5u;
     let base = textureSample(block_textures, block_sampler, in.uv, layer).rgb;
-
-    let l = -normalize(view.light_direction.xyz);
-    let diffuse = max(dot(normal, l), 0.0) * view.light_color.rgb;
-    let lit = base * (view.ambient_color.rgb + diffuse) * in.occlusion;
-
-    // Distance fog toward the sky colour hides chunks popping in at the edge of the world.
-    let distance = length(view.camera_position.xyz - in.world_position);
-    let fog = smoothstep(view.fog.x, view.fog.y, distance);
-    return vec4<f32>(mix(lit, view.fog_color.rgb, fog), 1.0);
+    var s = default_surface(base, normal);
+    s.roughness = 0.9;
+    s.occlusion = in.occlusion;
+    let color = apply_haze(shade(s, in.world_position), in.world_position);
+    return vec4<f32>(color, 1.0);
 }
+

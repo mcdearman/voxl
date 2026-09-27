@@ -11,6 +11,34 @@ Click to capture the mouse, then: WASD / Space / Shift to fly (Ctrl to go fast),
 break a block, right click to place one (1-4 picks which), F to throw a ball, F2 for a
 screenshot, Esc to release the mouse and again to quit.
 
+## Demos
+
+```
+cargo run --release --example napoleonic
+```
+
+France, summer 1813, as photographically as the engine can manage: a foot battery at gun
+practice, a line battalion firing volleys, a column marching over the bridge and through the
+village, cuirassiers in reserve, the Emperor and his staff on a knoll, and a camp by the river.
+Click to capture the mouse; WASD walks, Shift runs, Tab switches to flying.
+
+It uses a photographed sky and photoscanned materials (Poly Haven, CC0), soldiers built from a
+scanned figure (Microsoft Rocketbox, MIT) and a CC0 horse, and generated trees (EZ-Tree, MIT);
+see `res/napoleonic/CREDITS.md`. The figures, trees and their levels of detail are made by the
+Blender scripts in `examples/napoleonic/tools`.
+
+```
+cargo run --release --example paris
+```
+
+The Place du Châtelet in about 1810, after Étienne Bouhot's painting: the Fontaine du Palmier
+and its gilded Victory, a square full of townsfolk who stroll about, stop to talk and carry water,
+Guard grenadiers at their post, carts and a coach, animals that walk on their own four (or two) feet, the fountain's jets simulated as water, and across the Pont au Change the clock tower of the Palais and
+the towers of the Conciergerie. With hardware ray tracing it has traced sun shadows, true
+reflections and light bounced about the square by baked light probes. The same controls as
+above. Assets are listed in `res/paris/CREDITS.md`; the people are dressed and posed by the
+Blender scripts in `examples/paris/tools`.
+
 ## Layout
 
 | Module | What it does |
@@ -18,7 +46,8 @@ screenshot, Esc to release the mouse and again to quit.
 | `ecs` | Sparse-set ECS: function systems, queries and filters, change detection, commands, events, startup access checking |
 | `app` | `App`, plugins and the frame's stages, including a fixed-timestep group |
 | `transform` | `Transform` / `GlobalTransform`, `Parent` hierarchies, `Interpolate` for smooth fixed-step motion |
-| `render` | wgpu setup, instanced mesh pipeline, shared view uniform, fog, texture arrays, screenshots. Plugins add pipelines through `DrawFunctions` |
+| `render` | wgpu setup; HDR rendering with MSAA, AgX tone mapping and bloom; physically based materials with textures; image-based sky lighting and aerial haze; cascaded sun shadows; hardware ray tracing (traced shadows, contact shadows, reflections, and light probes for bounced light); temporal anti-aliasing; light shafts through the shadow maps; decals; colour grading and film grain; frustum culling and levels of detail; glTF loading with skeletal animation (clips cross-faded and masked, meshes skinned on the GPU), two-bone inverse kinematics, procedural walking (`Gait`: planted feet and swinging steps for any number of legs, walk, trot and strut patterns, foot locking under clips) and reaching (`Reach`: hands onto moving targets); screenshots. Plugins add pipelines through `DrawFunctions`, `TransparentDrawFunctions` and `ShadowDrawFunctions`, sharing the lighting in `PBR_WGSL` |
+| `physics` | Rigid bodies (dynamic, kinematic, and animated ones the game moves) with sphere, box, capsule, plane, triangle-mesh and compound colliders; a sequential-impulse solver with friction, restitution, warm starting and sleeping; ball, hinge (with limits), distance and fixed joints; raycasts, overlap tests and a `CharacterController` that climbs steps and slides along walls. Fluids: `WaterSurface`, a wave-equation height field that floats bodies and ripples where things move or fall in, and `ParticleFluid`, position-based fluid particles with surface tension for jets, pours and spray that join the surfaces they land in. Add `PhysicsPlugin` |
 | `voxel` | Chunk storage, background terrain generation and meshing with ambient occlusion, streaming around a `ChunkViewer`, raycasts, frustum culling |
 | `tasks` | Worker thread pool |
 | `input`, `window`, `time`, `assets` | The usual |

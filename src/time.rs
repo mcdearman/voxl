@@ -33,6 +33,14 @@ impl Time {
         self.frame += 1;
     }
 
+    /// Steps time by a set amount instead of by the clock: for tests, and for rendering
+    /// frames offline at a fixed rate.
+    pub fn advance_by(&mut self, delta: Duration) {
+        self.delta = delta;
+        self.elapsed += delta;
+        self.frame += 1;
+    }
+
     pub fn delta(&self) -> Duration {
         self.delta
     }

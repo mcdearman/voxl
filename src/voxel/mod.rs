@@ -25,7 +25,10 @@ pub use world::{RaycastHit, VoxelWorld};
 use crate::{
     app::{App, Plugin, Stage},
     ecs::{Res, ResMut, World},
-    render::{DrawFunctions, Fog, Gpu, RenderFrame, TextureArray, ViewBinding},
+    render::{
+        DrawFunctions, Fog, Gpu, RenderFrame, ShadowDrawFunctions, ShadowMaps, TextureArray,
+        ViewBinding,
+    },
     tasks::TaskPool,
 };
 
@@ -107,9 +110,11 @@ impl Plugin for VoxelPlugin {
             .insert_resource(registry)
             .insert_resource(ChunkGenerator::new(move |chunk| terrain.generate(chunk)))
             .insert_resource(self.settings)
+            // Haze thick enough to hide chunks appearing at the edge of the world.
             .insert_resource(Fog {
-                start: view_distance * 0.6,
-                end: view_distance * 0.95,
+                density: 1.2 / view_distance,
+                height_falloff: 0.004,
+                base_height: 20.0,
             })
             .init_resource::<TaskPool>()
             .init_resource::<VoxelWorld>()
@@ -125,6 +130,10 @@ impl Plugin for VoxelPlugin {
             .expect("add VoxelPlugin after DefaultPlugins")
             .0
             .push(draw_chunks);
+        app.world
+            .resource_mut::<ShadowDrawFunctions>()
+            .0
+            .push(draw_chunk_shadows);
     }
 }
 
@@ -132,7 +141,12 @@ fn init_renderer(world: &mut World) {
     let gpu = world.resource::<Gpu>();
     let tiles = world.resource::<BlockTextures>();
     let textures = TextureArray::from_tiles(gpu, tiles.tile_size, &tiles.tiles);
-    let renderer = VoxelRenderer::new(gpu, world.resource::<ViewBinding>(), &textures);
+    let renderer = VoxelRenderer::new(
+        gpu,
+        world.resource::<ViewBinding>(),
+        world.resource::<ShadowMaps>(),
+        &textures,
+    );
     world.insert_resource(renderer);
 }
 
@@ -155,4 +169,8 @@ fn prepare_chunks(
 
 fn draw_chunks(world: &World, pass: &mut wgpu::RenderPass<'_>) {
     world.resource::<VoxelRenderer>().draw(pass);
+}
+
+fn draw_chunk_shadows(world: &World, pass: &mut wgpu::RenderPass<'_>) {
+    world.resource::<VoxelRenderer>().draw_shadows(pass);
 }

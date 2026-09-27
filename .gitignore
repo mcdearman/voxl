@@ -1,4 +1,8 @@
 /target
 .vscode/
 .idea/
-.vs/screenshot-*.png
+.vs/
+screenshot-*.png
+__pycache__/
+# Raw downloads the Blender tools build the models from (see each CREDITS.md).
+res/*/sources/

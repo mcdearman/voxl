@@ -4,7 +4,10 @@ use glam::{IVec3, Mat4, Vec3, Vec4};
 use wgpu::util::DeviceExt;
 
 use super::mesher::{chunk_bounds, ChunkMesh, VoxelVertex};
-use crate::render::{Gpu, TextureArray, ViewBinding, DEPTH_FORMAT};
+use crate::render::{
+    main_depth_state, main_multisample, shadow_depth_state, Gpu, ShadowMaps, TextureArray,
+    ViewBinding, HDR_FORMAT,
+};
 
 struct GpuChunk {
     vertices: wgpu::Buffer,
@@ -15,15 +18,21 @@ struct GpuChunk {
 /// Owns the chunk meshes on the GPU and draws the ones inside the camera's view.
 pub struct VoxelRenderer {
     pipeline: wgpu::RenderPipeline,
+    shadow_pipeline: wgpu::RenderPipeline,
     texture_bind_group: wgpu::BindGroup,
     chunks: HashMap<IVec3, GpuChunk>,
     visible: Vec<IVec3>,
 }
 
 impl VoxelRenderer {
-    pub fn new(gpu: &Gpu, view: &ViewBinding, textures: &TextureArray) -> Self {
+    pub fn new(gpu: &Gpu, view: &ViewBinding, shadows: &ShadowMaps, textures: &TextureArray) -> Self {
         let device = &gpu.device;
-        let shader = device.create_shader_module(wgpu::include_wgsl!("voxel.wgsl"));
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("voxel shader"),
+            source: wgpu::ShaderSource::Wgsl(
+                format!("{}\n{}", gpu.pbr_wgsl(), include_str!("voxel.wgsl")).into(),
+            ),
+        });
         let texture_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("block texture layout"),
             entries: &[
@@ -77,8 +86,8 @@ impl VoxelRenderer {
                 module: &shader,
                 entry_point: Some("fs_main"),
                 targets: &[Some(wgpu::ColorTargetState {
-                    format: gpu.config.format,
-                    blend: Some(wgpu::BlendState::REPLACE),
+                    format: HDR_FORMAT,
+                    blend: None,
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
                 compilation_options: Default::default(),
@@ -87,19 +96,37 @@ impl VoxelRenderer {
                 cull_mode: Some(wgpu::Face::Back),
                 ..Default::default()
             },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: DEPTH_FORMAT,
-                depth_write_enabled: true,
-                depth_compare: wgpu::CompareFunction::Less,
-                stencil: Default::default(),
-                bias: Default::default(),
-            }),
+            depth_stencil: Some(main_depth_state(true)),
+            multisample: main_multisample(false),
+            multiview: None,
+            cache: None,
+        });
+
+        let shadow_shader = device.create_shader_module(wgpu::include_wgsl!("voxel_shadow.wgsl"));
+        let shadow_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("voxel shadow layout"),
+            bind_group_layouts: &[&shadows.layout],
+            push_constant_ranges: &[],
+        });
+        let shadow_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("voxel shadow pipeline"),
+            layout: Some(&shadow_layout),
+            vertex: wgpu::VertexState {
+                module: &shadow_shader,
+                entry_point: Some("vs_main"),
+                buffers: &[VoxelVertex::layout()],
+                compilation_options: Default::default(),
+            },
+            fragment: None,
+            primitive: Default::default(),
+            depth_stencil: Some(shadow_depth_state()),
             multisample: Default::default(),
             multiview: None,
             cache: None,
         });
         Self {
             pipeline,
+            shadow_pipeline,
             texture_bind_group,
             chunks: HashMap::new(),
             visible: Vec::new(),
@@ -161,6 +188,16 @@ impl VoxelRenderer {
                     plane.truncate().dot(corner) + plane.w >= 0.0
                 })
             }));
+    }
+
+    /// Every loaded chunk casts, including ones outside the view whose shadows fall inside it.
+    pub fn draw_shadows(&self, pass: &mut wgpu::RenderPass<'_>) {
+        pass.set_pipeline(&self.shadow_pipeline);
+        for mesh in self.chunks.values() {
+            pass.set_vertex_buffer(0, mesh.vertices.slice(..));
+            pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
+            pass.draw_indexed(0..mesh.index_count, 0, 0..1);
+        }
     }
 
     pub fn draw(&self, pass: &mut wgpu::RenderPass<'_>) {

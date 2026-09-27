@@ -82,7 +82,7 @@ pub(crate) fn save(gpu: &Gpu, readback: Readback, path: &Path) -> anyhow::Result
     let data = slice.get_mapped_range();
     let mut pixels = Vec::with_capacity((readback.width * readback.height * 4) as usize);
     for row in data.chunks_exact(readback.padded_row as usize) {
-        for pixel in row[..(readback.width * 4) as usize].chunks_exact(4) {
+        for pixel in row[..(readback.width * 4) as usize].as_chunks::<4>().0 {
             let [a, b, c, _] = [pixel[0], pixel[1], pixel[2], pixel[3]];
             pixels.extend(if readback.bgra {
                 [c, b, a, 255]
