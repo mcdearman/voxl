@@ -1,4 +1,5 @@
 use std::{
+    alloc::Layout,
     any::{type_name, Any, TypeId},
     cell::{Cell, RefCell, UnsafeCell},
     collections::{hash_map::Entry, HashMap},
@@ -9,7 +10,9 @@ use super::{
     bundle::Bundle,
     entity::{Entities, Entity},
     query::{Query, QueryData, QueryFilter, SystemTicks},
-    storage::{Component, ComponentSet, ComponentTicks, ErasedStorage, Tick},
+    storage::{
+        BlobSet, Component, ComponentKey, ComponentSet, ComponentTicks, DropFn, ErasedStorage, Tick,
+    },
 };
 
 pub(crate) struct ResourceCell {
@@ -33,6 +36,14 @@ impl ResourceCell {
     }
 }
 
+/// A component that code without access to its Rust type (a native plugin) can find by name.
+#[derive(Clone, Debug)]
+pub struct NamedComponent {
+    pub name: String,
+    pub key: ComponentKey,
+    pub layout: Layout,
+}
+
 /// Holds all entities, components and resources.
 ///
 /// Shared (`&self`) methods only hand out shared references, and mutation needs `&mut self`.
@@ -40,7 +51,11 @@ impl ResourceCell {
 /// parameters reach into it through `&World` under the access rules checked at initialization.
 pub struct World {
     entities: RefCell<Entities>,
-    storages: HashMap<TypeId, Box<dyn ErasedStorage>>,
+    storages: HashMap<ComponentKey, Box<dyn ErasedStorage>>,
+    /// Components that can be found by name, in the order they were named.
+    named: Vec<NamedComponent>,
+    names: HashMap<String, u32>,
+    next_dynamic: u32,
     resources: HashMap<TypeId, ResourceCell>,
     change_tick: Cell<Tick>,
 }
@@ -56,6 +71,9 @@ impl World {
         Self {
             entities: RefCell::default(),
             storages: HashMap::new(),
+            named: Vec::new(),
+            names: HashMap::new(),
+            next_dynamic: 0,
             resources: HashMap::new(),
             change_tick: Cell::new(1),
         }
@@ -150,23 +168,134 @@ impl World {
 
     pub(crate) fn storage<C: Component>(&self) -> Option<&ComponentSet<C>> {
         self.storages
-            .get(&TypeId::of::<C>())
+            .get(&ComponentKey::of::<C>())
             .map(|s| s.as_any().downcast_ref().unwrap())
     }
 
     pub(crate) fn storage_mut<C: Component>(&mut self) -> Option<&mut ComponentSet<C>> {
         self.storages
-            .get_mut(&TypeId::of::<C>())
+            .get_mut(&ComponentKey::of::<C>())
             .map(|s| s.as_any_mut().downcast_mut().unwrap())
     }
 
     pub(crate) fn storage_or_insert<C: Component>(&mut self) -> &mut ComponentSet<C> {
         self.storages
-            .entry(TypeId::of::<C>())
+            .entry(ComponentKey::of::<C>())
             .or_insert_with(|| Box::new(ComponentSet::<C>::default()))
             .as_any_mut()
             .downcast_mut()
             .unwrap()
+    }
+
+    // --- components by name ---
+
+    /// Makes a Rust component reachable by name, with its bytes as its interface. Only do this
+    /// for `#[repr(C)]` types whose layout is part of a published contract.
+    pub fn export_component<C: Component + Copy>(&mut self, name: &str) -> u32 {
+        self.storage_or_insert::<C>();
+        if let Some(&id) = self.names.get(name) {
+            return id;
+        }
+        self.name_component(name, ComponentKey::of::<C>(), Layout::new::<C>())
+    }
+
+    /// Defines a component by size and alignment alone, or finds the one already defined under
+    /// `name`. A component redefined with the same layout keeps its values (this is what lets
+    /// data outlive a plugin reload); with a different layout the old values are destroyed.
+    pub fn register_blob_component(
+        &mut self,
+        name: &str,
+        layout: Layout,
+        drop: Option<DropFn>,
+    ) -> Result<u32, String> {
+        let Some(&id) = self.names.get(name) else {
+            let key = ComponentKey::Dynamic(self.next_dynamic);
+            self.next_dynamic += 1;
+            self.storages
+                .insert(key, Box::new(BlobSet::new(layout, drop)));
+            return Ok(self.name_component(name, key, layout));
+        };
+        let entry = &mut self.named[id as usize];
+        if matches!(entry.key, ComponentKey::Type(_)) {
+            return Err(format!("`{name}` is a built-in component"));
+        }
+        if entry.layout == layout {
+            self.blob_mut(id).unwrap().set_drop(drop);
+        } else {
+            log::warn!(
+                "component `{name}` changed layout ({:?} to {layout:?}); its values were discarded",
+                entry.layout
+            );
+            entry.layout = layout;
+            let key = entry.key;
+            self.storages
+                .insert(key, Box::new(BlobSet::new(layout, drop)));
+        }
+        Ok(id)
+    }
+
+    fn name_component(&mut self, name: &str, key: ComponentKey, layout: Layout) -> u32 {
+        let id = self.named.len() as u32;
+        self.named.push(NamedComponent {
+            name: name.to_owned(),
+            key,
+            layout,
+        });
+        self.names.insert(name.to_owned(), id);
+        id
+    }
+
+    pub fn named_component_id(&self, name: &str) -> Option<u32> {
+        self.names.get(name).copied()
+    }
+
+    pub fn named_component(&self, id: u32) -> Option<&NamedComponent> {
+        self.named.get(id as usize)
+    }
+
+    fn blob_mut(&mut self, id: u32) -> Option<&mut BlobSet> {
+        let key = self.named.get(id as usize)?.key;
+        self.storages.get_mut(&key)?.as_any_mut().downcast_mut()
+    }
+
+    /// Stops destroying a runtime-defined component's values (they leak instead). Used while
+    /// the code holding its destructor is unloaded.
+    pub(crate) fn forget_blob_drop(&mut self, id: u32) {
+        if let Some(blob) = self.blob_mut(id) {
+            blob.set_drop(None);
+        }
+    }
+
+    pub(crate) fn erased_storage(&self, key: ComponentKey) -> Option<&dyn ErasedStorage> {
+        self.storages.get(&key).map(|s| &**s)
+    }
+
+    /// Inserts a component from raw bytes. Returns false if the entity is dead or the component
+    /// unknown.
+    ///
+    /// # Safety
+    /// `src` must point to a valid value of the component, which the caller gives up.
+    pub(crate) unsafe fn insert_raw(
+        &mut self,
+        entity: Entity,
+        key: ComponentKey,
+        src: *const u8,
+    ) -> bool {
+        let tick = self.change_tick();
+        if !self.contains_entity(entity) {
+            return false;
+        }
+        let Some(storage) = self.storages.get_mut(&key) else {
+            return false;
+        };
+        storage.insert_raw(entity, src, tick);
+        true
+    }
+
+    pub(crate) fn remove_by_key(&mut self, entity: Entity, key: ComponentKey) {
+        if let Some(storage) = self.storages.get_mut(&key) {
+            storage.remove_entity(entity);
+        }
     }
 
     /// Runs a one-off query outside of a system. Change filters treat everything as new.

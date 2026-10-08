@@ -1,0 +1,704 @@
+//! The engine's side of `include/voxl.h`: the functions a plugin is handed.
+//!
+//! Every function checks its arguments and catches panics, because whatever is on the other
+//! side of the boundary may be in any language and can't be unwound through.
+
+use std::{
+    alloc::{self, Layout},
+    collections::HashMap,
+    ffi::c_void,
+    panic::{catch_unwind, AssertUnwindSafe},
+    ptr::NonNull,
+};
+
+use voxl_plugin::sys::{self, VoxlApi, VoxlApp, VoxlComponent, VoxlEntity, VoxlSystem};
+
+use super::system::{check_queries, Context, DynamicSystem, Term};
+use crate::{
+    app::Stage,
+    assets::{Assets, Handle},
+    ecs::{DropFn, Entity, System, World},
+    input::{ButtonInput, KeyCode, Mouse, MouseButton},
+    render::{Color, Material, Mesh, Mesh3d, Vertex},
+};
+
+/// A block of plugin state that outlives reloads.
+pub(crate) struct StateBlock {
+    data: NonNull<u8>,
+    layout: Layout,
+}
+
+impl StateBlock {
+    fn new(layout: Layout) -> Self {
+        let data = if layout.size() == 0 {
+            NonNull::new(std::ptr::without_provenance_mut(layout.align())).unwrap()
+        } else {
+            // SAFETY: the layout has a non-zero size.
+            NonNull::new(unsafe { alloc::alloc_zeroed(layout) })
+                .unwrap_or_else(|| alloc::handle_alloc_error(layout))
+        };
+        Self { data, layout }
+    }
+}
+
+impl Drop for StateBlock {
+    fn drop(&mut self) {
+        if self.layout.size() != 0 {
+            // SAFETY: allocated in `new` with this layout.
+            unsafe { alloc::dealloc(self.data.as_ptr(), self.layout) }
+        }
+    }
+}
+
+/// What a `VoxlApp*` points to while a plugin's load function runs. It collects what the
+/// plugin registers; the host installs it once the load has succeeded.
+pub(crate) struct Registrar<'a> {
+    pub world: &'a mut World,
+    pub states: &'a mut HashMap<String, StateBlock>,
+    pub plugin: &'a str,
+    pub systems: Vec<(Stage, DynamicSystem)>,
+    /// Runtime-defined components this plugin registered, by world id.
+    pub components: Vec<u32>,
+}
+
+pub(crate) static API: VoxlApi = VoxlApi {
+    abi_version: sys::VOXL_ABI_VERSION,
+    size: size_of::<VoxlApi>() as u32,
+    log,
+    component_register,
+    component_lookup,
+    state,
+    system_add,
+    delta_seconds,
+    elapsed_seconds,
+    query_next,
+    query_get,
+    spawn,
+    despawn,
+    insert,
+    remove,
+    system_add_query,
+    query_next_in,
+    query_get_in,
+    query_rewind,
+    key_down,
+    key_pressed,
+    key_released,
+    mouse_down,
+    mouse_pressed,
+    mouse_motion,
+    mesh_shape,
+    mesh_create,
+    set_mesh,
+    set_material,
+};
+
+/// Runs `body`, turning a panic into `fallback` so it never unwinds into the plugin.
+fn guard<T>(what: &str, fallback: T, body: impl FnOnce() -> T) -> T {
+    catch_unwind(AssertUnwindSafe(body)).unwrap_or_else(|_| {
+        log::error!(target: "plugin", "the engine panicked in `{what}`");
+        fallback
+    })
+}
+
+/// # Safety
+/// `ptr` must be readable for `len` bytes, or null.
+unsafe fn text<'a>(ptr: *const u8, len: usize) -> Option<&'a str> {
+    if ptr.is_null() {
+        return None;
+    }
+    std::str::from_utf8(std::slice::from_raw_parts(ptr, len)).ok()
+}
+
+fn layout_of(size: usize, align: usize) -> Option<Layout> {
+    Layout::from_size_align(size, align).ok()
+}
+
+/// Component handles are world ids offset by one, so that zero can mean "none".
+fn component_id(handle: VoxlComponent) -> Option<u32> {
+    handle.checked_sub(1)
+}
+
+unsafe extern "C" fn log(level: u32, message: *const u8, len: usize) {
+    guard("log", (), || {
+        let Some(message) = text(message, len) else {
+            return;
+        };
+        let level = match level {
+            sys::VOXL_LOG_ERROR => log::Level::Error,
+            sys::VOXL_LOG_WARN => log::Level::Warn,
+            sys::VOXL_LOG_DEBUG => log::Level::Debug,
+            _ => log::Level::Info,
+        };
+        log::log!(target: "plugin", level, "{message}");
+    })
+}
+
+unsafe extern "C" fn component_register(
+    app: *mut VoxlApp,
+    name: *const u8,
+    name_len: usize,
+    size: usize,
+    align: usize,
+    drop: Option<sys::VoxlDropFn>,
+) -> VoxlComponent {
+    guard("component_register", 0, || {
+        let Some(registrar) = app.cast::<Registrar>().as_mut() else {
+            return 0;
+        };
+        let (Some(name), Some(layout)) = (text(name, name_len), layout_of(size, align)) else {
+            log::error!(target: "plugin", "{}: bad component name or layout", registrar.plugin);
+            return 0;
+        };
+        // SAFETY: the two function types differ only in the pointee of their one argument.
+        let drop = drop.map(|f| std::mem::transmute::<sys::VoxlDropFn, DropFn>(f));
+        match registrar.world.register_blob_component(name, layout, drop) {
+            Ok(id) => {
+                if !registrar.components.contains(&id) {
+                    registrar.components.push(id);
+                }
+                id + 1
+            }
+            Err(err) => {
+                log::error!(target: "plugin", "{}: {err}", registrar.plugin);
+                0
+            }
+        }
+    })
+}
+
+unsafe extern "C" fn component_lookup(
+    app: *mut VoxlApp,
+    name: *const u8,
+    name_len: usize,
+    size: *mut usize,
+    align: *mut usize,
+) -> VoxlComponent {
+    guard("component_lookup", 0, || {
+        let (Some(registrar), Some(name)) =
+            (app.cast::<Registrar>().as_mut(), text(name, name_len))
+        else {
+            return 0;
+        };
+        let Some(id) = registrar.world.named_component_id(name) else {
+            return 0;
+        };
+        let layout = registrar.world.named_component(id).unwrap().layout;
+        if let Some(size) = size.as_mut() {
+            *size = layout.size();
+        }
+        if let Some(align) = align.as_mut() {
+            *align = layout.align();
+        }
+        id + 1
+    })
+}
+
+unsafe extern "C" fn state(
+    app: *mut VoxlApp,
+    name: *const u8,
+    name_len: usize,
+    size: usize,
+    align: usize,
+) -> *mut c_void {
+    guard("state", std::ptr::null_mut(), || {
+        let (Some(registrar), Some(name), Some(layout)) = (
+            app.cast::<Registrar>().as_mut(),
+            text(name, name_len),
+            layout_of(size, align),
+        ) else {
+            return std::ptr::null_mut();
+        };
+        let block = registrar
+            .states
+            .entry(name.to_owned())
+            .and_modify(|block| {
+                if block.layout != layout {
+                    log::warn!(
+                        target: "plugin",
+                        "{}: state `{name}` changed layout and was reset",
+                        registrar.plugin
+                    );
+                    *block = StateBlock::new(layout);
+                }
+            })
+            .or_insert_with(|| StateBlock::new(layout));
+        block.data.as_ptr().cast()
+    })
+}
+
+unsafe extern "C" fn system_add(app: *mut VoxlApp, desc: *const sys::VoxlSystemDesc) -> i32 {
+    guard("system_add", -1, || {
+        let (Some(registrar), Some(desc)) = (app.cast::<Registrar>().as_mut(), desc.as_ref())
+        else {
+            return -1;
+        };
+        let fail = |why: &str| {
+            log::error!(target: "plugin", "{}: system not added: {why}", registrar.plugin);
+            -1
+        };
+        let Some(name) = text(desc.name, desc.name_len) else {
+            return fail("its name is missing or not UTF-8");
+        };
+        let Some(run) = desc.run else {
+            return fail("it has no function");
+        };
+        let stage = match desc.stage {
+            sys::VOXL_STAGE_STARTUP => Stage::Startup,
+            sys::VOXL_STAGE_FIRST => Stage::First,
+            sys::VOXL_STAGE_PRE_UPDATE => Stage::PreUpdate,
+            sys::VOXL_STAGE_FIXED_UPDATE => Stage::FixedUpdate,
+            sys::VOXL_STAGE_UPDATE => Stage::Update,
+            sys::VOXL_STAGE_POST_UPDATE => Stage::PostUpdate,
+            sys::VOXL_STAGE_LAST => Stage::Last,
+            _ => return fail("unknown stage"),
+        };
+        if registrar
+            .systems
+            .iter()
+            .any(|(_, s)| crate::ecs::System::name(s) == name)
+        {
+            return fail("the plugin already has a system with that name");
+        }
+        let terms = match read_terms(registrar.world, desc.terms, desc.term_count) {
+            Ok(terms) => terms,
+            Err(why) => return fail(why),
+        };
+        let name = format!("{}::{name}", registrar.plugin);
+        if let Err(conflict) = check_queries(&name, std::slice::from_ref(&terms)) {
+            return fail(&conflict);
+        }
+        let system = DynamicSystem::new(name, stage == Stage::FixedUpdate, run, desc.user, terms);
+        registrar.systems.push((stage, system));
+        0
+    })
+}
+
+/// Reads and checks a plugin's term list.
+///
+/// # Safety
+/// `terms` must be readable for `count` terms, or `count` zero.
+unsafe fn read_terms(
+    world: &World,
+    terms: *const sys::VoxlTerm,
+    count: usize,
+) -> Result<Vec<Term>, &'static str> {
+    if count == 0 {
+        return Ok(Vec::new());
+    }
+    if terms.is_null() {
+        return Err("its terms are missing");
+    }
+    std::slice::from_raw_parts(terms, count)
+        .iter()
+        .map(|raw| {
+            let named = component_id(raw.component)
+                .and_then(|id| world.named_component(id))
+                .ok_or("a term names a component that doesn't exist")?;
+            if raw.access > sys::VOXL_WITHOUT {
+                return Err("a term has an unknown access mode");
+            }
+            Ok(Term {
+                key: named.key,
+                access: raw.access,
+                name: named.name.clone(),
+            })
+        })
+        .collect()
+}
+
+unsafe extern "C" fn system_add_query(
+    app: *mut VoxlApp,
+    system: *const u8,
+    system_len: usize,
+    terms: *const sys::VoxlTerm,
+    term_count: usize,
+) -> i32 {
+    guard("system_add_query", -1, || {
+        let Some(registrar) = app.cast::<Registrar>().as_mut() else {
+            return -1;
+        };
+        let plugin = registrar.plugin;
+        let fail = |why: &str| {
+            log::error!(target: "plugin", "{plugin}: query not added: {why}");
+            -1
+        };
+        let Some(name) = text(system, system_len) else {
+            return fail("the system's name is missing or not UTF-8");
+        };
+        let terms = match read_terms(registrar.world, terms, term_count) {
+            Ok(terms) => terms,
+            Err(why) => return fail(why),
+        };
+        let full_name = format!("{plugin}::{name}");
+        let Some((_, system)) = registrar
+            .systems
+            .iter_mut()
+            .find(|(_, s)| s.name() == full_name)
+        else {
+            return fail("add the system before giving it more queries");
+        };
+        match system.add_query(terms) {
+            Ok(index) => index as i32,
+            Err(conflict) => fail(&conflict),
+        }
+    })
+}
+
+/// # Safety
+/// `system` must be the pointer a running system was called with.
+unsafe fn context<'a>(system: *mut VoxlSystem) -> Option<&'a mut Context<'a>> {
+    system.cast::<Context>().as_mut()
+}
+
+unsafe extern "C" fn delta_seconds(system: *mut VoxlSystem) -> f32 {
+    guard("delta_seconds", 0.0, || {
+        context(system).map_or(0.0, |c| c.delta)
+    })
+}
+
+unsafe extern "C" fn elapsed_seconds(system: *mut VoxlSystem) -> f64 {
+    guard("elapsed_seconds", 0.0, || {
+        context(system).map_or(0.0, |c| c.elapsed)
+    })
+}
+
+unsafe extern "C" fn query_next(
+    system: *mut VoxlSystem,
+    entity: *mut VoxlEntity,
+    components: *mut *mut c_void,
+) -> u8 {
+    guard("query_next", 0, || {
+        let Some(context) = context(system) else {
+            return 0;
+        };
+        match context.next(0, components) {
+            Some(found) => {
+                if let Some(entity) = entity.as_mut() {
+                    *entity = found.to_bits();
+                }
+                1
+            }
+            None => 0,
+        }
+    })
+}
+
+unsafe extern "C" fn query_get(
+    system: *mut VoxlSystem,
+    entity: VoxlEntity,
+    components: *mut *mut c_void,
+) -> u8 {
+    guard("query_get", 0, || {
+        context(system).is_some_and(|c| c.get(0, Entity::from_bits(entity), components)) as u8
+    })
+}
+
+unsafe extern "C" fn spawn(system: *mut VoxlSystem) -> VoxlEntity {
+    guard("spawn", sys::VOXL_ENTITY_NONE, || {
+        context(system).map_or(sys::VOXL_ENTITY_NONE, |c| c.spawn().to_bits())
+    })
+}
+
+unsafe extern "C" fn despawn(system: *mut VoxlSystem, entity: VoxlEntity) {
+    guard("despawn", (), || {
+        if let Some(context) = context(system) {
+            let entity = Entity::from_bits(entity);
+            context.queue.push(move |world| {
+                world.despawn(entity);
+            });
+        }
+    })
+}
+
+unsafe extern "C" fn insert(
+    system: *mut VoxlSystem,
+    entity: VoxlEntity,
+    component: VoxlComponent,
+    value: *const c_void,
+) {
+    guard("insert", (), || {
+        let Some(context) = context(system) else {
+            return;
+        };
+        let named = component_id(component).and_then(|id| context.world().named_component(id));
+        let (Some(named), false) = (named, value.is_null()) else {
+            log::error!(target: "plugin", "insert: unknown component or null value");
+            return;
+        };
+        // Copy the value now; it is moved into the world when the system's commands apply.
+        let bytes = std::slice::from_raw_parts(value.cast::<u8>(), named.layout.size()).to_vec();
+        let (key, entity) = (named.key, Entity::from_bits(entity));
+        context.queue.push(move |world| {
+            // SAFETY: the plugin vouches that these bytes are a value of the component, which
+            // is all a value defined across the boundary can ever be.
+            unsafe { world.insert_raw(entity, key, bytes.as_ptr()) };
+        });
+    })
+}
+
+unsafe extern "C" fn remove(system: *mut VoxlSystem, entity: VoxlEntity, component: VoxlComponent) {
+    guard("remove", (), || {
+        let Some(context) = context(system) else {
+            return;
+        };
+        let Some(named) =
+            component_id(component).and_then(|id| context.world().named_component(id))
+        else {
+            return;
+        };
+        let (key, entity) = (named.key, Entity::from_bits(entity));
+        context
+            .queue
+            .push(move |world| world.remove_by_key(entity, key));
+    })
+}
+
+unsafe extern "C" fn query_next_in(
+    system: *mut VoxlSystem,
+    query: u32,
+    entity: *mut VoxlEntity,
+    components: *mut *mut c_void,
+) -> u8 {
+    guard("query_next_in", 0, || {
+        let Some(found) = context(system).and_then(|c| c.next(query as usize, components)) else {
+            return 0;
+        };
+        if let Some(entity) = entity.as_mut() {
+            *entity = found.to_bits();
+        }
+        1
+    })
+}
+
+unsafe extern "C" fn query_get_in(
+    system: *mut VoxlSystem,
+    query: u32,
+    entity: VoxlEntity,
+    components: *mut *mut c_void,
+) -> u8 {
+    guard("query_get_in", 0, || {
+        context(system)
+            .is_some_and(|c| c.get(query as usize, Entity::from_bits(entity), components))
+            as u8
+    })
+}
+
+unsafe extern "C" fn query_rewind(system: *mut VoxlSystem, query: u32) {
+    guard("query_rewind", (), || {
+        if let Some(context) = context(system) {
+            context.rewind(query as usize);
+        }
+    })
+}
+
+/// The key a `VOXL_KEY_*` number stands for.
+fn key_code(key: u32) -> Option<KeyCode> {
+    use KeyCode::*;
+    const LETTERS: [KeyCode; 26] = [
+        KeyA, KeyB, KeyC, KeyD, KeyE, KeyF, KeyG, KeyH, KeyI, KeyJ, KeyK, KeyL, KeyM, KeyN, KeyO,
+        KeyP, KeyQ, KeyR, KeyS, KeyT, KeyU, KeyV, KeyW, KeyX, KeyY, KeyZ,
+    ];
+    const DIGITS: [KeyCode; 10] = [
+        Digit0, Digit1, Digit2, Digit3, Digit4, Digit5, Digit6, Digit7, Digit8, Digit9,
+    ];
+    const OTHERS: [KeyCode; 15] = [
+        Space,
+        Enter,
+        Escape,
+        Tab,
+        Backspace,
+        ArrowLeft,
+        ArrowRight,
+        ArrowUp,
+        ArrowDown,
+        ShiftLeft,
+        ShiftRight,
+        ControlLeft,
+        ControlRight,
+        AltLeft,
+        AltRight,
+    ];
+    const FUNCTION: [KeyCode; 12] = [F1, F2, F3, F4, F5, F6, F7, F8, F9, F10, F11, F12];
+    let key = key as usize;
+    LETTERS
+        .get(key)
+        .or_else(|| DIGITS.get(key.wrapping_sub(sys::VOXL_KEY_0 as usize)))
+        .or_else(|| OTHERS.get(key.wrapping_sub(sys::VOXL_KEY_SPACE as usize)))
+        .or_else(|| FUNCTION.get(key.wrapping_sub(sys::VOXL_KEY_F1 as usize)))
+        .copied()
+}
+
+fn mouse_button(button: u32) -> Option<MouseButton> {
+    match button {
+        sys::VOXL_MOUSE_LEFT => Some(MouseButton::Left),
+        sys::VOXL_MOUSE_RIGHT => Some(MouseButton::Right),
+        sys::VOXL_MOUSE_MIDDLE => Some(MouseButton::Middle),
+        _ => None,
+    }
+}
+
+/// Asks the keyboard state a question. False if there is no keyboard (a headless app).
+unsafe fn key(
+    system: *mut VoxlSystem,
+    key: u32,
+    ask: fn(&ButtonInput<KeyCode>, KeyCode) -> bool,
+) -> u8 {
+    guard("key", 0, || {
+        let keys = context(system).and_then(|c| c.world().get_resource::<ButtonInput<KeyCode>>());
+        keys.zip(key_code(key))
+            .is_some_and(|(keys, key)| ask(keys, key)) as u8
+    })
+}
+
+unsafe extern "C" fn key_down(system: *mut VoxlSystem, code: u32) -> u8 {
+    key(system, code, ButtonInput::pressed)
+}
+
+unsafe extern "C" fn key_pressed(system: *mut VoxlSystem, code: u32) -> u8 {
+    key(system, code, ButtonInput::just_pressed)
+}
+
+unsafe extern "C" fn key_released(system: *mut VoxlSystem, code: u32) -> u8 {
+    key(system, code, ButtonInput::just_released)
+}
+
+unsafe fn mouse(
+    system: *mut VoxlSystem,
+    button: u32,
+    ask: fn(&ButtonInput<MouseButton>, MouseButton) -> bool,
+) -> u8 {
+    guard("mouse", 0, || {
+        let buttons =
+            context(system).and_then(|c| c.world().get_resource::<ButtonInput<MouseButton>>());
+        buttons
+            .zip(mouse_button(button))
+            .is_some_and(|(buttons, button)| ask(buttons, button)) as u8
+    })
+}
+
+unsafe extern "C" fn mouse_down(system: *mut VoxlSystem, button: u32) -> u8 {
+    mouse(system, button, ButtonInput::pressed)
+}
+
+unsafe extern "C" fn mouse_pressed(system: *mut VoxlSystem, button: u32) -> u8 {
+    mouse(system, button, ButtonInput::just_pressed)
+}
+
+unsafe extern "C" fn mouse_motion(system: *mut VoxlSystem, delta: *mut f32) {
+    guard("mouse_motion", (), || {
+        if delta.is_null() {
+            return;
+        }
+        let motion = context(system)
+            .and_then(|c| c.world().get_resource::<Mouse>())
+            .map_or(glam::Vec2::ZERO, |mouse| mouse.delta);
+        delta.write(motion.x);
+        delta.add(1).write(motion.y);
+    })
+}
+
+/// Mesh handles are asset ids offset by one, so that zero can mean "none".
+fn mesh_handle(context: &mut Context, mesh: Mesh) -> sys::VoxlMesh {
+    match context.add_mesh(mesh) {
+        Some(id) => id + 1,
+        None => {
+            log::error!(target: "plugin", "this app has no mesh assets (no renderer)");
+            0
+        }
+    }
+}
+
+unsafe extern "C" fn mesh_shape(system: *mut VoxlSystem, shape: u32, a: f32) -> sys::VoxlMesh {
+    guard("mesh_shape", 0, || {
+        let Some(context) = context(system) else {
+            return 0;
+        };
+        let mesh = match shape {
+            sys::VOXL_SHAPE_CUBE => Mesh::cube(a),
+            sys::VOXL_SHAPE_SPHERE => Mesh::uv_sphere(a, 32, 16),
+            sys::VOXL_SHAPE_PLANE => Mesh::plane(a),
+            _ => {
+                log::error!(target: "plugin", "mesh_shape: unknown shape {shape}");
+                return 0;
+            }
+        };
+        mesh_handle(context, mesh)
+    })
+}
+
+unsafe extern "C" fn mesh_create(
+    system: *mut VoxlSystem,
+    vertices: *const sys::VoxlVertex,
+    vertex_count: usize,
+    indices: *const u32,
+    index_count: usize,
+) -> sys::VoxlMesh {
+    guard("mesh_create", 0, || {
+        let Some(context) = context(system) else {
+            return 0;
+        };
+        if vertices.is_null() || indices.is_null() || !index_count.is_multiple_of(3) {
+            log::error!(target: "plugin", "mesh_create: missing data, or indices not in threes");
+            return 0;
+        }
+        let vertices = std::slice::from_raw_parts(vertices, vertex_count);
+        let indices = std::slice::from_raw_parts(indices, index_count);
+        if indices.iter().any(|i| *i as usize >= vertices.len()) {
+            log::error!(target: "plugin", "mesh_create: an index is past the last vertex");
+            return 0;
+        }
+        let mesh = Mesh {
+            vertices: vertices
+                .iter()
+                .map(|v| Vertex::new(v.position.into(), v.normal.into(), v.uv.into()))
+                .collect(),
+            indices: indices.to_vec(),
+        };
+        mesh_handle(context, mesh)
+    })
+}
+
+unsafe extern "C" fn set_mesh(system: *mut VoxlSystem, entity: VoxlEntity, mesh: sys::VoxlMesh) {
+    guard("set_mesh", (), || {
+        let (Some(context), Some(id)) = (context(system), mesh.checked_sub(1)) else {
+            return;
+        };
+        let entity = Entity::from_bits(entity);
+        context.queue.push(move |world| {
+            let exists = world
+                .get_resource::<Assets<Mesh>>()
+                .is_some_and(|meshes| meshes.contains_id(id));
+            if exists {
+                world.insert(entity, Mesh3d(Handle::from_id(id)));
+            } else {
+                log::error!(target: "plugin", "set_mesh: no such mesh");
+            }
+        });
+    })
+}
+
+unsafe extern "C" fn set_material(
+    system: *mut VoxlSystem,
+    entity: VoxlEntity,
+    material: *const sys::VoxlMaterial,
+) {
+    guard("set_material", (), || {
+        let (Some(context), Some(material)) = (context(system), material.as_ref()) else {
+            return;
+        };
+        let [r, g, b, a] = material.color;
+        let [er, eg, eb] = material.emissive;
+        let material = Material {
+            color: Color { r, g, b, a },
+            emissive: Color::rgb(er, eg, eb),
+            roughness: material.roughness,
+            metallic: material.metallic,
+            ..Default::default()
+        };
+        let entity = Entity::from_bits(entity);
+        context.queue.push(move |world| {
+            world.insert(entity, material);
+        });
+    })
+}

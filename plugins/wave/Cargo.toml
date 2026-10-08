@@ -1,0 +1,11 @@
+[package]
+name = "wave"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+voxl_plugin = { path = "../../crates/voxl_plugin" }

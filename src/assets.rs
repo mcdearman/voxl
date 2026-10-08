@@ -15,6 +15,14 @@ impl<T> Handle<T> {
     pub fn id(&self) -> u32 {
         self.id
     }
+
+    /// Rebuilds a handle from its id, for code (native plugins) that can only carry the number.
+    pub(crate) fn from_id(id: u32) -> Self {
+        Self {
+            id,
+            _marker: PhantomData,
+        }
+    }
 }
 
 // Manual impls so `T` doesn't need to implement these traits.
@@ -100,6 +108,10 @@ impl<T> Assets<T> {
 
     pub fn is_empty(&self) -> bool {
         self.items.is_empty()
+    }
+
+    pub(crate) fn contains_id(&self, id: u32) -> bool {
+        self.items.contains_key(&id)
     }
 
     pub(crate) fn get_by_id(&self, id: u32) -> Option<&T> {

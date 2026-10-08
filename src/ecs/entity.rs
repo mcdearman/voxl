@@ -15,6 +15,18 @@ impl Entity {
     pub fn generation(self) -> u32 {
         self.generation
     }
+
+    /// Packs the handle into one integer, for passing across an FFI boundary.
+    pub fn to_bits(self) -> u64 {
+        (self.generation as u64) << 32 | self.index as u64
+    }
+
+    pub fn from_bits(bits: u64) -> Self {
+        Self {
+            index: bits as u32,
+            generation: (bits >> 32) as u32,
+        }
+    }
 }
 
 impl fmt::Debug for Entity {

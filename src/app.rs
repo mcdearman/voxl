@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use crate::{
     ecs::{event_update_system, Events, IntoSystems, Schedule, World},
     input::InputPlugin,
+    plugin::NativePlugins,
     render::RenderPlugin,
     time::{FixedTime, Time, TimePlugin},
     transform::TransformPlugin,
@@ -62,6 +63,8 @@ pub struct App {
     pub world: World,
     schedules: HashMap<Stage, Schedule>,
     started: bool,
+    // Last, so it is dropped last: the world's values may have destructors in plugin code.
+    pub(crate) native: NativePlugins,
 }
 
 impl Default for App {
@@ -76,6 +79,7 @@ impl App {
             world: World::new(),
             schedules: HashMap::new(),
             started: false,
+            native: NativePlugins::default(),
         };
         app.add_event::<AppExit>();
         app
@@ -130,6 +134,7 @@ impl App {
     /// Runs one frame.
     pub fn update(&mut self) {
         self.startup();
+        self.check_native_plugins();
         let mut fixed_steps = 0;
         if let Some(time) = self.world.get_resource_mut::<Time>() {
             time.tick();
@@ -149,6 +154,14 @@ impl App {
         for stage in LATE_STAGES {
             self.run_stage(stage);
         }
+    }
+
+    pub fn is_started(&self) -> bool {
+        self.started
+    }
+
+    pub(crate) fn schedule_mut(&mut self, stage: Stage) -> &mut Schedule {
+        self.schedules.entry(stage).or_default()
     }
 
     pub fn should_exit(&self) -> bool {

@@ -237,3 +237,131 @@ fn exclusive_systems() {
     });
     assert_eq!(world.entity_count(), 1);
 }
+
+mod blobs {
+    use std::{
+        alloc::Layout,
+        sync::atomic::{AtomicUsize, Ordering},
+    };
+
+    use super::super::{storage::BlobSet, ComponentKey, ErasedStorage, World};
+
+    fn read<T: Copy>(world: &World, key: ComponentKey, entity: super::Entity) -> Option<T> {
+        let storage = world.erased_storage(key)?;
+        // SAFETY: the test holds the world and the type matches the registered layout.
+        unsafe { Some(*storage.value_ptr(entity)?.cast::<T>()) }
+    }
+
+    #[test]
+    fn values_survive_growth_and_removal() {
+        let mut world = World::new();
+        let id = world
+            .register_blob_component("test.Wide", Layout::new::<[u64; 3]>(), None)
+            .unwrap();
+        let key = world.named_component(id).unwrap().key;
+        let entities: Vec<_> = (0..40u64).map(|_| world.spawn_empty()).collect();
+        for (i, e) in entities.iter().enumerate() {
+            let value = [i as u64, 7, !(i as u64)];
+            // SAFETY: `value` is a valid `[u64; 3]`.
+            assert!(unsafe { world.insert_raw(*e, key, value.as_ptr().cast()) });
+        }
+        world.remove_by_key(entities[3], key);
+        world.despawn(entities[10]);
+        for (i, e) in entities.iter().enumerate() {
+            let expected = (i != 3 && i != 10).then_some([i as u64, 7, !(i as u64)]);
+            assert_eq!(read::<[u64; 3]>(&world, key, *e), expected);
+        }
+        // Replacing in place.
+        let value = [1u64, 2, 3];
+        unsafe { world.insert_raw(entities[0], key, value.as_ptr().cast()) };
+        assert_eq!(read::<[u64; 3]>(&world, key, entities[0]), Some(value));
+    }
+
+    #[test]
+    fn unaligned_sources_and_empty_types() {
+        let mut world = World::new();
+        let id = world
+            .register_blob_component("test.Aligned", Layout::new::<u128>(), None)
+            .unwrap();
+        let key = world.named_component(id).unwrap().key;
+        let e = world.spawn_empty();
+        let mut bytes = [0u8; 17];
+        bytes[1..].copy_from_slice(&0x0123_4567_89ab_cdef_u128.to_ne_bytes());
+        unsafe { world.insert_raw(e, key, bytes[1..].as_ptr()) };
+        assert_eq!(read::<u128>(&world, key, e), Some(0x0123_4567_89ab_cdef));
+
+        let tag = world
+            .register_blob_component("test.Tag", Layout::new::<()>(), None)
+            .unwrap();
+        let tag = world.named_component(tag).unwrap().key;
+        for _ in 0..10 {
+            let e = world.spawn_empty();
+            unsafe { world.insert_raw(e, tag, std::ptr::dangling()) };
+            assert!(world.erased_storage(tag).unwrap().contains(e));
+        }
+        assert_eq!(world.erased_storage(tag).unwrap().entities().len(), 10);
+    }
+
+    static DROPS: AtomicUsize = AtomicUsize::new(0);
+    unsafe extern "C" fn count_drop(_: *mut u8) {
+        DROPS.fetch_add(1, Ordering::Relaxed);
+    }
+
+    #[test]
+    fn destructors_run_once_per_value() {
+        let layout = Layout::new::<u32>();
+        let mut world = World::new();
+        let entities: Vec<_> = (0..4).map(|_| world.spawn_empty()).collect();
+        let mut set = BlobSet::new(layout, Some(count_drop));
+        for e in &entities {
+            unsafe { set.insert_raw(*e, 5u32.to_ne_bytes().as_ptr(), 1) };
+        }
+        unsafe { set.insert_raw(entities[0], 6u32.to_ne_bytes().as_ptr(), 1) }; // replaces: 1
+        set.remove_entity(entities[1]); // 2
+        drop(set); // the remaining three: 5
+        assert_eq!(DROPS.load(Ordering::Relaxed), 5);
+    }
+
+    #[test]
+    fn re_registering_keeps_values_unless_the_layout_changes() {
+        let mut world = World::new();
+        let id = world
+            .register_blob_component("test.Kept", Layout::new::<u32>(), None)
+            .unwrap();
+        let key = world.named_component(id).unwrap().key;
+        let e = world.spawn_empty();
+        unsafe { world.insert_raw(e, key, 9u32.to_ne_bytes().as_ptr()) };
+
+        assert_eq!(
+            world.register_blob_component("test.Kept", Layout::new::<u32>(), None),
+            Ok(id)
+        );
+        assert_eq!(read::<u32>(&world, key, e), Some(9));
+
+        assert_eq!(
+            world.register_blob_component("test.Kept", Layout::new::<u64>(), None),
+            Ok(id)
+        );
+        assert_eq!(read::<u64>(&world, key, e), None);
+    }
+
+    #[test]
+    fn exported_rust_components_are_reachable_by_name() {
+        #[repr(C)]
+        #[derive(Clone, Copy, PartialEq, Debug)]
+        struct Speed(f32);
+        impl super::Component for Speed {}
+
+        let mut world = World::new();
+        let id = world.export_component::<Speed>("test.Speed");
+        assert_eq!(world.named_component_id("test.Speed"), Some(id));
+        assert!(world
+            .register_blob_component("test.Speed", Layout::new::<f32>(), None)
+            .is_err());
+        let e = world.spawn(Speed(2.0));
+        let key = world.named_component(id).unwrap().key;
+        assert_eq!(read::<f32>(&world, key, e), Some(2.0));
+        unsafe { world.insert_raw(e, key, 3.5f32.to_ne_bytes().as_ptr()) };
+        assert_eq!(world.get::<Speed>(e), Some(&Speed(3.5)));
+    }
+}

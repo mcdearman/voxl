@@ -9,7 +9,7 @@ mod event;
 mod query;
 mod resource;
 mod schedule;
-mod storage;
+pub(crate) mod storage;
 mod system;
 mod world;
 
@@ -28,10 +28,11 @@ pub use query::{
     Without,
 };
 pub use resource::{Local, Res, ResMut};
-pub use schedule::{IntoSystems, Schedule};
-pub use storage::{Component, ComponentTicks, Tick};
+pub use schedule::{IntoSystems, Schedule, SystemOwner};
+pub(crate) use storage::ErasedStorage;
+pub use storage::{Component, ComponentKey, ComponentTicks, DropFn, Tick};
 pub use system::{BoxedSystem, IntoSystem, System, SystemMeta, SystemParam, SystemParamFunction};
-pub use world::World;
+pub use world::{NamedComponent, World};
 
 pub mod prelude {
     pub use super::{

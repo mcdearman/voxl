@@ -2157,11 +2157,17 @@ dependencies = [
  "gltf",
  "half",
  "image",
+ "libloading",
  "log",
  "pollster",
+ "voxl_plugin",
  "wgpu",
  "winit",
 ]
+
+[[package]]
+name = "voxl_plugin"
+version = "0.1.0"
 
 [[package]]
 name = "walkdir"
@@ -2235,6 +2241,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dc1b4cb0cc549fcf58d7dfc081778139b3d283a081644e833e84682ad71cea24"
 dependencies = [
  "unicode-ident",
+]
+
+[[package]]
+name = "wave"
+version = "0.1.0"
+dependencies = [
+ "voxl_plugin",
 ]
 
 [[package]]

@@ -7,6 +7,10 @@ use crate::{
 };
 
 /// Local position, rotation and scale. Relative to `Parent` if the entity has one.
+///
+/// Exported to native plugins as `voxl.Transform`, so its layout is fixed: it must match
+/// `VoxlTransform` in `include/voxl.h`.
+#[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Transform {
     pub translation: Vec3,
@@ -15,6 +19,17 @@ pub struct Transform {
 }
 
 impl Component for Transform {}
+
+/// Whether `Transform` has the layout `include/voxl.h` promises. It does wherever glam uses
+/// SIMD for quaternions (every desktop target); elsewhere the component isn't exported.
+const TRANSFORM_MATCHES_HEADER: bool = {
+    use voxl_plugin::sys::VoxlTransform;
+    size_of::<Transform>() == size_of::<VoxlTransform>()
+        && align_of::<Transform>() == align_of::<VoxlTransform>()
+        && std::mem::offset_of!(Transform, rotation)
+            == std::mem::offset_of!(VoxlTransform, rotation)
+        && std::mem::offset_of!(Transform, scale) == std::mem::offset_of!(VoxlTransform, scale)
+};
 
 impl Default for Transform {
     fn default() -> Self {
@@ -193,6 +208,11 @@ pub struct TransformPlugin;
 
 impl Plugin for TransformPlugin {
     fn build(&self, app: &mut App) {
+        if TRANSFORM_MATCHES_HEADER {
+            app.world.export_component::<Transform>("voxl.Transform");
+        } else {
+            log::warn!("Transform has an unexpected layout here; native plugins can't use it");
+        }
         app.add_systems(Stage::FixedFirst, restore_simulated_transforms)
             .add_systems(Stage::FixedLast, record_simulated_transforms)
             .add_systems(
