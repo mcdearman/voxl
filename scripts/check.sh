@@ -3,6 +3,7 @@
 #
 #     scripts/check.sh           build, test, lint, and build every example plugin
 #     scripts/check.sh --miri    also run the ECS tests under Miri (needs nightly + miri)
+#     scripts/check.sh --miri-only
 #
 # The Haskell plugin tests skip themselves when GHC isn't installed. Set VOXL_REQUIRE_GHC=1
 # (as CI does) to make a missing GHC a failure instead.
@@ -10,6 +11,22 @@ set -eu
 cd "$(dirname "$0")/.."
 
 step() { printf '\n== %s\n' "$1"; }
+
+miri() {
+    step "miri"
+    cargo +nightly miri test --lib -- ecs::
+}
+
+if [ "${1:-}" = "--miri-only" ]; then
+    miri
+    exit 0
+fi
+
+# A workflow file that doesn't parse fails without running anything, so catch it here.
+if command -v actionlint >/dev/null 2>&1; then
+    step "workflows"
+    actionlint
+fi
 
 step "build"
 cargo build --workspace --all-targets
@@ -33,8 +50,7 @@ else
 fi
 
 if [ "${1:-}" = "--miri" ]; then
-    step "miri"
-    cargo +nightly miri test --lib -- ecs::
+    miri
 fi
 
 printf '\nAll checks passed.\n'
