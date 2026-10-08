@@ -67,8 +67,8 @@ pub(crate) struct PostRenderer {
 impl PostRenderer {
     pub fn new(gpu: &Gpu) -> Self {
         let device = &gpu.device;
-        let bloom_shader = device.create_shader_module(wgpu::include_wgsl!("bloom.wgsl"));
-        let tonemap_shader = device.create_shader_module(wgpu::include_wgsl!("tonemap.wgsl"));
+        let bloom_shader = crate::shader!("bloom.wgsl").module(device);
+        let tonemap_shader = crate::shader!("tonemap.wgsl").module(device);
         let texture_entry = |binding| wgpu::BindGroupLayoutEntry {
             binding,
             visibility: wgpu::ShaderStages::FRAGMENT,

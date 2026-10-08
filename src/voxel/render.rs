@@ -25,12 +25,19 @@ pub struct VoxelRenderer {
 }
 
 impl VoxelRenderer {
+    /// Takes the pipelines of a renderer freshly built from the current shaders, keeping
+    /// this one's chunks.
+    pub(crate) fn adopt_pipelines(&mut self, fresh: Self) {
+        self.pipeline = fresh.pipeline;
+        self.shadow_pipeline = fresh.shadow_pipeline;
+    }
+
     pub fn new(gpu: &Gpu, view: &ViewBinding, shadows: &ShadowMaps, textures: &TextureArray) -> Self {
         let device = &gpu.device;
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("voxel shader"),
             source: wgpu::ShaderSource::Wgsl(
-                format!("{}\n{}", gpu.pbr_wgsl(), include_str!("voxel.wgsl")).into(),
+                format!("{}\n{}", gpu.pbr_wgsl(), crate::shader!("voxel.wgsl").source()).into(),
             ),
         });
         let texture_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -102,7 +109,7 @@ impl VoxelRenderer {
             cache: None,
         });
 
-        let shadow_shader = device.create_shader_module(wgpu::include_wgsl!("voxel_shadow.wgsl"));
+        let shadow_shader = crate::shader!("voxel_shadow.wgsl").module(device);
         let shadow_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("voxel shadow layout"),
             bind_group_layouts: &[&shadows.layout],

@@ -5,12 +5,14 @@ pub mod reach;
 mod gltf_scene;
 mod gpu;
 mod image;
+mod image_files;
 mod mesh;
 mod post;
 mod probes;
 mod raytrace;
 mod renderer;
 mod screenshot;
+mod shaders;
 mod shadow;
 mod skin;
 mod taa;
@@ -27,8 +29,10 @@ pub use gpu::{
     HDR_FORMAT, MSAA_SAMPLES,
 };
 pub use image::Image;
+pub use image_files::ImageFiles;
 pub use mesh::{Mesh, Mesh3d, Vertex};
 pub use post::PostProcess;
+pub use shaders::{Install, Rebuild, Shader, ShaderReload};
 pub use raytrace::{GeometryId, HitMaterial, RayTracing, RayTracingSettings};
 pub use animation::{AnimationClip, Animator, Palette, SkinWeights, Skeleton, Skinned};
 pub use gait::{Gait, Leg, Pattern};
@@ -400,6 +404,7 @@ fn init_gpu(world: &mut World) {
         pipeline: sky_pipeline(&gpu, &view),
         gpu_environment,
     };
+    world.resource_mut::<ShaderReload>().0.push(rebuild_pipelines);
     world.insert_resource(PostRenderer::new(&gpu));
     world.insert_resource(taa::Taa::new(&gpu));
     world.insert_resource(skin::Skinner::new(&gpu));
@@ -414,11 +419,32 @@ fn init_gpu(world: &mut World) {
     }
 }
 
+/// Rebuilds everything the engine's own renderers make from shaders.
+fn rebuild_pipelines(world: &World) -> Option<shaders::Install> {
+    let gpu = world.resource::<Gpu>();
+    let view = world.resource::<ViewBinding>();
+    let meshes = MeshRenderer::new(gpu, view, world.resource::<ShadowMaps>());
+    let sky = sky_pipeline(gpu, view);
+    let post = PostRenderer::new(gpu);
+    let taa = taa::Taa::new(gpu);
+    let skinner = skin::Skinner::new(gpu);
+    let shafts = volumetric::Shafts::new(gpu, &view.layout);
+    Some(Box::new(move |world: &mut World| {
+        world.resource_mut::<MeshRenderer>().adopt_pipelines(meshes);
+        world.resource_mut::<SkyRenderer>().pipeline = sky;
+        world.resource_mut::<skin::Skinner>().adopt_pipeline(skinner);
+        // These keep nothing that can't be made again; the frame history just starts over.
+        world.insert_resource(post);
+        world.insert_resource(taa);
+        world.insert_resource(shafts);
+    }))
+}
+
 fn sky_pipeline(gpu: &Gpu, view: &ViewBinding) -> wgpu::RenderPipeline {
     let device = &gpu.device;
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("sky shader"),
-        source: wgpu::ShaderSource::Wgsl(format!("{}\n{}", gpu.pbr_wgsl(), include_str!("sky.wgsl")).into()),
+        source: wgpu::ShaderSource::Wgsl(format!("{}\n{}", gpu.pbr_wgsl(), crate::shader!("sky.wgsl").source()).into()),
     });
     let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("sky layout"),
@@ -877,6 +903,12 @@ impl Plugin for RenderPlugin {
             .init_resource::<ShadowSettings>()
             .init_resource::<PostProcess>()
             .init_resource::<Screenshot>()
+            .init_resource::<ShaderReload>()
+            .init_resource::<ImageFiles>()
+            .add_systems(
+                Stage::First,
+                (shaders::reload_changed, image_files::reload_changed_images),
+            )
             .init_resource::<RenderFrame>()
             .init_resource::<VolumetricLight>()
             .add_systems(Stage::PreStartup, init_gpu)

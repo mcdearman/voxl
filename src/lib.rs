@@ -26,7 +26,7 @@ pub mod prelude {
         },
         render::{
             AmbientLight, Animator, Camera, Color, DirectionalLight, Environment, Fog, Gait,
-            GltfScene, Image, Leg, Limb, LodLevel, Lods, Material, Mesh, Mesh3d, NotShadowCaster,
+            GltfScene, Image, ImageFiles, Leg, Limb, LodLevel, Lods, Material, Mesh, Mesh3d, NotShadowCaster,
             Pattern, PostProcess, RayTracingSettings, Reach, ShadowSettings, VolumetricLight,
         },
         time::{FixedTime, Time},

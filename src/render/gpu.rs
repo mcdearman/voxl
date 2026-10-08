@@ -228,11 +228,12 @@ impl Targets {
 impl Gpu {
     /// The shared lighting code for main-pass shaders, ray traced where the GPU allows. Prepend
     /// it to a custom shader's source.
-    pub fn pbr_wgsl(&self) -> &'static str {
-        if self.ray_tracing {
-            super::PBR_RT_WGSL
+    pub fn pbr_wgsl(&self) -> String {
+        let tracing = if self.ray_tracing {
+            crate::shader!("rt_on.wgsl")
         } else {
-            super::PBR_WGSL
-        }
+            crate::shader!("rt_off.wgsl")
+        };
+        crate::shader!("pbr.wgsl").source() + &tracing.source()
     }
 }

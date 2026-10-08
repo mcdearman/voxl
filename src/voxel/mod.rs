@@ -25,7 +25,7 @@ pub use world::{RaycastHit, VoxelWorld};
 use crate::{
     app::{App, Plugin, Stage},
     ecs::{Res, ResMut, World},
-    render::{
+    render::{ShaderReload, 
         DrawFunctions, Fog, Gpu, RenderFrame, ShadowDrawFunctions, ShadowMaps, TextureArray,
         ViewBinding,
     },
@@ -137,17 +137,27 @@ impl Plugin for VoxelPlugin {
     }
 }
 
-fn init_renderer(world: &mut World) {
+fn build_renderer(world: &World) -> VoxelRenderer {
     let gpu = world.resource::<Gpu>();
     let tiles = world.resource::<BlockTextures>();
     let textures = TextureArray::from_tiles(gpu, tiles.tile_size, &tiles.tiles);
-    let renderer = VoxelRenderer::new(
+    VoxelRenderer::new(
         gpu,
         world.resource::<ViewBinding>(),
         world.resource::<ShadowMaps>(),
         &textures,
-    );
+    )
+}
+
+fn init_renderer(world: &mut World) {
+    let renderer = build_renderer(world);
     world.insert_resource(renderer);
+    world.resource_mut::<ShaderReload>().0.push(|world| {
+        let fresh = build_renderer(world);
+        Some(Box::new(move |world: &mut World| {
+            world.resource_mut::<VoxelRenderer>().adopt_pipelines(fresh);
+        }))
+    });
 }
 
 fn prepare_chunks(

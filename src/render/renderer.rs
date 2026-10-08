@@ -146,9 +146,9 @@ impl MeshRenderer {
         let device = &gpu.device;
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("mesh shader"),
-            source: wgpu::ShaderSource::Wgsl(format!("{}\n{}", gpu.pbr_wgsl(), include_str!("mesh.wgsl")).into()),
+            source: wgpu::ShaderSource::Wgsl(format!("{}\n{}", gpu.pbr_wgsl(), crate::shader!("mesh.wgsl").source()).into()),
         });
-        let shadow_shader = device.create_shader_module(wgpu::include_wgsl!("mesh_shadow.wgsl"));
+        let shadow_shader = crate::shader!("mesh_shadow.wgsl").module(device);
 
         let texture_entry = |binding| wgpu::BindGroupLayoutEntry {
             binding,
@@ -291,6 +291,14 @@ impl MeshRenderer {
             batches: Vec::new(),
             shadow_batches: Vec::new(),
         }
+    }
+
+    /// Takes the pipelines of a renderer freshly built from the current shaders, keeping
+    /// this one's meshes, textures and materials.
+    pub(crate) fn adopt_pipelines(&mut self, fresh: Self) {
+        self.pipelines = fresh.pipelines;
+        self.shadow_opaque = fresh.shadow_opaque;
+        self.shadow_masked = fresh.shadow_masked;
     }
 
     /// Uploads meshes that were added or modified, and frees removed ones.

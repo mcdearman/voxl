@@ -53,7 +53,7 @@ pub(crate) struct Taa {
 impl Taa {
     pub(crate) fn new(gpu: &Gpu) -> Self {
         let device = &gpu.device;
-        let shader = device.create_shader_module(wgpu::include_wgsl!("taa.wgsl"));
+        let shader = crate::shader!("taa.wgsl").module(device);
         let texture = |binding, sample_type, multisampled| wgpu::BindGroupLayoutEntry {
             binding,
             visibility: wgpu::ShaderStages::FRAGMENT,

@@ -41,9 +41,15 @@ pub(crate) struct Skinner {
 const PARAMS_STRIDE: u64 = 256;
 
 impl Skinner {
+    /// Takes the pipeline of a skinner freshly built from the current shader, keeping this
+    /// one's buffers.
+    pub(crate) fn adopt_pipeline(&mut self, fresh: Self) {
+        self.pipeline = fresh.pipeline;
+    }
+
     pub(crate) fn new(gpu: &Gpu) -> Self {
         let device = &gpu.device;
-        let module = device.create_shader_module(wgpu::include_wgsl!("skin.wgsl"));
+        let module = crate::shader!("skin.wgsl").module(device);
         let storage = |binding, read_only| wgpu::BindGroupLayoutEntry {
             binding,
             visibility: wgpu::ShaderStages::COMPUTE,
