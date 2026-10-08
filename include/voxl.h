@@ -1,0 +1,277 @@
+/*
+ * voxl native plugin interface, version 1.
+ *
+ * A plugin is a shared library (.dylib / .so / .dll) written in any language that can export
+ * C functions. It exports three symbols:
+ *
+ *     uint32_t voxl_plugin_abi_version(void);   // return VOXL_ABI_VERSION
+ *     int32_t  voxl_plugin_load(const VoxlApi *api, VoxlApp *app);   // 0 on success
+ *     void     voxl_plugin_unload(void);        // optional
+ *     uint32_t voxl_plugin_flags(void);         // optional; VOXL_PLUGIN_* flags
+ *
+ * `voxl_plugin_load` is called when the plugin is first loaded and again every time it is
+ * hot-reloaded. In it, register components and systems through `api`. Keep the `api` pointer:
+ * it stays valid until `voxl_plugin_unload` returns.
+ *
+ * What survives a reload: every component value, and every block handed out by `state`. What
+ * does not: the plugin's own globals. Put anything that must persist in a component or state.
+ *
+ * Rules:
+ *   - Functions taking a VoxlApp* may only be called inside voxl_plugin_load.
+ *   - Functions taking a VoxlSystem* may only be called inside that system's `run` callback.
+ *   - Everything happens on the thread that called you. Do not keep VoxlApp* or VoxlSystem*.
+ *   - Component pointers from a query are valid until the system returns.
+ *   - Strings are UTF-8 with an explicit length; they need not be NUL-terminated.
+ */
+#ifndef VOXL_H
+#define VOXL_H
+
+#include <stddef.h>
+#include <stdint.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#define VOXL_ABI_VERSION 1u
+
+/* Returned by the optional voxl_plugin_flags.
+ *
+ * KEEP_LOADED: never unmap this library, even after a newer version replaces it. For
+ * languages whose runtime can't be unloaded (Haskell, Go): their garbage collector keeps
+ * pointers into every library it has run. Old versions are no longer called; they only cost
+ * memory, once per reload. */
+#define VOXL_PLUGIN_KEEP_LOADED 1u
+
+/* An entity handle. Stays valid until the entity is despawned; never reused afterwards. */
+typedef uint64_t VoxlEntity;
+#define VOXL_ENTITY_NONE UINT64_MAX
+
+/* A component handle, from component_register or component_lookup. 0 is "no component". */
+typedef uint32_t VoxlComponent;
+
+typedef struct VoxlApp VoxlApp;       /* opaque: the app being set up */
+typedef struct VoxlSystem VoxlSystem; /* opaque: one run of one system */
+
+/* When in the frame a system runs. */
+enum {
+    VOXL_STAGE_STARTUP = 0,      /* once, the first time the plugin is loaded */
+    VOXL_STAGE_FIRST = 1,
+    VOXL_STAGE_PRE_UPDATE = 2,
+    VOXL_STAGE_FIXED_UPDATE = 3, /* fixed timestep; may run 0..n times per frame */
+    VOXL_STAGE_UPDATE = 4,
+    VOXL_STAGE_POST_UPDATE = 5,
+    VOXL_STAGE_LAST = 6
+};
+
+/* How a system uses a component. READ and WRITE terms yield a pointer per entity, in the
+ * order they are listed; WITH and WITHOUT only filter. WRITE marks the value as changed. */
+enum {
+    VOXL_READ = 0,
+    VOXL_WRITE = 1,
+    VOXL_WITH = 2,
+    VOXL_WITHOUT = 3
+};
+
+/* Keys, by position on a US keyboard (so WASD is the same four keys on every layout). */
+enum {
+    VOXL_KEY_A = 0, /* letters are consecutive: VOXL_KEY_A + ('w' - 'a') is W */
+    VOXL_KEY_Z = 25,
+    VOXL_KEY_0 = 26, /* the digit row, consecutive */
+    VOXL_KEY_9 = 35,
+    VOXL_KEY_SPACE = 36,
+    VOXL_KEY_ENTER = 37,
+    VOXL_KEY_ESCAPE = 38,
+    VOXL_KEY_TAB = 39,
+    VOXL_KEY_BACKSPACE = 40,
+    VOXL_KEY_LEFT = 41,
+    VOXL_KEY_RIGHT = 42,
+    VOXL_KEY_UP = 43,
+    VOXL_KEY_DOWN = 44,
+    VOXL_KEY_LEFT_SHIFT = 45,
+    VOXL_KEY_RIGHT_SHIFT = 46,
+    VOXL_KEY_LEFT_CONTROL = 47,
+    VOXL_KEY_RIGHT_CONTROL = 48,
+    VOXL_KEY_LEFT_ALT = 49,
+    VOXL_KEY_RIGHT_ALT = 50,
+    VOXL_KEY_F1 = 51, /* F1 to F12, consecutive */
+    VOXL_KEY_F12 = 62
+};
+
+enum {
+    VOXL_MOUSE_LEFT = 0,
+    VOXL_MOUSE_RIGHT = 1,
+    VOXL_MOUSE_MIDDLE = 2
+};
+
+/* A mesh handle. 0 is "no mesh". */
+typedef uint32_t VoxlMesh;
+
+enum {
+    VOXL_SHAPE_CUBE = 0,   /* a: edge length */
+    VOXL_SHAPE_SPHERE = 1, /* a: radius */
+    VOXL_SHAPE_PLANE = 2   /* a: edge length; flat, facing up */
+};
+
+typedef struct VoxlVertex {
+    float position[3];
+    float normal[3];
+    float uv[2];
+} VoxlVertex;
+
+/* How a surface looks. Colors are linear RGB(A). */
+typedef struct VoxlMaterial {
+    float color[4];
+    float emissive[3]; /* light the surface gives off itself */
+    float roughness;   /* 0 mirror-smooth .. 1 matte */
+    float metallic;    /* 0 or 1, usually */
+} VoxlMaterial;
+
+enum {
+    VOXL_LOG_ERROR = 1,
+    VOXL_LOG_WARN = 2,
+    VOXL_LOG_INFO = 3,
+    VOXL_LOG_DEBUG = 4
+};
+
+typedef struct VoxlTerm {
+    VoxlComponent component;
+    uint32_t access; /* VOXL_READ, VOXL_WRITE, VOXL_WITH or VOXL_WITHOUT */
+} VoxlTerm;
+
+typedef void (*VoxlSystemFn)(VoxlSystem *system, void *user);
+
+typedef struct VoxlSystemDesc {
+    const char *name; /* unique within the plugin; a reloaded system replaces its namesake */
+    size_t name_len;
+    uint32_t stage;
+    uint32_t reserved; /* set to 0 */
+    VoxlSystemFn run;
+    void *user; /* passed back to `run` */
+    const VoxlTerm *terms; /* the entities the system visits; may be empty */
+    size_t term_count;
+} VoxlSystemDesc;
+
+/* The functions the engine provides. `size` is sizeof(VoxlApi) as the engine sees it; a newer
+ * engine may append functions, so check `size` before using one that is not in version 1. */
+typedef struct VoxlApi {
+    uint32_t abi_version;
+    uint32_t size;
+
+    void (*log)(uint32_t level, const char *message, size_t len);
+
+    /* ---- inside voxl_plugin_load ---- */
+
+    /* Defines a component, or finds the one this name already has. Values are plain bytes of
+     * the given size and alignment. `drop`, if not NULL, is called on a value before it is
+     * discarded. Returns 0 on failure. */
+    VoxlComponent (*component_register)(VoxlApp *app, const char *name, size_t name_len,
+                                        size_t size, size_t align, void (*drop)(void *value));
+
+    /* Finds a component defined by the engine or another plugin, e.g. "voxl.Transform".
+     * Writes its size and alignment if the pointers are not NULL. Returns 0 if unknown. */
+    VoxlComponent (*component_lookup)(VoxlApp *app, const char *name, size_t name_len,
+                                      size_t *size, size_t *align);
+
+    /* A zero-initialized block that lives as long as the app and survives reloads. Asking
+     * again with the same name returns the same block (a fresh one if the size changed). */
+    void *(*state)(VoxlApp *app, const char *name, size_t name_len, size_t size, size_t align);
+
+    /* Adds a system. Returns 0 on success. */
+    int32_t (*system_add)(VoxlApp *app, const VoxlSystemDesc *desc);
+
+    /* ---- inside a system ---- */
+
+    float (*delta_seconds)(VoxlSystem *system);    /* frame time, or the fixed timestep */
+    double (*elapsed_seconds)(VoxlSystem *system); /* since the app started */
+
+    /* Advances to the next matching entity. Writes one pointer per READ/WRITE term into
+     * `components`. Returns 0 when there are no more. */
+    uint8_t (*query_next)(VoxlSystem *system, VoxlEntity *entity, void **components);
+
+    /* Looks up one entity directly. Returns 0 if it does not match the system's terms. */
+    uint8_t (*query_get)(VoxlSystem *system, VoxlEntity entity, void **components);
+
+    /* These take effect when the system returns. */
+    VoxlEntity (*spawn)(VoxlSystem *system);
+    void (*despawn)(VoxlSystem *system, VoxlEntity entity);
+    /* Copies `value` (the component's size in bytes) onto the entity, replacing any old one. */
+    void (*insert)(VoxlSystem *system, VoxlEntity entity, VoxlComponent component,
+                   const void *value);
+    void (*remove)(VoxlSystem *system, VoxlEntity entity, VoxlComponent component);
+
+    /* ---- more queries (inside voxl_plugin_load, after the system is added) ---- */
+
+    /* Gives a system another query, besides the one in its description (which is query 0).
+     * Returns the new query's number (1, 2, ...) or a negative number on failure. Two queries
+     * in one system may not both reach the same component unless one of them only reads, or
+     * WITH/WITHOUT terms guarantee they never match the same entity. */
+    int32_t (*system_add_query)(VoxlApp *app, const char *system, size_t system_len,
+                                const VoxlTerm *terms, size_t term_count);
+
+    /* ---- inside a system ---- */
+
+    /* As query_next and query_get, for a numbered query. Each query keeps its own place. */
+    uint8_t (*query_next_in)(VoxlSystem *system, uint32_t query, VoxlEntity *entity,
+                             void **components);
+    uint8_t (*query_get_in)(VoxlSystem *system, uint32_t query, VoxlEntity entity,
+                            void **components);
+    /* Starts a query again from its first entity. */
+    void (*query_rewind)(VoxlSystem *system, uint32_t query);
+
+    /* Input. "down" is held now; "pressed" and "released" are true only on the frame the key
+     * or button changed. */
+    uint8_t (*key_down)(VoxlSystem *system, uint32_t key);
+    uint8_t (*key_pressed)(VoxlSystem *system, uint32_t key);
+    uint8_t (*key_released)(VoxlSystem *system, uint32_t key);
+    uint8_t (*mouse_down)(VoxlSystem *system, uint32_t button);
+    uint8_t (*mouse_pressed)(VoxlSystem *system, uint32_t button);
+    /* Writes how far the mouse moved this frame, in pixels, as x then y. */
+    void (*mouse_motion)(VoxlSystem *system, float *delta);
+
+    /* Meshes. Create one once (in a STARTUP system, keeping the handle in state) and share it
+     * between entities. Triangles wind counter-clockwise seen from the front. Returns 0 on
+     * failure. */
+    VoxlMesh (*mesh_shape)(VoxlSystem *system, uint32_t shape, float a);
+    VoxlMesh (*mesh_create)(VoxlSystem *system, const VoxlVertex *vertices, size_t vertex_count,
+                            const uint32_t *indices, size_t index_count);
+
+    /* Makes an entity visible: what it is drawn as, and with what surface. Like the other
+     * changes, these take effect when the system returns. The entity also needs a
+     * voxl.Transform. */
+    void (*set_mesh)(VoxlSystem *system, VoxlEntity entity, VoxlMesh mesh);
+    void (*set_material)(VoxlSystem *system, VoxlEntity entity, const VoxlMaterial *material);
+} VoxlApi;
+
+/* ---- components the engine exports ---- */
+
+/* "voxl.Transform": position, rotation (a unit quaternion, x y z w) and scale, relative to the
+ * entity's parent. 48 bytes, 16-byte aligned. */
+typedef struct VoxlTransform {
+    float translation[3];
+    float _pad0;
+#if defined(__cplusplus)
+    alignas(16) float rotation[4];
+#else
+    _Alignas(16) float rotation[4];
+#endif
+    float scale[3];
+    float _pad1;
+} VoxlTransform;
+
+/* ---- conveniences for C and C++ ---- */
+
+/* Expands a string literal to the (pointer, length) pair the API takes. */
+#define VOXL_STR(literal) (literal), (sizeof(literal) - 1)
+
+#if defined(_WIN32)
+#define VOXL_EXPORT __declspec(dllexport)
+#else
+#define VOXL_EXPORT __attribute__((visibility("default")))
+#endif
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* VOXL_H */

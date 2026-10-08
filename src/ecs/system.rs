@@ -75,7 +75,7 @@ impl_system_param_tuple!(P0, P1, P2, P3, P4, P5, P6, P7, P8, P9, P10);
 impl_system_param_tuple!(P0, P1, P2, P3, P4, P5, P6, P7, P8, P9, P10, P11);
 
 pub trait System: 'static {
-    fn name(&self) -> &'static str;
+    fn name(&self) -> &str;
     fn initialize(&mut self, world: &mut World);
     fn run(&mut self, world: &mut World);
 }
@@ -143,7 +143,7 @@ pub struct FunctionSystem<Marker: 'static, F: SystemParamFunction<Marker>> {
 }
 
 impl<Marker: 'static, F: SystemParamFunction<Marker>> System for FunctionSystem<Marker, F> {
-    fn name(&self) -> &'static str {
+    fn name(&self) -> &str {
         self.name
     }
 
@@ -196,7 +196,7 @@ pub struct ExclusiveSystem<F> {
 }
 
 impl<F: FnMut(&mut World) + 'static> System for ExclusiveSystem<F> {
-    fn name(&self) -> &'static str {
+    fn name(&self) -> &str {
         self.name
     }
 

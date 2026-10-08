@@ -1,0 +1,52 @@
+name: CI
+
+# The full suite. It runs on every pull request, on what the merge queue is about to put on
+# master, on master itself, and (called from release.yml) before a release is built.
+on:
+  pull_request:
+  merge_group:
+  push:
+    branches: [master]
+  workflow_call:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # The Haskell plugin tests must run here, not skip.
+  VOXL_REQUIRE_GHC: 1
+
+jobs:
+  check:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+    - uses: actions/checkout@v4
+    - name: Rust
+      run: rustup update stable && rustup default stable && rustup component add clippy
+    - uses: Swatinem/rust-cache@v2
+    # Haskell is the default plugin language; its bindings are tested by building and
+    # hot-reloading real plugins.
+    - uses: haskell-actions/setup@v2
+      with:
+        ghc-version: '9.12.2'
+        enable-stack: false
+    - name: Full suite
+      run: scripts/check.sh
+
+  miri:
+    # The ECS hands out references from behind `UnsafeCell` and stores some components as
+    # raw bytes; Miri checks that code for undefined behaviour.
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Install Miri
+      run: rustup toolchain install nightly --component miri
+    - uses: Swatinem/rust-cache@v2
+    - name: Miri
+      run: scripts/check.sh --miri-only

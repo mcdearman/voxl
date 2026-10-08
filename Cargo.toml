@@ -3,7 +3,12 @@ name = "voxl"
 version = "0.1.0"
 edition = "2021"
 
+[workspace]
+members = ["crates/voxl_plugin", "plugins/wave"]
+
 [dependencies]
+voxl_plugin = { path = "crates/voxl_plugin" }
+libloading = "0.8"
 anyhow = "1"
 bytemuck = { version = "1.13", features = ["derive"] }
 env_logger = "0.11"

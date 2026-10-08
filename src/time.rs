@@ -9,6 +9,8 @@ pub struct Time {
     delta: Duration,
     elapsed: Duration,
     frame: u64,
+    /// When set, every frame lasts exactly this long, whatever the clock says.
+    step: Option<Duration>,
 }
 
 impl Default for Time {
@@ -19,12 +21,25 @@ impl Default for Time {
             delta: Duration::ZERO,
             elapsed: Duration::ZERO,
             frame: 0,
+            step: None,
         }
     }
 }
 
 impl Time {
+    /// Makes every frame last exactly `step` instead of following the clock (or `None` to
+    /// follow it again): for tests that must not depend on how fast they run, and for
+    /// rendering offline at a fixed rate.
+    pub fn set_fixed_step(&mut self, step: Option<Duration>) {
+        self.step = step;
+        self.last = None;
+    }
+
     pub(crate) fn tick(&mut self) {
+        if let Some(step) = self.step {
+            self.advance_by(step);
+            return;
+        }
         let now = Instant::now();
         // The first frame reports a zero delta so slow startup work doesn't cause a huge jump.
         self.delta = self.last.map_or(Duration::ZERO, |last| now - last);

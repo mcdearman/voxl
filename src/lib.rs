@@ -3,6 +3,7 @@ pub mod assets;
 pub mod ecs;
 pub mod input;
 pub mod physics;
+pub mod plugin;
 pub mod render;
 pub mod tasks;
 pub mod time;
@@ -18,14 +19,15 @@ pub mod prelude {
         assets::{Assets, Handle},
         ecs::prelude::*,
         input::{ButtonInput, KeyCode, Mouse, MouseButton},
-        render::{
-            AmbientLight, Animator, Camera, Gait, Leg, Limb, Pattern, Reach, Color, DirectionalLight, Environment, Fog, Material, Mesh,
-            GltfScene, Image, LodLevel, Lods, Mesh3d, NotShadowCaster, PostProcess, RayTracingSettings,
-            ShadowSettings, VolumetricLight,
-        },
         physics::{
             fluid::{Emitter, ParticleFluid, WaterSurface},
-            BodyKind, CharacterController, Collider, Joint, JointKind, PhysicsPlugin, PhysicsWorld, RigidBody,
+            BodyKind, CharacterController, Collider, Joint, JointKind, PhysicsPlugin, PhysicsWorld,
+            RigidBody,
+        },
+        render::{
+            AmbientLight, Animator, Camera, Color, DirectionalLight, Environment, Fog, Gait,
+            GltfScene, Image, Leg, Limb, LodLevel, Lods, Material, Mesh, Mesh3d, NotShadowCaster,
+            Pattern, PostProcess, RayTracingSettings, Reach, ShadowSettings, VolumetricLight,
         },
         time::{FixedTime, Time},
         transform::{GlobalTransform, Interpolate, Parent, Transform},
