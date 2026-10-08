@@ -32,7 +32,10 @@ mod tests;
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
-    sync::atomic::{AtomicU64, Ordering},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Mutex,
+    },
     time::{Duration, Instant, SystemTime},
 };
 
@@ -320,6 +323,16 @@ fn install(app: &mut App, plugin: &mut Loaded) -> anyhow::Result<()> {
     ));
     std::fs::copy(&plugin.source, &copy)?;
     let copy = TempCopy(Some(copy));
+
+    // One plugin loads at a time, in the whole process. A plugin's load may start a language
+    // runtime that every plugin in that language shares (GHC's, for one), and such a runtime
+    // can't be started from two threads at once: the second caller is told it is already
+    // running while the first is still starting it. Apps load their plugins one after another
+    // anyway; this is for several apps in one process, as in the tests.
+    static LOADING: Mutex<()> = Mutex::new(());
+    let _loading = LOADING
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
 
     // SAFETY: loading a library runs its initializers, and calling into it runs its code;
     // both are as safe as the plugin is. That is the trust a native plugin is given.
