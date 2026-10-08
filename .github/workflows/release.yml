@@ -1,0 +1,62 @@
+name: Release
+
+# Pushing a tag like v0.2.0 builds a release, but only after the full suite has passed on
+# that exact commit. It can also be started by hand to try the packaging without publishing.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  suite:
+    uses: ./.github/workflows/ci.yml
+
+  build:
+    needs: suite
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - os: ubuntu-latest
+          target: x86_64-linux
+        - os: macos-latest
+          target: aarch64-macos
+    runs-on: ${{ matrix.os }}
+    steps:
+    - uses: actions/checkout@v4
+    - name: Rust
+      run: rustup update stable && rustup default stable
+    - uses: Swatinem/rust-cache@v2
+    - name: Build
+      run: cargo build --release --workspace --example host
+    - name: Package
+      run: scripts/package.sh "${{ github.ref_name }}" "${{ matrix.target }}"
+    - uses: actions/upload-artifact@v4
+      with:
+        name: voxl-${{ matrix.target }}
+        path: dist/*.tar.gz
+        if-no-files-found: error
+
+  publish:
+    # Only a tag publishes; a run started by hand stops after building the packages.
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+    - uses: actions/download-artifact@v4
+      with:
+        path: dist
+        merge-multiple: true
+    - name: Publish
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: >
+        gh release create "${{ github.ref_name }}" dist/*.tar.gz
+        --repo "${{ github.repository }}"
+        --title "${{ github.ref_name }}"
+        --generate-notes
