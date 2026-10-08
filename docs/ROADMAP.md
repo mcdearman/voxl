@@ -82,7 +82,9 @@ contract is `include/voxl.h`; see [PLUGINS.md](PLUGINS.md).
 - [ ] A generic script host for languages that can't build a shared library themselves
 - [ ] Meadow bindings, once Meadow can export C functions
 - [ ] Bindings generated from the header for at least one more compiled language (Zig)
-- [ ] Hot reload for assets: shaders, textures, meshes and scenes (shared with Phase 1)
+- [x] Hot reload for shaders and textures (see [HOT_RELOAD.md](HOT_RELOAD.md))
+- [ ] Hot reload for meshes, models and scenes (shared with Phase 1), and for the shaders that
+      only run on Vulkan
 - [ ] Hot reload for the engine's own Rust gameplay code through the same mechanism
 
 **Exit test:** the Phase 4 sample game's rules live entirely in plugins, in two languages, and
@@ -227,8 +229,9 @@ project grows.
 
 ## Next three steps
 
-1. Shader and texture hot reload (Phase 1A, shared with Phase 1).
-2. Camera, lights, events and physics from plugins, so a plugin game needs nothing from its
+1. Camera, lights, events and physics from plugins, so a plugin game needs nothing from its
    host (Phase 1A).
-3. Image-diff tests around the demos, and the rest of the crate split (Phase 0). A bare scene
+2. Image-diff tests around the demos, and the rest of the crate split (Phase 0). A bare scene
    with no sky set up renders washed out; fix the renderer's defaults while doing this.
+3. Start the data layer: a proc-macro crate with `#[derive(Component)]` and
+   `#[derive(Reflect)]` (Phase 1).

@@ -61,6 +61,8 @@ plugins/chase/build.sh
 cargo run --example host -- chase
 ```
 
+Shaders and textures reload while the app runs too; see [docs/HOT_RELOAD.md](docs/HOT_RELOAD.md).
+
 Where the engine is headed: [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## Layout

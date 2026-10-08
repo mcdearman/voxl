@@ -656,3 +656,55 @@ fn the_haskell_game_plays() {
     );
     assert_eq!(drawn(&mut app), 12);
 }
+
+/// Two apps on two threads load Haskell plugins at the same instant. Both plugins share one
+/// GHC runtime, which can't be started from two threads at once, so the loader has to take
+/// them one at a time. (In CI this race once made the suite fail on Linux and crash on macOS.)
+#[test]
+fn two_haskell_plugins_can_load_at_the_same_moment() {
+    if !have_ghc() {
+        return;
+    }
+    let workspace = Workspace::new("together");
+    let libraries: Vec<PathBuf> = ["one", "two"]
+        .iter()
+        .map(|name| {
+            let source = workspace.dir.join(format!("{name}.hs"));
+            let module = HASKELL
+                .replace("STEP", "1")
+                .replace("hs.Frames", &format!("{name}.Frames"));
+            std::fs::write(&source, module).unwrap();
+            let script =
+                Path::new(env!("CARGO_MANIFEST_DIR")).join("bindings/haskell/build-plugin.sh");
+            let output = Command::new(script)
+                .arg(name)
+                .arg(&source)
+                .arg(&workspace.dir)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            workspace.library(name)
+        })
+        .collect();
+
+    let start = std::sync::Barrier::new(libraries.len());
+    std::thread::scope(|scope| {
+        for library in &libraries {
+            let start = &start;
+            scope.spawn(move || {
+                let mut app = app();
+                let entity = app.world.spawn(Transform::IDENTITY);
+                start.wait();
+                app.load_native_plugin(library).unwrap();
+                for _ in 0..10 {
+                    app.update();
+                }
+                assert_eq!(position(&app, entity).x, 10.0);
+            });
+        }
+    });
+}
