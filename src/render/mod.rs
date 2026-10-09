@@ -49,7 +49,7 @@ use crate::{
     app::{App, Plugin, Stage},
     asset_server::AssetServer,
     assets::{Assets, Handle},
-    ecs::{Component, EventReader, Query, Res, ResMut, World},
+    ecs::{Component, EventReader, Events, Query, Res, ResMut, World},
     reflect::Reflect,
     time::Time,
     transform::{GlobalTransform, Transform},
@@ -446,12 +446,19 @@ struct SkyRenderer {
 }
 
 fn init_gpu(world: &mut World) {
-    let window = world.resource::<Window>().handle().clone();
-    let vsync = world
-        .get_resource::<WindowSettings>()
-        .is_none_or(|s| s.vsync);
     let rt_settings = world.get_resource::<RayTracingSettings>().copied().unwrap_or_default();
-    let gpu = pollster::block_on(Gpu::new(window, vsync, rt_settings.enabled)).expect("failed to initialize the GPU");
+    let gpu = match world.remove_resource::<Host>() {
+        // A host's device, and no window: frames go to a texture the host shows.
+        Some(host) => Gpu::hosted(host.device, host.queue, host.format, host.width, host.height),
+        None => {
+            let window = world.resource::<Window>().handle().clone();
+            let vsync = world
+                .get_resource::<WindowSettings>()
+                .is_none_or(|s| s.vsync);
+            pollster::block_on(Gpu::new(window, vsync, rt_settings.enabled))
+                .expect("failed to initialize the GPU")
+        }
+    };
     let rt = gpu.ray_tracing.then(|| {
         let white = Image::solid([255, 255, 255, 255], true).upload(&gpu.device, &gpu.queue);
         RayTracing::new(&gpu, rt_settings, white)
@@ -797,14 +804,16 @@ fn render(world: &mut World) {
     // Without a frame to draw in (the window hidden, or the screen locked), draw off screen
     // instead, so the world still renders and screenshots can still be taken.
     use wgpu::CurrentSurfaceTexture as Frame;
-    let output = match gpu.surface.get_current_texture() {
-        Frame::Success(output) | Frame::Suboptimal(output) => Some(output),
-        Frame::Lost | Frame::Outdated => {
+    let output = match gpu.surface.as_ref().map(|surface| surface.get_current_texture()) {
+        // No window at all: a host shows what is drawn off screen.
+        None => None,
+        Some(Frame::Success(output) | Frame::Suboptimal(output)) => Some(output),
+        Some(Frame::Lost | Frame::Outdated) => {
             world.resource_mut::<Gpu>().reconfigure();
             return;
         }
-        Frame::Timeout => return,
-        why @ (Frame::Occluded | Frame::Validation) => {
+        Some(Frame::Timeout) => return,
+        Some(why @ (Frame::Occluded | Frame::Validation)) => {
             if !world.contains_resource::<Offscreen>() {
                 log::warn!("no frame from the window ({why:?}); drawing off screen");
             }
@@ -822,8 +831,13 @@ fn render(world: &mut World) {
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
                 format: gpu.config.format,
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
-                view_formats: &[],
+                // Read back for screenshots, and sampled by a host that shows the frame.
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                    | wgpu::TextureUsages::COPY_SRC
+                    | wgpu::TextureUsages::TEXTURE_BINDING,
+                // So a host can also read the frame as the bytes that were stored: see
+                // `frame_texture`.
+                view_formats: &[gpu.config.format.remove_srgb_suffix()],
             });
             world.insert_resource(Offscreen(texture));
         }
@@ -971,8 +985,66 @@ fn render(world: &mut World) {
     }
 }
 
-/// Where frames are drawn while the window can't give us one.
+/// Where frames are drawn while the window can't give us one, or there is no window.
 struct Offscreen(wgpu::Texture);
+
+/// A device opened by a program that hosts the game inside its own interface, and the size
+/// and format of the frames it wants. See [`App::host`].
+struct Host {
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+    format: wgpu::TextureFormat,
+    width: u32,
+    height: u32,
+}
+
+/// The texture the last frame was drawn into, when frames are drawn off screen: under a
+/// host ([`App::host`]) always, and otherwise while the window is hidden. It is tone-mapped
+/// and opaque, in the format the host asked for, and can be sampled. It is replaced by a new
+/// texture when the size changes, so ask again each frame.
+///
+/// Drawn in an sRGB format, its default view gives a sampler linear colour. A host whose
+/// own canvas holds sRGB-encoded bytes (as Armature's does) wants the bytes as stored
+/// instead: make the view with `format: Some(texture.format().remove_srgb_suffix())`, which
+/// this texture allows.
+pub fn frame_texture(world: &World) -> Option<wgpu::Texture> {
+    world
+        .get_resource::<Offscreen>()
+        .map(|offscreen| offscreen.0.clone())
+}
+
+impl App {
+    /// Starts the game inside another program, with no window or event loop of its own.
+    ///
+    /// The host opens the graphics device and owns the loop. It calls this once, then
+    /// [`App::update`] for every frame, [`App::host_resized`] when the space it gives the
+    /// game changes, and shows [`frame_texture`]. Input is the host's to pass on, through
+    /// the input resources or [`InjectedInput`](crate::input::InjectedInput).
+    pub fn host(
+        &mut self,
+        device: wgpu::Device,
+        queue: wgpu::Queue,
+        format: wgpu::TextureFormat,
+        width: u32,
+        height: u32,
+    ) {
+        self.world.insert_resource(Host {
+            device,
+            queue,
+            format,
+            width,
+            height,
+        });
+        self.startup();
+    }
+
+    /// Tells a hosted game the size, in pixels, of the space it is now drawn in.
+    pub fn host_resized(&mut self, width: u32, height: u32) {
+        if let Some(events) = self.world.get_resource_mut::<Events<WindowResized>>() {
+            events.send(WindowResized { width, height });
+        }
+    }
+}
 
 pub struct RenderPlugin;
 
