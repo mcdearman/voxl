@@ -195,6 +195,26 @@ impl Access {
         self.resource_writes.insert(id);
     }
 
+    /// Whether a system with this access and one with `other` could be handed the same data
+    /// in a way that isn't allowed at the same moment: one writes a resource the other uses,
+    /// or their queries could reach the same component of the same entity with a write
+    /// among them. Two systems that don't conflict could run at the same time.
+    pub fn conflicts_with(&self, other: &Access) -> bool {
+        let resources = |a: &Access, b: &Access| {
+            a.resource_writes
+                .iter()
+                .any(|id| b.resource_writes.contains(id) || b.resource_reads.contains(id))
+        };
+        resources(self, other)
+            || resources(other, self)
+            || self.queries.iter().any(|mine| {
+                other
+                    .queries
+                    .iter()
+                    .any(|theirs| !mine.is_disjoint(theirs) && mine.conflict_with(theirs).is_some())
+            })
+    }
+
     /// Everything this system touches, by name.
     pub fn summary(&self) -> AccessSummary {
         let sorted = |mut names: Vec<String>| {

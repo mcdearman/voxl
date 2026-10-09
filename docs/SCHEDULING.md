@@ -79,8 +79,9 @@ fn start(keys: Res<ButtonInput<KeyCode>>, mut next: ResMut<NextState<Game>>) {
 
 ## What isn't here yet
 
-- Systems still run one at a time. The parallel scheduler will use the same constraints, and
-  the access each system declares, to run systems that don't conflict at the same moment.
+- Systems still run one at a time. Each stage is already planned into batches of systems
+  that touch nothing in common and aren't ordered against each other (`SystemInfo::batch`,
+  and `voxl-debug systems`); the executor that runs a batch on several threads is next.
 - A condition on a tuple is asked once per system, not once for the group.
 - Plugins written against the C interface can't yet give constraints or conditions for their
   own systems; the host can order around them by name.

@@ -25,7 +25,7 @@ impl ComponentKey {
 }
 
 /// Marker trait for types that can be attached to entities.
-pub trait Component: 'static {}
+pub trait Component: Send + Sync + 'static {}
 
 #[derive(Clone, Copy, Debug)]
 pub struct ComponentTicks {

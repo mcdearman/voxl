@@ -370,6 +370,12 @@ fn handle(app: &mut App, request: &Value) -> Answer {
                             ("conditions", Value::Int(system.conditions as i64)),
                             ("suspended", Value::Bool(system.suspended)),
                             (
+                                "batch",
+                                system
+                                    .batch
+                                    .map_or(Value::Null, |batch| Value::Int(batch as i64)),
+                            ),
+                            (
                                 "access",
                                 system.access.map_or(
                                     Value::Text("the whole world".into()),
