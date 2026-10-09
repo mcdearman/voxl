@@ -1,4 +1,8 @@
-use super::{entity::Entity, storage::Component, world::World};
+use super::{
+    entity::Entity,
+    storage::{Component, ComponentKey},
+    world::World,
+};
 
 /// A set of components that can be inserted together. Implemented for every component and for
 /// tuples of bundles, so `(Transform, Velocity, (Mesh3d, Material))` works.
@@ -9,7 +13,10 @@ pub trait Bundle: Send + 'static {
 impl<C: Component> Bundle for C {
     fn insert_into(self, world: &mut World, entity: Entity) {
         let tick = world.change_tick();
-        world.storage_or_insert::<C>().insert(entity, self, tick);
+        let replaced = world.storage_or_insert::<C>().insert(entity, self, tick);
+        if replaced.is_none() {
+            world.arrived(ComponentKey::of::<C>(), entity);
+        }
     }
 }
 

@@ -838,3 +838,101 @@ mod together {
     }
     fn reads_vel_only(_: Query<&Vel>) {}
 }
+
+mod hooks {
+    use super::*;
+
+    /// What the hooks saw, in order.
+    #[derive(Default)]
+    struct Heard(Vec<String>);
+
+    fn world() -> World {
+        let mut world = World::new();
+        world.init_resource::<Heard>();
+        world.on_add::<Pos>(|world, entity| {
+            // Everything inserted with it is already there.
+            let with_vel = world.has::<Vel>(entity);
+            let at = world.get::<Pos>(entity).unwrap().0;
+            world
+                .resource_mut::<Heard>()
+                .0
+                .push(format!("pos {at} arrived, vel: {with_vel}"));
+        });
+        world.on_remove::<Pos>(|world, entity| {
+            let at = world.get::<Pos>(entity).expect("still there to be read").0;
+            world
+                .resource_mut::<Heard>()
+                .0
+                .push(format!("pos {at} leaving"));
+        });
+        world
+    }
+
+    fn heard(world: &mut World) -> Vec<String> {
+        std::mem::take(&mut world.resource_mut::<Heard>().0)
+    }
+
+    #[test]
+    fn hooks_hear_components_arrive_and_leave() {
+        let mut world = world();
+        let a = world.spawn((Pos(1), Vel(0)));
+        let b = world.spawn(Vel(5));
+        assert_eq!(heard(&mut world), ["pos 1 arrived, vel: true"]);
+
+        // Replacing a component is not an arrival; putting one where there was none is.
+        world.insert(a, Pos(2));
+        world.insert(b, Pos(7));
+        assert_eq!(heard(&mut world), ["pos 7 arrived, vel: true"]);
+
+        assert_eq!(world.remove::<Pos>(a), Some(Pos(2)));
+        assert_eq!(world.remove::<Pos>(a), None);
+        world.remove::<Vel>(b);
+        assert_eq!(heard(&mut world), ["pos 2 leaving"]);
+        world.despawn(b);
+        world.despawn(a);
+        assert_eq!(heard(&mut world), ["pos 7 leaving"]);
+        assert_eq!(world.entity_count(), 0);
+    }
+
+    #[test]
+    fn hooks_can_change_the_world_and_commands_reach_them() {
+        let mut world = world();
+        // A marker follows every `Vel`, kept by hooks rather than by a system that looks.
+        world.on_add::<Vel>(|world, entity| {
+            world.insert(entity, Marker);
+        });
+        world.on_remove::<Vel>(|world, entity| {
+            world.remove::<Marker>(entity);
+        });
+        // Whatever has a marker when it is despawned takes a friend with it.
+        world.insert_resource(Counter(0));
+        world.on_remove::<Marker>(|world, _| world.resource_mut::<Counter>().0 += 1);
+
+        let entity = world.spawn(Vel(1));
+        assert!(world.has::<Marker>(entity));
+        world.remove::<Vel>(entity);
+        assert!(!world.has::<Marker>(entity));
+        assert_eq!(world.resource::<Counter>().0, 1);
+
+        // Through commands, hooks run when the commands are applied.
+        run(&mut world, |mut commands: Commands| {
+            commands.spawn((Pos(3), Vel(3)));
+        });
+        assert_eq!(heard(&mut world), ["pos 3 arrived, vel: true"]);
+        assert_eq!(world.query::<&Marker>().iter().count(), 1);
+
+        // A hook that despawns the entity it is told about, while it is being despawned.
+        world.on_remove::<Pos>(|world, entity| {
+            world.despawn(entity);
+        });
+        let doomed = world.spawn((Pos(9), Vel(9)));
+        heard(&mut world);
+        assert!(world.despawn(doomed) || !world.contains_entity(doomed));
+        assert!(!world.contains_entity(doomed));
+        assert_eq!(
+            heard(&mut world),
+            ["pos 9 leaving"],
+            "told once, not once per despawn"
+        );
+    }
+}

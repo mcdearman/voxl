@@ -219,7 +219,9 @@ and see it change in the running scene.
 - [ ] Splitting one query's work across threads; relaxing "commands end a batch" where a
       later system needn't see them; a ThreadSanitizer run in CI
 - [ ] Table storage as an option beside sparse sets, chosen per component
-- [ ] Hooks and observers: run code when a component is added or removed
+- [x] Hooks: run code when a component is added or removed (`on_add`, `on_remove`)
+- [ ] Observers for other events (a component changing, custom events aimed at an entity);
+      hooks from plugins
 - [ ] Relations: `(ChildOf, e)`-style pairs, replacing `Parent`
 - [ ] One job system for systems, asset loading and voxel work
 

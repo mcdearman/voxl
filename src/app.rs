@@ -123,6 +123,24 @@ impl App {
 
     /// Makes a component type reachable by name, so scenes can save and load it and tools
     /// can inspect it.
+    /// Runs `hook` whenever a `C` arrives on an entity. See [`World::on_add`].
+    pub fn on_add<C: Component>(
+        &mut self,
+        hook: impl Fn(&mut World, crate::ecs::Entity) + Send + Sync + 'static,
+    ) -> &mut Self {
+        self.world.on_add::<C>(hook);
+        self
+    }
+
+    /// Runs `hook` just before a `C` leaves an entity. See [`World::on_remove`].
+    pub fn on_remove<C: Component>(
+        &mut self,
+        hook: impl Fn(&mut World, crate::ecs::Entity) + Send + Sync + 'static,
+    ) -> &mut Self {
+        self.world.on_remove::<C>(hook);
+        self
+    }
+
     /// Makes a resource reachable by name, and saved with scenes.
     pub fn register_resource_type<R: Reflect>(&mut self) -> &mut Self {
         self.world.init_resource::<TypeRegistry>();
