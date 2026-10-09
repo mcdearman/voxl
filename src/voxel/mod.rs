@@ -5,6 +5,7 @@
 
 mod block;
 mod chunk;
+mod edits;
 mod generator;
 mod mesher;
 mod render;
@@ -16,6 +17,7 @@ mod tests;
 
 pub use block::{Block, BlockId, BlockRegistry};
 pub use chunk::{chunk_of, local_of, ChunkData, CHUNK_SIZE};
+pub use edits::EditsError;
 pub use generator::{fbm, value_noise, ChunkGenerator, Terrain};
 pub use mesher::{mesh_chunk, ChunkMesh, PaddedChunk, VoxelVertex};
 pub use render::VoxelRenderer;
