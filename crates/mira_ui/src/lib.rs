@@ -191,10 +191,12 @@ fn hear<A: App + 'static>(world: &mut World) {
                     })
                 }
                 WindowEvent::MouseWheel { delta, .. } => {
+                    // Armature counts how far the content moves: the wheel turned up, or
+                    // towards the left, is a negative distance.
                     let delta = match delta {
-                        MouseScrollDelta::LineDelta(x, y) => Point::new(x * 20.0, y * 20.0),
+                        MouseScrollDelta::LineDelta(x, y) => Point::new(-x * 48.0, -y * 48.0),
                         MouseScrollDelta::PixelDelta(p) => {
-                            Point::new(p.x as f32 / scale, p.y as f32 / scale)
+                            Point::new(-p.x as f32 / scale, -p.y as f32 / scale)
                         }
                     };
                     Some(Event::Wheel {
