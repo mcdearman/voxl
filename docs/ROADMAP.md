@@ -364,7 +364,8 @@ editor needs from it.
 - [x] Entity tree (select, open and shut, drag to reparent) and a read-only inspector
       generated from reflection
 - [x] Editing in the inspector: numbers, vectors and switches change the running game
-- [ ] In the inspector still: text, entity and asset references, colours as colours, and
+- [x] Colours picked as colours, and entity references set by dragging from the tree
+- [ ] In the inspector still: text and asset references, and
       one undo step per edit; renaming (mira has no name component yet); transform gizmos
 - [ ] Asset browser, drag to place, prefab editing
 - [ ] Undo and redo as a command log; play in editor

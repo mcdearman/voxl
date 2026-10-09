@@ -405,7 +405,10 @@ impl Editor {
                     tree(&self.entity_tree(None), self.chosen.as_ref())
                         .on_select(Message::Chosen)
                         .on_toggle(Message::Opened)
-                        .on_move(Message::Moved),
+                        .on_move(Message::Moved)
+                        // A row can also be carried out of the tree, to a field that names
+                        // an entity.
+                        .draggable(true),
                 )
                 .padding(6.0),
             )
@@ -699,7 +702,17 @@ fn fields(
         // Shown, and not yet changed here.
         Value::Null => said("none".to_owned()),
         Value::Text(written) => said(written.clone()),
-        Value::Entity(bits) => said(format!("entity {}", Entity::from_bits(*bits).index())),
+        // An entity is named by dropping one on the field from the tree; a click on the
+        // field goes to the entity it names.
+        Value::Entity(bits) => {
+            let named = Entity::from_bits(*bits);
+            let label = format!("entity {}", named.index());
+            let field = reference_field(icons::BOX, Some(&label), Message::Chosen(named), None);
+            drop_area(field, move |dropped: Entity, _| {
+                edited(Value::Entity(dropped.to_bits()))
+            })
+            .into()
+        }
         Value::Asset { kind, name } => said(format!("{kind} {name}")),
     };
     rows.push(field_row(&name, depth.saturating_sub(1), control))

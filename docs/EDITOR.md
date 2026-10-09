@@ -10,8 +10,9 @@ project and what exists on each side.
 and step it. Beside it: the game's entities as a tree (children under their `Parent`; drag
 one onto another to make it its child, or beside one to share its parent), an inspector
 in which the chosen entity's parts are fields to change (numbers and vectors drag or take a
-typed value, true-or-false is a switch, a colour opens a picker; text, entity and asset
-references are shown but not
+typed value, true-or-false is a switch, a colour opens a picker, and a field that names an
+entity takes one dragged onto it from the tree (a click on it goes to the entity it names);
+text and asset references are shown but not
 yet changed there), each change written straight to the running game,
 and the game's signals with their values. All are read from the game a few times a second.
 They are panels of a dock:
@@ -106,9 +107,8 @@ Agreed in outline with the Neo session (October 2026); built there, not here.
 3. **A tree** and **fields** (done, Neo `4548bd4`; expand, select, rename, drag to reparent) and **fields** for a property
    view: numbers that drag, vectors, entity references, a colour picker. The view itself is
    generated on mira's side from reflection.
-4. **Dragging between panels.**
-5. **A transcript** for the agent window (done, Neo `4e205a6`, but for soft wrap in the
-   prompt): streamed Markdown, rows that fold for what the
+4. **Dragging between panels** (done, Neo `a0db824`).
+5. **A transcript** for the agent window (done, Neo `a0db824`): streamed Markdown, rows that fold for what the
    agent did, pictures inline, an input that grows and sends on Enter.
 
 mira's signal graph stays the Armature widget it is; such a widget goes into a Neo app
