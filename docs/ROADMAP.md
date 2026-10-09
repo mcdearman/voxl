@@ -271,7 +271,10 @@ derived from other values, which the engine keeps true.
       `sacred_sites_graph`); see [UI.md](UI.md)
 - [x] The in-game view as a circuit: boxes, ports and wires lit when true; rewiring by
       dragging, forcing, and changing constants, on the running game
-- [ ] Adding and removing signals and changing operations in the panel; keeping the layout
+- [x] In the panel: adding and removing inputs by dragging wires, changing a box's
+      operation, adding constants, removing signals
+- [ ] Naming signals, timers and comparisons from the panel; keeping the layout; saving a
+      graph
 - [ ] The graphical editor of the graph (Chris, October 2026): signals and connections laid
       out and edited by hand while the game runs; in the game's panel and in the editor
       (Phase 5)

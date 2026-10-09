@@ -96,6 +96,8 @@ signals.connect("red.clock.running", 1, "always");     // connect an input elsew
 signals.force("blue.contesting", Some(Signal::Bool(false))); // hold a node's output
 signals.force("blue.contesting", None);                // let it go
 signals.define("red.clock.running", Op::Or, ["red.holds_all", "cheat"]); // replace a rule
+signals.set_op("blue.calm", Op::Count);                // the same inputs, another rule
+signals.set_inputs("red.wins", ["red.clock"]);          // the same rule, other inputs
 ```
 
 Redefining a node keeps its value and what it has timed, so changing a rule doesn't restart

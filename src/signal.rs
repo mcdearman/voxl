@@ -279,6 +279,49 @@ impl Signals {
         true
     }
 
+    /// The operation of a node that is worked out from others; `None` for a source or a
+    /// signal that doesn't exist.
+    pub fn op(&self, name: &str) -> Option<Op> {
+        match &self.nodes[*self.names.get(name)?].kind {
+            Kind::Op(op) => Some(*op),
+            _ => None,
+        }
+    }
+
+    /// Changes how a node is worked out, keeping its inputs. Returns false for a source or
+    /// a signal that doesn't exist.
+    pub fn set_op(&mut self, name: &str, op: Op) -> bool {
+        match self
+            .names
+            .get(name)
+            .map(|&index| &mut self.nodes[index].kind)
+        {
+            Some(Kind::Op(current)) => {
+                *current = op;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Gives a node a new list of inputs, keeping how it is worked out. Returns false for a
+    /// source or a signal that doesn't exist.
+    pub fn set_inputs<I: Into<String>>(
+        &mut self,
+        name: &str,
+        inputs: impl IntoIterator<Item = I>,
+    ) -> bool {
+        let Some(&index) = self.names.get(name) else {
+            return false;
+        };
+        if !matches!(self.nodes[index].kind, Kind::Op(_)) {
+            return false;
+        }
+        self.nodes[index].inputs = inputs.into_iter().map(Into::into).collect();
+        self.order.clear();
+        true
+    }
+
     /// Makes a node's output a fixed value whatever it would work out, or lets it go again
     /// with `None`: for trying something out while the game runs.
     pub fn force(&mut self, name: &str, value: Option<Signal>) -> bool {
@@ -899,5 +942,32 @@ mod tests {
             "a circle is a frame late, so it blinks"
         );
         assert!(!signals.take_changes().is_empty());
+    }
+    #[test]
+    fn a_rule_can_be_given_other_inputs_and_another_operation() {
+        let mut world = World::new();
+        let mut signals = Signals::default();
+        signals.source("lit", |_: Query<&Transform>| true);
+        signals.set("a", true);
+        signals.set("b", false);
+        signals.define("rule", Op::And, ["a", "b"]);
+        signals.update(&mut world, 0.0);
+        assert!(!signals.is_true("rule"));
+        assert_eq!(signals.op("rule"), Some(Op::And));
+
+        assert!(signals.set_op("rule", Op::Or));
+        signals.update(&mut world, 0.0);
+        assert!(signals.is_true("rule"));
+        assert!(signals.set_inputs("rule", ["b"]));
+        signals.update(&mut world, 0.0);
+        assert!(!signals.is_true("rule"));
+        assert!(signals.set_inputs("rule", ["b", "a", "lit"]) && signals.set_op("rule", Op::Count));
+        signals.update(&mut world, 0.0);
+        assert_eq!(signals.number("rule"), 2.0);
+
+        // A source reads the world, not other signals: it has no operation to change.
+        assert_eq!(signals.op("lit"), None);
+        assert!(!signals.set_op("lit", Op::Not) && !signals.set_inputs("lit", ["a"]));
+        assert!(!signals.set_op("nothing", Op::Not) && !signals.set_inputs("nothing", ["a"]));
     }
 }
