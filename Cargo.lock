@@ -163,7 +163,7 @@ dependencies = [
 [[package]]
 name = "armature"
 version = "0.1.0"
-source = "git+https://github.com/mcdearman/armature?rev=c4c566ad577c2aed5114cfabdb1e2f325cead990#c4c566ad577c2aed5114cfabdb1e2f325cead990"
+source = "git+https://github.com/mcdearman/armature?rev=359d6352b9d097f3b4273db3cdfa602bca48550f#359d6352b9d097f3b4273db3cdfa602bca48550f"
 dependencies = [
  "arboard",
  "armature-render",
@@ -180,7 +180,7 @@ dependencies = [
 [[package]]
 name = "armature-render"
 version = "0.1.0"
-source = "git+https://github.com/mcdearman/armature?rev=c4c566ad577c2aed5114cfabdb1e2f325cead990#c4c566ad577c2aed5114cfabdb1e2f325cead990"
+source = "git+https://github.com/mcdearman/armature?rev=359d6352b9d097f3b4273db3cdfa602bca48550f#359d6352b9d097f3b4273db3cdfa602bca48550f"
 dependencies = [
  "bytemuck",
  "glyphon",
@@ -1463,7 +1463,7 @@ dependencies = [
 [[package]]
 name = "neo"
 version = "0.1.0"
-source = "git+https://github.com/mcdearman/neo?rev=4e205a6dab5f44ec01d2301e96fee4bcad66f243#4e205a6dab5f44ec01d2301e96fee4bcad66f243"
+source = "git+https://github.com/mcdearman/neo?rev=a0db82404e8e48410a7c99478da6f7f70a27923f#a0db82404e8e48410a7c99478da6f7f70a27923f"
 dependencies = [
  "armature",
  "armature-render",
@@ -1473,7 +1473,7 @@ dependencies = [
 [[package]]
 name = "neo-theme"
 version = "0.1.0"
-source = "git+https://github.com/mcdearman/neo?rev=4e205a6dab5f44ec01d2301e96fee4bcad66f243#4e205a6dab5f44ec01d2301e96fee4bcad66f243"
+source = "git+https://github.com/mcdearman/neo?rev=a0db82404e8e48410a7c99478da6f7f70a27923f#a0db82404e8e48410a7c99478da6f7f70a27923f"
 dependencies = [
  "armature-render",
 ]

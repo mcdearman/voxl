@@ -11,7 +11,10 @@
 
 use std::{sync::mpsc::Sender, time::Duration};
 
-use mira::{live::Live, prelude::Transform};
+use mira::{
+    live::Live,
+    prelude::{Entity, Parent, Transform},
+};
 use mira_editor::{
     agent::{Agent, Heard},
     Editor,
@@ -160,6 +163,46 @@ fn the_app_is_worked_by_clicking_on_it() {
         ("Why is the clock stopped?", "mira_screenshot")
     );
     assert!(said[1].starts_with("**Blue**") && said[3].contains("red.clock"));
+
+    // A row of the tree dragged onto another makes it that one's child. The child's parent
+    // is then a field in the inspector, and a third row dropped on that field replaces it.
+    let drag = |window: &mut Harness<Editor>, from: Point, to: Point| {
+        window.event(Event::PointerMoved { pos: from });
+        window.event(Event::PointerPressed {
+            pos: from,
+            button: PointerButton::Primary,
+        });
+        for step in 1..=8 {
+            let along = step as f32 / 8.0;
+            let pos = Point::new(
+                from.x + (to.x - from.x) * along,
+                from.y + (to.y - from.y) * along,
+            );
+            window.event(Event::PointerMoved { pos });
+        }
+        window.event(Event::PointerReleased {
+            pos: to,
+            button: PointerButton::Primary,
+        });
+        window.frame(TICK, 1.0);
+        window.frame(TICK, 1.0);
+    };
+    let row = |index: usize| Point::new(900.0, 149.0 + 26.0 * index as f32);
+    let parent_of = |window: &Harness<Editor>, child: Entity| {
+        let world = &window.app().game().world;
+        world.get::<Parent>(child).map(|parent| parent.0.index())
+    };
+    drag(&mut window, row(6), row(5));
+    window.click(row(6));
+    window.frame(TICK, 1.0);
+    let child = window.app().chosen().expect("the row that was moved");
+    assert_eq!((child.index(), parent_of(&window, child)), (6, Some(5)));
+    drag(&mut window, row(4), Point::new(950.0, 642.0));
+    assert_eq!(
+        parent_of(&window, child),
+        Some(4),
+        "the row dropped on the field is the parent now"
+    );
 
     // Further down the inspector, for the picture: the entity's colour.
     window.event(Event::Wheel {
