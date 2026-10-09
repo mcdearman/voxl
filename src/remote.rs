@@ -21,7 +21,7 @@ use std::{
 
 use crate::{
     app::{App, Stage},
-    ecs::Entity,
+    ecs::{ComponentKey, Entity},
     input::{key_named, InjectedInput, Played},
     live::{History, Live},
     reflect::{json, Scene, Schema, TypeRegistry, Value},
@@ -826,6 +826,35 @@ fn handle(app: &mut App, request: &Value) -> Answer {
                 (None, None) => return Err(format!("there is no type `{name}`")),
             };
             Ok(schema_value(&schema))
+        }
+        "unregistered" => {
+            // What the world holds that can't be reached by name: invisible to scenes,
+            // to stepping back, and to whoever is on the other end of this connection.
+            let registry = app.world.resource::<TypeRegistry>();
+            let components = app
+                .world
+                .component_kinds()
+                .into_iter()
+                .filter(|(key, name, _)| match key {
+                    ComponentKey::Type(rust_type) => !registry.knows_type(*rust_type),
+                    ComponentKey::Dynamic(_) => registry.get(name).is_none(),
+                })
+                .map(|(_, name, entities)| {
+                    map([
+                        ("type", Value::Text(name)),
+                        ("entities", Value::Int(entities as i64)),
+                    ])
+                });
+            let resources = app
+                .world
+                .resource_kinds()
+                .into_iter()
+                .filter(|(rust_type, _)| !registry.knows_type(*rust_type))
+                .map(|(_, name)| name.to_owned());
+            Ok(map([
+                ("components", Value::List(components.collect())),
+                ("resources", texts(resources)),
+            ]))
         }
         "describe" => {
             let limit = request
@@ -1750,5 +1779,48 @@ mod tests {
             blind.contains("no active camera") && blind.contains("not drawn"),
             "{blind}"
         );
+    }
+    #[test]
+    fn state_that_cannot_be_seen_is_reported() {
+        struct Secret(#[allow(dead_code)] u32);
+        impl crate::ecs::Component for Secret {}
+        struct Hidden;
+
+        let mut app = app();
+        app.world.spawn((Transform::IDENTITY, Secret(1)));
+        app.world.spawn(Secret(2));
+        app.world.insert_resource(Hidden);
+        app.update();
+        let report = ask(&mut app, "{'cmd': 'unregistered'}");
+        let Some(Value::List(components)) = report.field("components") else {
+            panic!("components: {report:?}");
+        };
+        let named = |part: &str| {
+            components.iter().find(|component| {
+                matches!(component.field("type"), Some(Value::Text(name)) if name.ends_with(part))
+            })
+        };
+        assert_eq!(
+            named("::Secret").unwrap().field("entities"),
+            Some(&Value::Int(2))
+        );
+        assert!(
+            named("::Transform").is_none(),
+            "registered types are not listed"
+        );
+        assert!(
+            named("::GlobalTransform").is_some(),
+            "the engine's own gaps show too"
+        );
+        let Some(Value::List(resources)) = report.field("resources") else {
+            panic!("resources");
+        };
+        let has = |part: &str| {
+            resources
+                .iter()
+                .any(|name| matches!(name, Value::Text(name) if name.ends_with(part)))
+        };
+        assert!(has("::Hidden") && has("Frames"));
+        assert!(!has("Fog"), "a registered resource is not listed");
     }
 }

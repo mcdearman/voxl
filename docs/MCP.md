@@ -32,7 +32,7 @@ Each tool is one command of the [debug connection](LIVE.md#the-debug-connection)
 | `mira_describe` | the scene in words: the camera, and what there is, things on screen first and nearest first, with where on the screen each appears |
 | `mira_entities`, `mira_get`, `mira_set`, `mira_remove`, `mira_spawn`, `mira_despawn` | entities and their components, by name |
 | `mira_resource` | game-wide settings, read or set |
-| `mira_types`, `mira_schema` | what can be read and written, and the shape of each type |
+| `mira_types`, `mira_schema`, `mira_unregistered` | what can be read and written, the shape of each type, and what can't be seen at all |
 | `mira_systems`, `mira_failures` | what runs, what it touches, how long it takes, what broke and where |
 | `mira_pause`, `mira_resume`, `mira_step`, `mira_time_scale` | time; `mira_step` waits for its frames and answers with the status after them |
 | `mira_run_until` | runs until a [signal](SIGNALS.md) is true, then pauses: getting the game to a moment worth looking at |
@@ -68,7 +68,9 @@ the game's code.
 Everything registered with the [type registry](SCENES.md): `mira_types` lists it and
 `mira_schema` describes it. State that is not registered is invisible here, as it is to
 scenes and to stepping back; that is the reason to register a game's components and
-resources. A plugin's components appear once the plugin
+resources. `mira_unregistered` lists what a running game holds that isn't: each component
+type with how many entities have it, and each resource. It names the engine's own gaps as
+well as the game's. A plugin's components appear once the plugin
 [describes](PLUGINS.md#describing-components) them.
 
 ## What isn't here yet

@@ -61,10 +61,13 @@ pub struct TypeRegistry {
     types: Vec<ComponentType>,
     names: HashMap<&'static str, usize>,
     resources: Vec<ResourceType>,
+    /// The Rust types behind what is registered, to tell what in a world is not.
+    rust_types: HashSet<std::any::TypeId>,
 }
 
 impl TypeRegistry {
     pub fn register<C: Component + Reflect>(&mut self) {
+        self.rust_types.insert(std::any::TypeId::of::<C>());
         if self.names.contains_key(C::type_name()) {
             return;
         }
@@ -111,6 +114,7 @@ impl TypeRegistry {
 
     /// Makes a resource reachable by name, and part of captured scenes.
     pub fn register_resource<R: Reflect>(&mut self) {
+        self.rust_types.insert(std::any::TypeId::of::<R>());
         if self.resource(R::type_name()).is_some() {
             return;
         }
@@ -124,6 +128,11 @@ impl TypeRegistry {
                 Ok(())
             }),
         });
+    }
+
+    /// Whether a component or resource of this Rust type has been registered.
+    pub fn knows_type(&self, rust_type: std::any::TypeId) -> bool {
+        self.rust_types.contains(&rust_type)
     }
 
     pub fn resource(&self, name: &str) -> Option<&ResourceType> {

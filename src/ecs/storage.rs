@@ -175,6 +175,10 @@ impl<T> ComponentSet<T> {
 /// Type-erased view of a component's storage, so the world can keep every kind in one map
 /// and code that only knows a component's size (native plugins) can still reach its values.
 pub(crate) trait ErasedStorage {
+    /// The Rust type stored, or nothing for a component defined at runtime.
+    fn type_name(&self) -> &'static str {
+        ""
+    }
     fn remove_entity(&mut self, entity: Entity);
     fn as_any(&self) -> &dyn Any;
     fn as_any_mut(&mut self) -> &mut dyn Any;
@@ -197,6 +201,10 @@ pub(crate) trait ErasedStorage {
 }
 
 impl<T: Component> ErasedStorage for ComponentSet<T> {
+    fn type_name(&self) -> &'static str {
+        std::any::type_name::<T>()
+    }
+
     fn remove_entity(&mut self, entity: Entity) {
         self.remove(entity);
     }

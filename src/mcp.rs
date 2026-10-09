@@ -90,6 +90,11 @@ const TOOLS: &[Tool] = &[
         arguments: &[],
     },
     Tool {
+        command: "unregistered",
+        about: "What the game holds that these tools cannot see: components and resources that exist but are not registered by name, with how many entities have each. State listed here is invisible to get/set, scenes and rewind; registering the type fixes that.",
+        arguments: &[],
+    },
+    Tool {
         command: "schema",
         about: "The shape of a component or resource: its fields and their types, as needed to write a value of it.",
         arguments: &["name: string: a component or resource name"],

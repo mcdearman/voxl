@@ -150,8 +150,9 @@ game's state, change it, and control time and code. The means is the Model Conte
 - [ ] What changed since last asked; sizes and what hides what
 - [x] The schema of every registered type, so an agent knows what it may read and write and
       in what shape
-- [ ] Total knowledge: a check that reports engine state that is not reflected, and so
-      invisible
+- [x] A report of state that is not reflected, and so invisible (`unregistered`)
+- [ ] Total knowledge: registering what that report lists in the engine itself (the
+      renderer's and physics' resources, `GlobalTransform`, animation)
 - [x] Events pushed, not polled, over the debug connection: failures, signal changes, pauses
       (`watch`, `mira-debug events`)
 - [ ] The same events through MCP; log lines and plugin reloads as events
