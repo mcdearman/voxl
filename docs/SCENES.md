@@ -137,6 +137,8 @@ value.set_path("translation.1", Value::Float(4.0));
   `CharacterController`. A saved body keeps its velocity; forces applied that step and
   whether it was asleep are not saved. `Animator` and `Skinned` are not registered: they
   hold a skeleton and clips from a model file, so save the model's name and spawn it again.
+- Voxel terrain is not part of a scene. Edited chunks are saved to a file of their own; see
+  [VOXELS.md](VOXELS.md).
 - Only `Fog` and `AmbientLight` are registered among the engine's resources. A plugin's
   components are saved once the plugin
   [describes](PLUGINS.md#describing-components) them.

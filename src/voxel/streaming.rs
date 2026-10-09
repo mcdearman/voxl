@@ -92,7 +92,9 @@ pub(crate) fn stream_chunks(
     while let Ok((chunk, data)) = streaming.generated.receiver.try_recv() {
         streaming.generating.remove(&chunk);
         if horizontal_distance_squared(chunk, center) <= unload_radius * unload_radius {
-            world.insert_chunk(chunk, data);
+            // Not `insert_chunk`: edits loaded from a file while this chunk was being
+            // generated must win over what the generator made.
+            world.insert_generated(chunk, data);
         }
     }
 
@@ -101,7 +103,8 @@ pub(crate) fn stream_chunks(
         .filter(|c| horizontal_distance_squared(*c, center) > unload_radius * unload_radius)
         .collect();
     for chunk in stale {
-        world.remove_chunk(chunk);
+        // Keeps the chunk's blocks if they were edited, since generating can't bring those back.
+        world.unload_chunk(chunk);
         streaming.removals.push(chunk);
     }
 
@@ -118,7 +121,11 @@ pub(crate) fn stream_chunks(
             }
             for y in settings.min_chunk_y..=settings.max_chunk_y {
                 let chunk = IVec3::new(center.x + x, y, center.z + z);
-                if !world.contains_chunk(chunk) && !streaming.generating.contains(&chunk) {
+                if world.contains_chunk(chunk) || streaming.generating.contains(&chunk) {
+                    continue;
+                }
+                // An edited chunk comes back as it was left, without a trip to the generator.
+                if !world.restore_edited(chunk) {
                     missing.push(chunk);
                 }
             }

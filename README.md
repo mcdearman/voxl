@@ -67,6 +67,9 @@ Shaders and textures reload while the app runs too; see [docs/HOT_RELOAD.md](doc
 Components can be saved to and loaded from JSON scene files, and inspected by name; see
 [docs/SCENES.md](docs/SCENES.md).
 
+Edits to voxel terrain are kept when their chunk streams out, and can be saved to a file; see
+[docs/VOXELS.md](docs/VOXELS.md).
+
 Ordering systems, run conditions and game states: [docs/SCHEDULING.md](docs/SCHEDULING.md).
 
 Failures that pause the game instead of ending it, and stepping time:

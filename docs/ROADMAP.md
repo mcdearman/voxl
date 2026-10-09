@@ -19,7 +19,7 @@ A phase is not done until its exit test passes. Tick items off here as they land
 | Data | glTF and image loading, typed handles | Serialization, scenes, prefabs, async loading, hot reload, processed assets, handle reference counts |
 | Rendering | Forward HDR + MSAA + TAA, PBR, image-based lighting, cascaded sun shadows, bloom, light shafts, decals, GPU skinning, hand-authored LODs | GPU-driven drawing, occlusion culling, local lights, material system, particles as an engine feature, upscaling, compressed and streamed textures |
 | Lighting | Ray-traced shadows/AO/reflections (Vulkan only), light probes baked once | Dynamic global illumination, anything ray-traced on Metal |
-| Voxels | Chunked storage, threaded generation and meshing with ambient occlusion, streaming, raycasts | Greedy meshing, chunk LOD, transparent blocks, saving edits, voxel lighting |
+| Voxels | Chunked storage, threaded generation and meshing with ambient occlusion, streaming, raycasts, saving edits | Greedy meshing, chunk LOD, transparent blocks, voxel lighting |
 | Simulation | Rigid bodies with sleeping, joints, character controller, fluids; shapes: sphere, box, capsule, plane, static triangle mesh | Convex hulls, continuous collision, ragdolls, vehicles, cloth, destruction |
 | Animation | Clips, cross-fades, masks, two-bone IK, procedural gait | State machines, blend trees, retargeting, skins loaded from glTF, compression |
 | Runtime | Keyboard and mouse | UI, text, audio, gamepad, input mapping, navigation, AI, networking, scripting, save games |
@@ -144,7 +144,9 @@ The layer Unreal's editor, saves, networking and Blueprints all stand on.
 - [x] Reflecting the physics components (bodies, colliders with every shape, joints,
       character controllers), `Lods`, `Interpolate`, `ChunkViewer`
 - [x] Scenes capture registered resources (a level's fog and ambient light)
-- [ ] Saving skeletal animation state and edited voxel chunks
+- [x] Saving edited voxel chunks: an edited chunk keeps its blocks when it streams out, and
+      the edited chunks of a world save to one file and load back. [VOXELS.md](VOXELS.md)
+- [ ] Saving skeletal animation state
 - [x] Hierarchy as a real feature: `Children` kept from `Parent`, recursive despawn, and
       propagation that walks down from the roots (one multiply per entity at any depth)
 - [x] Asset server: assets by name (files, parts of model files, shapes), images decoded on
@@ -334,7 +336,7 @@ project grows.
 
 ## Next three steps
 
-1. Saving edited voxel chunks; model files loaded off the main thread and watched (Phase 1).
+1. Model files loaded off the main thread and watched (Phase 1).
 2. Image-diff tests around the demos, and the rest of the crate split (Phase 0). Two things
    seen in screenshots to fix alongside: the built-in sky is dull next to the sun it comes
    with; and objects that move every frame smear under temporal anti-aliasing (it has no
