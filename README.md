@@ -102,7 +102,7 @@ Where the engine is headed: [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ```
 cargo test
-cargo +nightly miri test --lib -- ecs::     # the ECS's unsafe code
+cargo +nightly miri test -p mira_ecs        # the ECS's unsafe code
 MIRA_SCREENSHOT=frame.png cargo run --release   # render a frame to a file and quit
 MIRA_FRAME_TESTS=1 cargo test --test frames     # draw fixed scenes and compare with stored frames
 ```

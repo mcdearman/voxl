@@ -43,9 +43,11 @@ A phase is not done until its exit test passes. Tick items off here as they land
 
 Make the project safe to change quickly.
 
-- [ ] Split into a workspace: `mira_ecs`, `mira_core`, `mira_render`, `mira_voxel`, `mira_physics`
-      (the workspace exists, with `mira_plugin` and the example plugins as members; the engine
-      itself is still one crate)
+- [x] The ECS as a crate of its own (`crates/mira_ecs`), which the engine re-exports as
+      `mira::ecs`; it depended on nothing else, and Miri now builds only it
+- [ ] The rest of the split: `mira_core`, `mira_render`, `mira_voxel`, `mira_physics`. These
+      lean on each other (the app, reflection, assets and rendering all meet), so each needs
+      its seams found first
 - [x] CI on macOS and Linux: build, test, clippy, Miri on the ECS (written; not yet seen to
       pass on GitHub)
 - [x] Image-diff tests: a fixed scene is stepped to a set frame, drawn, and compared with a

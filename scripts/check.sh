@@ -16,7 +16,7 @@ miri() {
     step "miri"
     # The systems' worker threads live as long as the process, which Miri counts as a leak;
     # the flag turns that check off (and with it the check for leaked memory).
-    MIRIFLAGS="${MIRIFLAGS:-} -Zmiri-ignore-leaks" cargo +nightly miri test --lib -- ecs::
+    MIRIFLAGS="${MIRIFLAGS:-} -Zmiri-ignore-leaks" cargo +nightly miri test -p mira_ecs
 }
 
 if [ "${1:-}" = "--miri-only" ]; then

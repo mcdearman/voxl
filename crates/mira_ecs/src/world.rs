@@ -19,7 +19,7 @@ use super::{
     },
 };
 
-pub(crate) struct ResourceCell {
+pub struct ResourceCell {
     type_name: &'static str,
     value: UnsafeCell<Box<dyn Any>>,
     ticks: UnsafeCell<ComponentTicks>,
@@ -28,14 +28,14 @@ pub(crate) struct ResourceCell {
 impl ResourceCell {
     /// # Safety
     /// No mutable reference to this resource may be alive.
-    pub(crate) unsafe fn get<'a, T: 'static>(&self) -> (&'a T, ComponentTicks) {
+    pub unsafe fn get<'a, T: 'static>(&self) -> (&'a T, ComponentTicks) {
         let value = (*self.value.get()).downcast_ref::<T>().unwrap();
         (value, *self.ticks.get())
     }
 
     /// # Safety
     /// No other reference to this resource may be alive.
-    pub(crate) unsafe fn get_mut<'a, T: 'static>(&self) -> (&'a mut T, &'a mut ComponentTicks) {
+    pub unsafe fn get_mut<'a, T: 'static>(&self) -> (&'a mut T, &'a mut ComponentTicks) {
         let value = (*self.value.get()).downcast_mut::<T>().unwrap();
         (value, &mut *self.ticks.get())
     }
@@ -116,7 +116,7 @@ impl World {
     }
 
     /// Returns the current tick and advances the counter. Called once per system run.
-    pub(crate) fn increment_change_tick(&self) -> Tick {
+    pub fn increment_change_tick(&self) -> Tick {
         self.change_tick.fetch_add(1, Ordering::Relaxed)
     }
 
@@ -239,7 +239,7 @@ impl World {
     }
 
     /// The entity allocator, locked: for making entities with only shared access.
-    pub(crate) fn entities(&self) -> MutexGuard<'_, Entities> {
+    pub fn entities(&self) -> MutexGuard<'_, Entities> {
         self.entities
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -251,7 +251,7 @@ impl World {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    pub(crate) fn entities_snapshot(&self) -> Vec<Entity> {
+    pub fn entities_snapshot(&self) -> Vec<Entity> {
         self.entities().iter().collect()
     }
 
@@ -293,7 +293,7 @@ impl World {
         self.storage::<C>().is_some_and(|s| s.contains(entity))
     }
 
-    pub(crate) fn storage<C: Component>(&self) -> Option<&ComponentSet<C>> {
+    pub fn storage<C: Component>(&self) -> Option<&ComponentSet<C>> {
         self.storages
             .get(&ComponentKey::of::<C>())
             .map(|s| s.as_any().downcast_ref().unwrap())
@@ -387,13 +387,13 @@ impl World {
 
     /// Stops destroying a runtime-defined component's values (they leak instead). Used while
     /// the code holding its destructor is unloaded.
-    pub(crate) fn forget_blob_drop(&mut self, id: u32) {
+    pub fn forget_blob_drop(&mut self, id: u32) {
         if let Some(blob) = self.blob_mut(id) {
             blob.set_drop(None);
         }
     }
 
-    pub(crate) fn erased_storage(&self, key: ComponentKey) -> Option<&dyn ErasedStorage> {
+    pub fn erased_storage(&self, key: ComponentKey) -> Option<&dyn ErasedStorage> {
         self.storages.get(&key).map(|s| &**s)
     }
 
@@ -402,7 +402,7 @@ impl World {
     ///
     /// # Safety
     /// `src` must point to a valid value of the component, which the caller gives up.
-    pub(crate) unsafe fn insert_raw(
+    pub unsafe fn insert_raw(
         &mut self,
         entity: Entity,
         key: ComponentKey,
@@ -419,7 +419,7 @@ impl World {
         true
     }
 
-    pub(crate) fn remove_by_key(&mut self, entity: Entity, key: ComponentKey) {
+    pub fn remove_by_key(&mut self, entity: Entity, key: ComponentKey) {
         self.run_departure(key, entity);
         if let Some(storage) = self.storages.get_mut(&key) {
             storage.remove_entity(entity);
@@ -559,7 +559,7 @@ impl World {
         out
     }
 
-    pub(crate) fn resource_cell<R: 'static>(&self) -> Option<&ResourceCell> {
+    pub fn resource_cell<R: 'static>(&self) -> Option<&ResourceCell> {
         self.resources.get(&TypeId::of::<R>())
     }
 }
