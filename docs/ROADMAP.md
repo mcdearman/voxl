@@ -86,7 +86,9 @@ contract is `include/mira.h`; see [PLUGINS.md](PLUGINS.md).
 - [x] Hierarchy from plugins: `set_parent` and `despawn_tree`
 - [ ] Reach more of the engine from a plugin: animation, joints and character controllers,
       voxel terrain, text and UI, sound
-- [ ] Optional terms and change filters in queries
+- [x] Ordering a plugin's systems (`system_order`); orthographic cameras
+      (`set_camera_orthographic`)
+- [ ] Optional terms and change filters in queries; hooks from plugins
 - [ ] Removing a plugin at runtime, with its components and systems
 - [ ] A generic script host for languages that can't build a shared library themselves
 - [ ] Meadow bindings, once Meadow can export C functions

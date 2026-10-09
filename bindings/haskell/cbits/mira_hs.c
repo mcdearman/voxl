@@ -311,3 +311,13 @@ void mira_hs_signal_define(MiraSystem *system, const char *name, size_t len, uin
                            double param, const char *inputs, size_t inputs_len) {
     api->signal_define(system, name, len, op, param, inputs, inputs_len);
 }
+
+void mira_hs_set_camera_orthographic(MiraSystem *system, MiraEntity entity, float height,
+                                     float near, float far) {
+    api->set_camera_orthographic(system, entity, height, near, far, 1);
+}
+
+int32_t mira_hs_system_order(MiraApp *app, const char *name, size_t len, uint32_t relation,
+                             const char *other, size_t other_len) {
+    return api->system_order(app, name, len, relation, other, other_len);
+}

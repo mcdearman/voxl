@@ -18,7 +18,6 @@ use super::{
     system::{check_queries, Context, DynamicSystem, Term},
 };
 use crate::{
-    signal::{Compare, Op, Signal, Signals},
     app::Stage,
     asset_server::AssetServer,
     assets::{Assets, Handle},
@@ -29,6 +28,7 @@ use crate::{
     render::{
         AmbientLight, Camera, Color, DirectionalLight, Image, Material, Mesh, Mesh3d, Vertex,
     },
+    signal::{Compare, Op, Signal, Signals},
     transform::{Parent, Transform},
     window::Window,
 };
@@ -70,6 +70,9 @@ pub(crate) struct Registrar<'a> {
     pub systems: Vec<(Stage, DynamicSystem)>,
     /// Runtime-defined components this plugin registered, by world id.
     pub components: Vec<u32>,
+    /// What the plugin said about its systems' order: the system's full name, whether it
+    /// runs after (or before) the other, and the other's name.
+    pub orders: Vec<(String, bool, String)>,
 }
 
 pub(crate) static API: MiraApi = MiraApi {
@@ -126,6 +129,8 @@ pub(crate) static API: MiraApi = MiraApi {
     signal_set,
     signal_get,
     signal_define,
+    set_camera_orthographic,
+    system_order,
 };
 
 /// Runs `body`, turning a panic into `fallback` so it never unwinds into the plugin.
@@ -1393,5 +1398,75 @@ unsafe extern "C" fn signal_define(
                 }
             }
         });
+    })
+}
+
+unsafe extern "C" fn set_camera_orthographic(
+    system: *mut MiraSystem,
+    entity: MiraEntity,
+    height: f32,
+    near: f32,
+    far: f32,
+    active: u32,
+) {
+    guard("set_camera_orthographic", (), || {
+        let Some(context) = context(system) else {
+            return;
+        };
+        let camera = Camera {
+            near,
+            far,
+            active: active != 0,
+            ..Camera::orthographic(height)
+        };
+        let entity = Entity::from_bits(entity);
+        context.queue.push(move |world| {
+            world.insert(entity, camera);
+        });
+    })
+}
+
+unsafe extern "C" fn system_order(
+    app: *mut MiraApp,
+    name: *const u8,
+    len: usize,
+    relation: u32,
+    other: *const u8,
+    other_len: usize,
+) -> i32 {
+    guard("system_order", -1, || {
+        let Some(registrar) = app.cast::<Registrar>().as_mut() else {
+            return -1;
+        };
+        let (Some(name), Some(other)) = (text(name, len), text(other, other_len)) else {
+            return -1;
+        };
+        let own = |short: &str| format!("{}::{short}", registrar.plugin);
+        let is_own = |short: &str| {
+            let full = own(short);
+            registrar
+                .systems
+                .iter()
+                .any(|(_, system)| crate::ecs::System::name(system) == full)
+        };
+        if !is_own(name) {
+            log::error!(
+                target: "plugin",
+                "{}: can't order `{name}`: the plugin has added no such system",
+                registrar.plugin
+            );
+            return -1;
+        }
+        // Another of the plugin's own systems goes by its short name; anything else is
+        // named in full.
+        let other = if is_own(other) {
+            own(other)
+        } else {
+            other.to_owned()
+        };
+        registrar
+            .orders
+            .push((own(name), relation == sys::MIRA_AFTER, other));
+        0
     })
 }

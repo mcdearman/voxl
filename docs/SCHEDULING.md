@@ -145,5 +145,5 @@ system is suspended, the rest of its batch finishes, and the game pauses.
 - Work inside one system (a query over a million entities) is not split across threads.
 - Hooks are for components with a Rust type; a plugin can't yet hook its own.
 - A condition on a tuple is asked once per system, not once for the group.
-- Plugins written against the C interface can't yet give constraints or conditions for their
-  own systems; the host can order around them by name.
+- Plugins can order their systems ([PLUGINS.md](PLUGINS.md#order)) but can't yet give them
+  run conditions.

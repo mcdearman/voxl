@@ -558,7 +558,11 @@ fn a_plugin_system_that_fails_pauses_the_game_until_it_is_fixed() {
     assert_eq!(failure.message, "ran off the edge");
     assert_eq!(failure.stack, "counter.c: step");
     assert_eq!(position(&app, entity).x, 3.0);
-    assert_eq!(app.world.entity_count(), entities, "what the failed run queued was dropped");
+    assert_eq!(
+        app.world.entity_count(),
+        entities,
+        "what the failed run queued was dropped"
+    );
 
     // Fix the code and save. The plugin reloads, and the game carries on by itself.
     workspace.compile("counter", COUNTER, &["ABI=MIRA_ABI_VERSION", "STEP=10.0f"]);
@@ -626,7 +630,9 @@ fn a_plugin_can_set_define_and_read_signals() {
     let library = workspace.compile("rules", RULES, &["ABI=MIRA_ABI_VERSION"]);
     let mut app = app();
     app.world.resource_mut::<Signals>().set("host.limit", 4.0);
-    app.world.resource_mut::<Signals>().set("host.allowed", true);
+    app.world
+        .resource_mut::<Signals>()
+        .set("host.allowed", true);
     let entity = app.world.spawn(Transform::IDENTITY);
     app.load_native_plugin(&library).unwrap();
 
@@ -636,7 +642,11 @@ fn a_plugin_can_set_define_and_read_signals() {
         app.update();
     }
     let signals = app.world.resource::<Signals>();
-    assert_eq!(signals.get("c.frames"), Some(Signal::Number(3.0)), "as of the last update");
+    assert_eq!(
+        signals.get("c.frames"),
+        Some(Signal::Number(3.0)),
+        "as of the last update"
+    );
     assert!(signals.is_true("c.odd") && !signals.is_true("c.late"));
     assert!(signals.get("c.bad").is_none());
     assert_eq!(position(&app, entity).x, 0.0);
@@ -647,7 +657,9 @@ fn a_plugin_can_set_define_and_read_signals() {
     assert_eq!(position(&app, entity).x, 3.0);
 
     // The host changes its mind, and the plugin's rule follows at once.
-    app.world.resource_mut::<Signals>().set("host.allowed", false);
+    app.world
+        .resource_mut::<Signals>()
+        .set("host.allowed", false);
     app.update();
     app.update();
     assert_eq!(position(&app, entity).x, 3.0);
@@ -656,6 +668,93 @@ fn a_plugin_can_set_define_and_read_signals() {
     let go = graph.iter().find(|node| node.name == "c.go").unwrap();
     assert_eq!((go.kind.as_str(), go.inputs.len()), ("and", 2));
     assert!(graph.iter().all(|node| node.problem.is_none()));
+}
+
+/// A plugin whose two systems must run in an order other than the one they were added in,
+/// and which looks at the world through an orthographic camera.
+const ORDERED: &str = r#"
+static MiraComponent transform_c;
+static int32_t *made;
+
+static void add(MiraSystem *s, void *user) {
+    MiraEntity e;
+    void *found[1];
+    while (api->query_next(s, &e, found)) ((MiraTransform *)found[0])->translation[0] += 1;
+}
+
+static void twice(MiraSystem *s, void *user) {
+    MiraEntity e;
+    void *found[1];
+    while (api->query_next(s, &e, found)) ((MiraTransform *)found[0])->translation[0] *= 2;
+}
+
+static void view(MiraSystem *s, void *user) {
+    if (*made) return;
+    *made = 1;
+    api->set_camera_orthographic(s, api->spawn(s), 40.0f, 0.5f, 300.0f, 1);
+}
+
+MIRA_EXPORT int32_t mira_plugin_load(const MiraApi *a, MiraApp *app) {
+    api = a;
+    transform_c = api->component_lookup(app, MIRA_STR("mira.Transform"), NULL, NULL);
+    made = api->state(app, MIRA_STR("ordered.made"), sizeof(int32_t), _Alignof(int32_t));
+    MiraTerm moved[] = {{transform_c, MIRA_WRITE}};
+    MiraSystemDesc systems[] = {
+        {MIRA_STR("add"), MIRA_STAGE_UPDATE, 0, add, NULL, moved, 1},
+        {MIRA_STR("twice"), MIRA_STAGE_UPDATE, 0, twice, NULL, moved, 1},
+        {MIRA_STR("view"), MIRA_STAGE_UPDATE, 0, view, NULL, NULL, 0},
+    };
+    for (int i = 0; i < 3; i++)
+        if (api->system_add(app, &systems[i]) != 0) return -3;
+#ifdef TWICE_FIRST
+    if (api->system_order(app, MIRA_STR("twice"), MIRA_BEFORE, MIRA_STR("add")) != 0) return -4;
+#endif
+    /* Something that isn't there to be ordered against is no error; a system that isn't
+     * this plugin's to order is. */
+    if (api->system_order(app, MIRA_STR("add"), MIRA_AFTER, MIRA_STR("some.other::system")) != 0)
+        return -5;
+    if (api->system_order(app, MIRA_STR("nothing"), MIRA_AFTER, MIRA_STR("add")) == 0) return -6;
+    return transform_c ? 0 : -2;
+}
+"#;
+
+#[test]
+fn a_plugin_orders_its_systems_and_sets_an_orthographic_camera() {
+    use crate::render::Camera;
+
+    let workspace = Workspace::new("ordered");
+    let library = workspace.compile("ordered", ORDERED, &["ABI=MIRA_ABI_VERSION", "TWICE_FIRST"]);
+    let mut app = app();
+    let entity = app.world.spawn(Transform::from_xyz(1.0, 0.0, 0.0));
+    app.load_native_plugin(&library).unwrap();
+    app.update();
+    app.update();
+    // Doubled, then one added, twice over: not the order they were added in.
+    assert_eq!(position(&app, entity).x, 7.0);
+    let names: Vec<String> = app
+        .systems(crate::app::Stage::Update)
+        .into_iter()
+        .map(|system| system.name)
+        .filter(|name| name.starts_with("ordered::"))
+        .collect();
+    assert_eq!(names, ["ordered::twice", "ordered::add", "ordered::view"]);
+    let camera = app
+        .world
+        .query::<&Camera>()
+        .iter()
+        .next()
+        .copied()
+        .expect("the plugin made a camera");
+    assert_eq!(
+        (camera.orthographic_height, camera.near, camera.far),
+        (Some(40.0), 0.5, 300.0)
+    );
+
+    // Rebuilt without the constraint, the systems go back to the order they are added in.
+    workspace.compile("ordered", ORDERED, &["ABI=MIRA_ABI_VERSION"]);
+    assert_eq!(app.reload_native_plugins(), 1);
+    app.update();
+    assert_eq!(position(&app, entity).x, 16.0, "one added, then doubled");
 }
 
 #[test]
@@ -1160,6 +1259,7 @@ pluginMain = plugin $ \app -> do
   addSystem app "step" Update ((,) <$> write transform <*> write frames) $ \_ _ (place, count) -> do
     modifyRef place $ \t -> t {translation = translation t + V3 STEP 0 0}
     modifyRef count (+ 1)
+  runAfter app "step" "adopt"
   addSystem_ app "rules" Update $ \sys -> do
     setSignal sys "hs.ready" True
     defineSignal sys "hs.idle" SignalNot ["hs.ready"]
@@ -1237,9 +1337,16 @@ fn a_haskell_plugin_runs_and_reloads_repeatedly() {
     assert!(signals.number("hs.clock") > 0.0);
     let graph = signals.graph();
     let go = graph.iter().find(|node| node.name == "hs.go").unwrap();
-    assert_eq!((go.kind.as_str(), go.inputs.as_slice()), ("or", &["hs.go#1".to_owned(), "hs.go#4".to_owned()][..]));
+    assert_eq!(
+        (go.kind.as_str(), go.inputs.as_slice()),
+        ("or", &["hs.go#1".to_owned(), "hs.go#4".to_owned()][..])
+    );
     let and = graph.iter().find(|node| node.name == "hs.go#1").unwrap();
-    assert_eq!(and.inputs, ["hs.ready", "hs.go#2", "hs.go#3"], "a chain of `and` is one node");
+    assert_eq!(
+        and.inputs,
+        ["hs.ready", "hs.go#2", "hs.go#3"],
+        "a chain of `and` is one node"
+    );
     assert!(graph.iter().all(|node| node.problem.is_none()), "{graph:?}");
 
     // Reload several times, running frames (and collections) on each new version while the
@@ -1290,8 +1397,16 @@ fn a_haskell_plugin_runs_and_reloads_repeatedly() {
     assert!(live.is_paused());
     assert_eq!(live.failures().len(), 1, "{:?}", live.failures());
     let failure = &live.failures()[0];
-    assert!(failure.system.starts_with("stepper::"), "{}", failure.system);
-    assert!(failure.message.contains("the step went missing"), "{}", failure.message);
+    assert!(
+        failure.system.starts_with("stepper::"),
+        "{}",
+        failure.system
+    );
+    assert!(
+        failure.message.contains("the step went missing"),
+        "{}",
+        failure.message
+    );
     assert_eq!(position(&app, entity).x, expected);
     build_haskell(&workspace, "1");
     assert_eq!(app.reload_native_plugins(), 1);
