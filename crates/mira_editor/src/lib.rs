@@ -14,7 +14,7 @@
 //! among its own controls.
 //!
 //! The window is a dock of panels that can be dragged about, split and stacked as tabs:
-//! the game, its entities, its signals. How they are arranged is kept in `.mira/editor.layout`
+//! the game, its entities as a tree, what the chosen entity is made of, and its signals. How they are arranged is kept in `.mira/editor.layout`
 //! in the folder the app is run from. See mira's `docs/EDITOR.md` for what is to come.
 
 use std::time::{Duration, Instant};
@@ -24,10 +24,11 @@ use mira::{
     input::{ButtonInput, KeyCode, Mouse, MouseButton},
     live::Live,
     prelude::Vec2,
-    reflect::TypeRegistry,
+    reflect::{TypeRegistry, Value},
     render::frame_texture,
     signal::{Signal, Signals},
     time::Time,
+    transform::Parent,
 };
 use neo::prelude::*;
 use neo::{wgpu, Graphics, Image, Key, KeyEvent, Point, PointerButton, Rect};
@@ -47,22 +48,34 @@ pub enum Message {
     Mouselook,
     /// The panels were rearranged.
     Arranged(Dock),
+    /// An entity was chosen in the tree.
+    Chosen(Entity),
+    /// An entity's children were shown or hidden.
+    Opened(Entity, bool),
+    /// An entity was dragged onto, before or after another in the tree.
+    Moved(Entity, Entity, Place),
 }
 
 /// The panels, by the names the layout knows them by.
 const GAME: &str = "Game";
 const ENTITIES: &str = "Entities";
 const SIGNALS: &str = "Signals";
+const INSPECTOR: &str = "Inspector";
 
 /// Where the arrangement of the panels is kept, in the folder the app is run from.
 const LAYOUT_FILE: &str = ".mira/editor.layout";
 
-/// The arrangement to start from: the game, with the lists down its right side.
+/// The arrangement to start from: the game, and down its right side the entities (with the
+/// signals behind them) over what the chosen one is made of.
 fn first_layout() -> Dock {
     Dock::beside(
         Dock::tabs([GAME]),
-        0.74,
-        Dock::above(Dock::tabs([ENTITIES]), 0.5, Dock::tabs([SIGNALS])),
+        0.7,
+        Dock::above(
+            Dock::tabs([ENTITIES, SIGNALS]),
+            0.5,
+            Dock::tabs([INSPECTOR]),
+        ),
     )
 }
 
@@ -71,27 +84,34 @@ fn kept_layout(kept: &str) -> Option<Dock> {
     let layout = Dock::parse(kept.trim())?;
     let mut panels = layout.panels();
     panels.sort_unstable();
-    (panels == [ENTITIES, GAME, SIGNALS]).then_some(layout)
+    (panels == [ENTITIES, GAME, INSPECTOR, SIGNALS]).then_some(layout)
 }
 
 /// What the lists show of the game, read from it now and then.
 #[derive(Clone, Default, PartialEq)]
 struct Lists {
-    /// Every entity with a component the game has registered, and those components.
-    entities: Vec<(Entity, Vec<String>)>,
+    /// Every entity with a component the game has registered, those components, and the
+    /// entity it is a child of.
+    entities: Vec<(Entity, Vec<String>, Option<Entity>)>,
+    /// The components of the chosen entity, by name, as plain data.
+    chosen: Vec<(String, Value)>,
     /// Every signal and its value.
     signals: Vec<(String, Signal)>,
 }
 
 impl Lists {
-    fn of(game: &mira::app::App) -> Self {
+    fn of(game: &mira::app::App, chosen: Option<Entity>) -> Self {
         let world = &game.world;
+        let mut made_of = Vec::new();
         let mut entities: std::collections::BTreeMap<Entity, Vec<String>> = Default::default();
         if let Some(registry) = world.get_resource::<TypeRegistry>() {
             for component in registry.iter() {
+                let name = component.name.rsplit('.').next().unwrap_or(component.name);
                 for entity in (component.entities)(world) {
-                    let name = component.name.rsplit('.').next().unwrap_or(component.name);
                     entities.entry(entity).or_default().push(name.to_owned());
+                }
+                if let Some(value) = chosen.and_then(|chosen| (component.get)(world, chosen)) {
+                    made_of.push((name.to_owned(), value));
                 }
             }
         }
@@ -105,7 +125,18 @@ impl Lists {
                     .collect()
             });
         Self {
-            entities: entities.into_iter().collect(),
+            entities: entities
+                .into_iter()
+                .map(|(entity, components)| {
+                    // A parent that is gone is no parent: the entity stands at the top.
+                    let parent = world
+                        .get::<Parent>(entity)
+                        .map(|parent| parent.0)
+                        .filter(|parent| world.contains_entity(*parent));
+                    (entity, components, parent)
+                })
+                .collect(),
+            chosen: made_of,
             signals,
         }
     }
@@ -127,6 +158,9 @@ pub struct Editor {
     status: Status,
     layout: Dock,
     lists: Lists,
+    /// The entity chosen in the tree, and the ones whose children are hidden.
+    chosen: Option<Entity>,
+    shut: Vec<Entity>,
 }
 
 #[derive(Clone, Copy, Default, PartialEq)]
@@ -151,6 +185,8 @@ impl Editor {
                 .and_then(|kept| kept_layout(&kept))
                 .unwrap_or_else(first_layout),
             lists: Lists::default(),
+            chosen: None,
+            shut: Vec::new(),
         }
     }
 
@@ -246,9 +282,35 @@ impl Editor {
                 .playing(true)
                 .capture(self.mouselook)
                 .into(),
-            ENTITIES => lines(self.lists.entities.iter().map(|(entity, components)| {
-                (format!("{}", entity.index()), components.join(", "), false)
-            })),
+            ENTITIES => scrollable(
+                container(
+                    tree(&self.entity_tree(None), self.chosen.as_ref())
+                        .on_select(Message::Chosen)
+                        .on_toggle(Message::Opened)
+                        .on_move(Message::Moved),
+                )
+                .padding(6.0),
+            )
+            .into(),
+            INSPECTOR => match self.chosen {
+                None => lines(
+                    [(
+                        "Choose an entity in the tree.".to_owned(),
+                        String::new(),
+                        false,
+                    )]
+                    .into_iter(),
+                ),
+                Some(entity) => lines(
+                    [(format!("entity {}", entity.index()), String::new(), true)]
+                        .into_iter()
+                        .chain(self.lists.chosen.iter().flat_map(|(name, value)| {
+                            let mut rows = vec![(name.clone(), String::new(), true)];
+                            said(value, 1, &mut rows);
+                            rows
+                        })),
+                ),
+            },
             SIGNALS => lines(self.lists.signals.iter().map(|(name, value)| {
                 let shown = match value {
                     Signal::Bool(value) => value.to_string(),
@@ -258,6 +320,31 @@ impl Editor {
             })),
             _ => text("").into(),
         }
+    }
+
+    /// The entities under `parent` (or at the top), each with its own below it.
+    fn entity_tree(&self, parent: Option<Entity>) -> Vec<TreeNode<Entity>> {
+        self.lists
+            .entities
+            .iter()
+            .filter(|(_, _, of)| *of == parent)
+            .map(|(entity, components, _)| {
+                let open = !self.shut.contains(entity);
+                // Named by what tells it apart: the components besides where it is.
+                let what: Vec<&str> = components
+                    .iter()
+                    .map(String::as_str)
+                    .filter(|name| *name != "Transform" && *name != "Parent")
+                    .collect();
+                let label = if what.is_empty() {
+                    format!("{}", entity.index())
+                } else {
+                    format!("{}  {}", entity.index(), what.join(", "))
+                };
+                // A shut entity's children are still built, so it shows that it has some.
+                TreeNode::new(*entity, label).with(open, self.entity_tree(Some(*entity)))
+            })
+            .collect()
     }
 
     fn look(&self) -> Status {
@@ -272,6 +359,57 @@ impl Editor {
                 .world
                 .get_resource::<Time>()
                 .map_or(0, Time::frame_count),
+        }
+    }
+}
+
+/// Writes a value out as rows, a field to a row, what is inside a field indented under it.
+fn said(value: &Value, depth: usize, rows: &mut Vec<(String, String, bool)>) {
+    let indent = "  ".repeat(depth);
+    let plain = |value: &Value| match value {
+        Value::Null => Some("none".to_owned()),
+        Value::Bool(value) => Some(value.to_string()),
+        Value::Int(value) => Some(value.to_string()),
+        Value::Float(value) => Some(format!("{value:.3}")),
+        Value::Text(value) => Some(value.clone()),
+        Value::Entity(bits) => Some(format!("entity {}", Entity::from_bits(*bits).index())),
+        Value::Asset { kind, name } => Some(format!("{kind} {name}")),
+        // A short list of numbers reads best on one line: a vector, a colour.
+        Value::List(items) if items.len() <= 4 => items
+            .iter()
+            .map(|item| match item {
+                Value::Float(value) => Some(format!("{value:.3}")),
+                Value::Int(value) => Some(value.to_string()),
+                _ => None,
+            })
+            .collect::<Option<Vec<_>>>()
+            .map(|parts| parts.join("  ")),
+        Value::List(_) | Value::Map(_) => None,
+    };
+    let fields: Vec<(String, &Value)> = match value {
+        Value::Map(fields) => fields
+            .iter()
+            .map(|(name, field)| (name.clone(), field))
+            .collect(),
+        Value::List(items) if plain(value).is_none() => items
+            .iter()
+            .enumerate()
+            .map(|(index, item)| (index.to_string(), item))
+            .collect(),
+        other => {
+            rows.push((indent, plain(other).unwrap_or_default(), false));
+            return;
+        }
+    };
+    for (name, field) in fields {
+        let shown = plain(field);
+        rows.push((
+            format!("{indent}{name}"),
+            shown.clone().unwrap_or_default(),
+            false,
+        ));
+        if shown.is_none() {
+            said(field, depth + 1, rows);
         }
     }
 }
@@ -379,7 +517,7 @@ impl App for Editor {
         // The lists are read a few times a second: often enough to watch, and not a walk
         // of every component on every frame.
         if status.frame.is_multiple_of(10) || status.frame != self.status.frame && status.paused {
-            let lists = Lists::of(&self.game);
+            let lists = Lists::of(&self.game, self.chosen);
             if lists != self.lists {
                 self.lists = lists;
                 changed = true;
@@ -417,6 +555,34 @@ impl App for Editor {
                 }
             }
             Message::Mouselook => self.mouselook = !self.mouselook,
+            Message::Chosen(entity) => {
+                self.chosen = Some(entity);
+                self.lists = Lists::of(&self.game, self.chosen);
+            }
+            Message::Opened(entity, open) => {
+                self.shut.retain(|shut| *shut != entity);
+                if !open {
+                    self.shut.push(entity);
+                }
+            }
+            Message::Moved(dragged, onto, place) => {
+                // Into an entity makes it the parent; beside one, a child of the same parent.
+                let parent = match place {
+                    Place::Into => Some(onto),
+                    Place::Before | Place::After => {
+                        self.game.world.get::<Parent>(onto).map(|parent| parent.0)
+                    }
+                };
+                match parent {
+                    Some(parent) => {
+                        self.game.world.insert(dragged, Parent(parent));
+                    }
+                    None => {
+                        self.game.world.remove::<Parent>(dragged);
+                    }
+                }
+                self.lists = Lists::of(&self.game, self.chosen);
+            }
             Message::Arranged(layout) => {
                 // Kept for next time; an arrangement that can't be written is still used.
                 let _ = std::fs::create_dir_all(".mira")
@@ -503,7 +669,7 @@ mod tests {
     #[test]
     fn the_arrangement_is_kept_only_while_it_fits_the_panels_there_are() {
         let first = first_layout();
-        assert_eq!(first.shown(), [GAME, ENTITIES, SIGNALS]);
+        assert_eq!(first.shown(), [GAME, ENTITIES, INSPECTOR]);
         // Written and read back, it is the same; rearranged, it is still taken.
         assert_eq!(kept_layout(&first.encode()), Some(first.clone()));
         let stacked = first.with(SIGNALS, ENTITIES, Side::Middle);
@@ -521,17 +687,85 @@ mod tests {
     fn the_lists_say_what_is_in_the_game() {
         use mira::prelude::*;
         let mut game = mira::app::App::new();
-        game.add_plugins(mira::transform::TransformPlugin).add_plugins(SignalPlugin);
-        let entity = game.world.spawn(Transform::IDENTITY);
+        game.add_plugins(mira::transform::TransformPlugin)
+            .add_plugins(SignalPlugin);
+        let entity = game.world.spawn(Transform::from_xyz(1.0, 2.0, 3.0));
         game.world.resource_mut::<Signals>().set("open", true);
-        let lists = Lists::of(&game);
-        assert_eq!(lists.entities, [(entity, vec!["Transform".to_owned()])]);
+        let lists = Lists::of(&game, Some(entity));
+        assert_eq!(
+            lists.entities,
+            [(entity, vec!["Transform".to_owned()], None)]
+        );
         assert_eq!(lists.signals, [("open".to_owned(), Signal::Bool(false))]);
         game.update();
         assert_eq!(
-            Lists::of(&game).signals,
+            Lists::of(&game, None).signals,
             [("open".to_owned(), Signal::Bool(true))]
         );
+        // What the chosen entity is made of, a field to a row.
+        let mut rows = Vec::new();
+        said(&lists.chosen[0].1, 1, &mut rows);
+        assert_eq!(lists.chosen[0].0, "Transform");
+        assert_eq!(
+            rows[0],
+            (
+                "  translation".to_owned(),
+                "1.000  2.000  3.000".to_owned(),
+                false
+            )
+        );
+        assert!(rows.iter().any(|(name, _, _)| name == "  scale"));
+    }
+
+    #[test]
+    fn entities_are_a_tree_that_dragging_rearranges() {
+        use mira::prelude::*;
+        let mut game = mira::app::App::new();
+        game.add_plugins(mira::transform::TransformPlugin);
+        let tank = game.world.spawn(Transform::IDENTITY);
+        let turret = game.world.spawn((Transform::IDENTITY, Parent(tank)));
+        let barrel = game.world.spawn((Transform::IDENTITY, Parent(turret)));
+        let crate_ = game.world.spawn(Transform::IDENTITY);
+        let mut editor = Editor::new(game);
+        editor.lists = Lists::of(&editor.game, None);
+        let shape = |nodes: &[TreeNode<Entity>]| -> Vec<(Entity, usize)> {
+            nodes
+                .iter()
+                .map(|node| (node.id, node.children.len()))
+                .collect()
+        };
+        let top = editor.entity_tree(None);
+        assert_eq!(shape(&top), [(tank, 1), (crate_, 0)]);
+        assert_eq!(shape(&top[0].children), [(turret, 1)]);
+        assert!(top[0].open && top[0].label.starts_with(&tank.index().to_string()));
+
+        // Shut, an entity keeps its children but does not show them open.
+        editor.update(Message::Opened(tank, false));
+        assert!(!editor.entity_tree(None)[0].open);
+        editor.update(Message::Opened(tank, true));
+
+        // Dropped into the crate, the barrel is the crate's; beside the tank, nobody's.
+        editor.update(Message::Moved(barrel, crate_, Place::Into));
+        assert_eq!(
+            editor.game.world.get::<Parent>(barrel),
+            Some(&Parent(crate_))
+        );
+        assert_eq!(shape(&editor.entity_tree(None)), [(tank, 1), (crate_, 1)]);
+        editor.update(Message::Moved(barrel, tank, Place::After));
+        assert_eq!(editor.game.world.get::<Parent>(barrel), None);
+        // Beside the turret, it is the tank's, as the turret is.
+        editor.update(Message::Moved(crate_, turret, Place::Before));
+        assert_eq!(editor.game.world.get::<Parent>(crate_), Some(&Parent(tank)));
+
+        // Choosing one shows what it is made of.
+        editor.update(Message::Chosen(turret));
+        let made_of: Vec<&str> = editor
+            .lists
+            .chosen
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .collect();
+        assert_eq!(made_of, ["Transform", "Parent"]);
     }
 
     #[test]
