@@ -69,6 +69,9 @@ Components can be saved to and loaded from JSON scene files, and inspected by na
 
 Ordering systems, run conditions and game states: [docs/SCHEDULING.md](docs/SCHEDULING.md).
 
+Failures that pause the game instead of ending it, and stepping time:
+[docs/LIVE.md](docs/LIVE.md). Game rules as signals: [docs/SIGNALS.md](docs/SIGNALS.md).
+
 Where the engine is headed: [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## Layout

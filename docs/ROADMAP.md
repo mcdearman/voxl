@@ -177,20 +177,22 @@ world: the timer is paused while anyone on your team stands on any sacred site t
 team holds. That is a signal, in the sense of functional reactive programming: a value
 derived from other values, which the engine keeps true.
 
-- [ ] Signals: a named value computed from queries over the world, resources and other
-      signals; recomputed when what it reads has changed; read by systems like a resource
-- [ ] Signals as run conditions, and edges (became true, became false) as events, so "when
-      the timer un-pauses" is written once
-- [ ] Signals over time: held for, since, integrate (a timer that runs only while a signal is
-      true is the sacred-site clock itself)
+- [x] Signals: a named value computed from queries over the world and from other signals,
+      read by systems through the `Signals` resource; see [SIGNALS.md](SIGNALS.md)
+- [x] Signals as run conditions, and edges (became true, became false) as conditions and
+      events, so "when the timer un-pauses" is written once
+- [x] Signals over time: held for, and a timer that runs only while a signal is true (the
+      sacred-site clock itself)
+- [ ] Sources skipped when what they read hasn't changed
 - [ ] Dependencies known to the engine: which signals read which, shown in the debug
       connection, with the current value of each (Phase 1B)
 - [ ] Signals from plugins, through the C interface; a Haskell layer in the applicative style
       of the bindings' queries
-- [ ] The sacred-site rule as a worked example and a test
-- [ ] Signals as data, not closures: a graph of named nodes (sources read from the world;
-      combinators such as and, or, not, any, count, compare, held-for) joined by connections,
-      so that the graph can be shown and changed while the game runs
+- [x] The sacred-site rule as a worked example and a test
+- [x] Signals as data, not closures: a graph of named nodes (sources read from the world;
+      operations such as and, or, not, count, compare, held-for) joined by connections, which
+      can be listed with their values and rewired, forced and redefined while the game runs
+- [ ] Saving and loading a signal graph; signals carrying entities
 - [ ] A signal graph viewer (Chris, October 2026): watch which signals are active as you
       play, and edit signals and their connections live to change the game's rules while
       developing; first over the debug connection, then as a panel of the editor (Phase 5)

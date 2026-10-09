@@ -12,6 +12,7 @@ pub mod plugin;
 pub mod prefab;
 pub mod reflect;
 pub mod render;
+pub mod signal;
 pub mod state;
 pub mod tasks;
 pub mod time;
@@ -40,6 +41,10 @@ pub mod prelude {
             AmbientLight, Animator, Camera, Color, DirectionalLight, Environment, Fog, Gait,
             GltfScene, Image, Leg, Limb, LodLevel, Lods, Material, Mesh, Mesh3d, NotShadowCaster,
             Pattern, PostProcess, RayTracingSettings, Reach, ShadowSettings, VolumetricLight,
+        },
+        signal::{
+            signal, signal_became_false, signal_became_true, Compare, Op, Signal, SignalChanged,
+            SignalPlugin, Signals,
         },
         state::{in_state, NextState, State, States},
         time::{FixedTime, Time},

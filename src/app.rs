@@ -87,6 +87,7 @@ impl App {
         app.init_resource::<PluginEvents>();
         app.init_resource::<TypeRegistry>();
         app.init_resource::<Live>();
+        app.add_plugins(crate::signal::SignalPlugin);
         app.add_systems(Stage::First, |world: &mut World| {
             world.resource_mut::<PluginEvents>().update();
         });
