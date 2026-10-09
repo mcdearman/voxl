@@ -199,6 +199,11 @@ impl Editor {
         &mut self.game
     }
 
+    /// The entity chosen in the tree, whose parts the inspector shows.
+    pub fn chosen(&self) -> Option<Entity> {
+        self.chosen
+    }
+
     fn resource<R: 'static>(&mut self) -> Option<&mut R> {
         self.game.world.get_resource_mut::<R>()
     }

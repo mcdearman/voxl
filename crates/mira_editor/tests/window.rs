@@ -1,0 +1,75 @@
+//! The engine app worked as a person works it: clicks and keys on the real widgets, in a
+//! window that is drawn but never shown.
+//!
+//! Needs a graphics card, so it only runs when asked, like mira's frame tests:
+//!
+//! ```sh
+//! MIRA_FRAME_TESTS=1 cargo test -p mira_editor --test window
+//! ```
+//!
+//! `MIRA_EDITOR_SHOT=<path>` also saves a picture of the window at the end.
+
+use std::time::Duration;
+
+use mira::live::Live;
+use mira_editor::Editor;
+use neo::testing::Harness;
+use neo::{Key, Point, Size};
+
+#[path = "../../../examples/sacred_sites/game.rs"]
+mod game;
+
+const TICK: Duration = Duration::from_millis(16);
+
+#[test]
+fn the_app_is_worked_by_clicking_on_it() {
+    if !std::env::var("MIRA_FRAME_TESTS").is_ok_and(|asked| asked != "0") {
+        eprintln!("skipped: set MIRA_FRAME_TESTS=1 on a machine with a graphics card");
+        return;
+    }
+    let game = game::build(false).expect("the game");
+    let mut window = Harness::new(Editor::new(game), Size::new(1100.0, 700.0))
+        .expect("a graphics card is needed for this test");
+    let paused =
+        |window: &Harness<Editor>| window.app().game().world.resource::<Live>().is_paused();
+    for _ in 0..20 {
+        window.frame(TICK, 1.0);
+    }
+    assert!(window.wants_frame(), "the game is drawn frame after frame");
+    assert!(!paused(&window));
+
+    // The game is in its panel: the middle of the window is the field's green, not the
+    // window's own dark.
+    let frame = window.frame(TICK, 1.0);
+    let [r, g, b] = [0, 1, 2].map(|channel| frame[(400 * 1100 + 300) * 4 + channel]);
+    assert!(
+        g > r && g > b && g > 90,
+        "the game's field, drawn: {r} {g} {b}"
+    );
+
+    // The bar's first button pauses the game, and then resumes it.
+    window.click(Point::new(43.0, 73.0));
+    window.frame(TICK, 1.0);
+    assert!(paused(&window), "Pause was pressed");
+    window.click(Point::new(43.0, 73.0));
+    window.frame(TICK, 1.0);
+    assert!(!paused(&window), "Resume was pressed");
+
+    // A row of the tree chooses its entity; the arrow keys move on from it.
+    assert_eq!(window.app().chosen(), None);
+    window.click(Point::new(900.0, 149.0));
+    window.frame(TICK, 1.0);
+    let first = window
+        .app()
+        .chosen()
+        .expect("a row of the tree was clicked");
+    window.key(Key::Down, Default::default());
+    window.frame(TICK, 1.0);
+    let second = window.app().chosen().expect("still one chosen");
+    assert_ne!(first, second, "Down moved to the next row");
+    assert_eq!(second.index(), first.index() + 1);
+
+    if let Ok(path) = std::env::var("MIRA_EDITOR_SHOT") {
+        window.save_png(path, 1.0).expect("the picture saved");
+    }
+}

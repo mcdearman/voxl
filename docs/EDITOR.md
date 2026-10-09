@@ -29,6 +29,15 @@ terms. "Mouselook" holds and hides the pointer for games that turn with the mous
 lets go). The bar follows the game, so a game paused from outside, by an agent say, shows as
 paused. Everything else on this page is still to come.
 
+The app is tested as a person works it: `crates/mira_editor/tests/window.rs` opens it in
+Neo's test window, which is drawn but never shown, and clicks its buttons and tree rows.
+It needs a graphics card, so it runs when asked:
+
+```sh
+MIRA_FRAME_TESTS=1 cargo test -p mira_editor --test window
+MIRA_FRAME_TESTS=1 MIRA_EDITOR_SHOT=window.png cargo test -p mira_editor --test window   # and a picture
+```
+
 ## The game inside another program
 
 A game normally opens its own window and runs its own loop (`App::run`). Inside an editor
