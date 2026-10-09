@@ -155,19 +155,46 @@ pub(crate) fn play_injected(world: &mut World) {
     let Some(injected) = world.get_resource_mut::<InjectedInput>() else {
         return;
     };
-    for played in injected.due() {
+    let due = injected.due();
+    // An interface hears the window's own events, so input played from outside is put among
+    // them as well: a click an agent makes lands on a panel as a person's would.
+    let mut heard = Vec::new();
+    for played in due {
         match played {
             Played::Key(key, true) => world.resource_mut::<ButtonInput<KeyCode>>().press(key),
             Played::Key(key, false) => world.resource_mut::<ButtonInput<KeyCode>>().release(key),
-            Played::Button(button, true) => world
-                .resource_mut::<ButtonInput<MouseButton>>()
-                .press(button),
-            Played::Button(button, false) => world
-                .resource_mut::<ButtonInput<MouseButton>>()
-                .release(button),
+            Played::Button(button, down) => {
+                let buttons = world.resource_mut::<ButtonInput<MouseButton>>();
+                if down {
+                    buttons.press(button);
+                } else {
+                    buttons.release(button);
+                }
+                heard.push(winit::event::WindowEvent::MouseInput {
+                    device_id: winit::event::DeviceId::dummy(),
+                    state: if down {
+                        winit::event::ElementState::Pressed
+                    } else {
+                        winit::event::ElementState::Released
+                    },
+                    button,
+                });
+            }
             Played::Motion(delta) => world.resource_mut::<Mouse>().delta += delta,
-            Played::Cursor(position) => world.resource_mut::<Mouse>().position = Some(position),
+            Played::Cursor(position) => {
+                world.resource_mut::<Mouse>().position = Some(position);
+                heard.push(winit::event::WindowEvent::CursorMoved {
+                    device_id: winit::event::DeviceId::dummy(),
+                    position: winit::dpi::PhysicalPosition::new(
+                        position.x as f64,
+                        position.y as f64,
+                    ),
+                });
+            }
         }
+    }
+    if let Some(events) = world.get_resource_mut::<crate::window::WindowEvents>() {
+        events.0.extend(heard);
     }
 }
 
