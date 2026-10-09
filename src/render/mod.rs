@@ -417,6 +417,15 @@ pub struct RenderFrame {
 /// shadow pass group 0 is the cascade's light matrix.
 pub type DrawFn = fn(&World, &mut wgpu::RenderPass<'_>);
 
+/// Draws over the finished frame: after tone mapping, straight onto what is shown (or saved
+/// in a screenshot), in display colours. This is where a user interface goes. Each is given
+/// the world and the frame's view, and submits its own work.
+pub type Overlay = fn(&mut World, &wgpu::TextureView);
+
+/// Overlays, drawn in order after everything else. Push one to add a layer on top.
+#[derive(Default)]
+pub struct Overlays(pub Vec<Overlay>);
+
 /// Opaque draws in the main pass, run in order. Plugins push their own to add a pipeline.
 #[derive(Default)]
 pub struct DrawFunctions(pub Vec<DrawFn>);
@@ -929,8 +938,20 @@ fn render(world: &mut World) {
         post.render(world.resource::<Gpu>(), &mut encoder, &scene, &target, &settings, time);
     });
 
+    // The frame itself is done; overlays draw on top of it, and a screenshot is taken of
+    // the two together.
+    world.resource::<Gpu>().queue.submit([encoder.finish()]);
+    let overlays = world.resource::<Overlays>().0.clone();
+    for overlay in overlays {
+        overlay(world, &target);
+    }
     let gpu = world.resource::<Gpu>();
     let path = world.resource::<Screenshot>().path.clone();
+    let mut encoder = gpu
+        .device
+        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("screenshot"),
+        });
     let readback = path
         .as_ref()
         .and_then(|_| screenshot::copy_to_buffer(gpu, &mut encoder, &frame_texture));
@@ -988,6 +1009,7 @@ impl Plugin for RenderPlugin {
             .add_systems(Stage::Extract, (extract, extract_skins))
             .add_systems(Stage::Prepare, prepare)
             .add_systems(Stage::Render, render);
+        app.world.init_resource::<Overlays>();
         app.world.init_resource::<DrawFunctions>();
         app.world.init_resource::<TransparentDrawFunctions>();
         app.world.init_resource::<ShadowDrawFunctions>();

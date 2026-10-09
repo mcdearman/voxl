@@ -38,6 +38,17 @@ impl Default for WindowSettings {
     }
 }
 
+/// Everything the window was told since the last frame, as the windowing library gave it:
+/// for code that needs more than the input resources keep, such as a user interface that
+/// wants typed text, the pointer's every move, and the order things happened in. Cleared at
+/// the end of each frame. A resource.
+#[derive(Default)]
+pub struct WindowEvents(pub Vec<WindowEvent>);
+
+fn clear_window_events(mut events: crate::ecs::ResMut<WindowEvents>) {
+    events.0.clear();
+}
+
 /// The primary window. Inserted as a resource once the window has been created.
 pub struct Window {
     handle: Arc<winit::window::Window>,
@@ -95,6 +106,8 @@ pub struct WindowPlugin;
 
 impl Plugin for WindowPlugin {
     fn build(&self, app: &mut App) {
+        app.init_resource::<WindowEvents>()
+            .add_systems(crate::app::Stage::Last, clear_window_events);
         app.init_resource::<WindowSettings>()
             .add_event::<WindowResized>()
             .add_event::<WindowFocused>();
@@ -159,6 +172,9 @@ impl ApplicationHandler for Runner {
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
+        if let Some(events) = self.resource::<WindowEvents>() {
+            events.0.push(event.clone());
+        }
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(size) => self.send(WindowResized {

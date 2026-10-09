@@ -267,10 +267,12 @@ derived from other values, which the engine keeps true.
       working under it
 - [x] `examples/sacred_sites` as a 3D game under an orthographic camera, drawn from its
       signals (the graph is watched from a terminal)
-- [ ] When there is a GUI (Chris, October 2026): the signal graph shown live inside that
-      game
-- [ ] The graphical viewer (Chris, October 2026): the graph laid out, signals and connections
-      edited by hand while the game runs; a panel of the editor (Phase 5)
+- [x] The signal graph shown live inside that game (`crates/mira_ui`, example
+      `sacred_sites_graph`); see [UI.md](UI.md)
+- [ ] Editing the graph from the in-game panel
+- [ ] The graphical editor of the graph (Chris, October 2026): signals and connections laid
+      out and edited by hand while the game runs; in the game's panel and in the editor
+      (Phase 5)
 
 **Exit test:** the sacred-site game: two teams, several sites, units walking on and off and
 dying in any order; the timer is right in every case because no code ever sets it.
@@ -292,7 +294,10 @@ dying in any order; the timer is right in every case because no code ever sets i
 
 ## Phase 4: Runtime for real games (XL)
 
-- [ ] Text rendering and a UI layer for games
+- [x] Text and panels in the game: Armature underneath, a thin mira layer on top
+      (`crates/mira_ui`: input shared with the game, drawn over the frame); see [UI.md](UI.md)
+- [ ] A look and a set of controls for games; interface in the world; gamepad focus;
+      `mira_ui` in the workspace and CI (Armature is private)
 - [ ] Audio: mixing, 3D positioning, streaming music
 - [ ] Input: named actions, rebinding, gamepads
 - [ ] Animation graph: state machines, blend trees, retargeting, root motion
