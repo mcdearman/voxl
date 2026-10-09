@@ -309,7 +309,8 @@ dying in any order; the timer is right in every case because no code ever sets i
       (`crates/mira_ui`: input shared with the game, drawn over the frame); see [UI.md](UI.md)
 - [x] A look and a first set of controls for games (`mira_ui::kit`: theme, panel, button,
       toggle, slider, bar, anchoring)
-- [ ] Text fields, lists, dropdowns, tabs; interface in the world; gamepad focus
+- [x] A text field (`kit::field`), and typing played in from outside (`mira_input` `text`)
+- [ ] Lists, dropdowns, tabs; interface in the world; gamepad focus
 - [ ] Audio: mixing, 3D positioning, streaming music
 - [ ] Input: named actions, rebinding, gamepads
 - [ ] Animation graph: state machines, blend trees, retargeting, root motion

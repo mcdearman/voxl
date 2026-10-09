@@ -166,6 +166,7 @@ const TOOLS: &[Tool] = &[
             "frames?: integer: how long a tap is held (default 1)",
             "mouse_motion?: array: [dx, dy] of raw mouse movement, as mouselook reads it",
             "mouse_position?: array: [x, y] of the cursor in pixels",
+            "text?: string: text to type into whichever field of the game's interface has the keyboard (click the field first); a line break in it is Enter. It arrives even while the game is paused, and the game's own keys do not see it",
         ],
     },
     Tool {
@@ -743,6 +744,45 @@ mod tests {
             shot.get_path("content.0.data"),
             Some(&text(base64("\u{89}PNG fake 640".as_bytes())))
         );
+    }
+
+    #[test]
+    fn an_agent_can_type_into_an_interface() {
+        use crate::{
+            input::{ButtonInput, InputPlugin, KeyCode},
+            window::WindowEvents,
+        };
+        use winit::event::{Ime, WindowEvent};
+
+        let mut app = App::new();
+        app.add_plugins(TimePlugin)
+            .add_plugins(InputPlugin)
+            .init_resource::<WindowEvents>();
+        let mut game = Local(app);
+
+        // Typing reaches an interface even while the game is held still, as finished text
+        // among the window's events, and is no key press as far as the game can tell.
+        tool(&mut game, "mira_pause", "{}");
+        let (_, failed) = tool(&mut game, "mira_input", r#"{"text": "45\n"}"#);
+        assert!(!failed);
+        game.0.update();
+        let heard = &game.0.world.resource::<WindowEvents>().0;
+        assert!(
+            matches!(&heard[..], [WindowEvent::Ime(Ime::Commit(text))] if text == "45\n"),
+            "{heard:?}"
+        );
+        assert_eq!(
+            game.0
+                .world
+                .resource::<ButtonInput<KeyCode>>()
+                .get_pressed()
+                .count(),
+            0
+        );
+
+        // Nothing to play is still a refusal that says what can be played.
+        let (why, failed) = tool(&mut game, "mira_input", "{}");
+        assert!(failed && why[0].contains("or `text`"), "{why:?}");
     }
 
     #[test]
