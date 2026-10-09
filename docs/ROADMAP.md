@@ -166,7 +166,9 @@ game's state, change it, and control time and code. The means is the Model Conte
       what it built
 - [x] Launching and owning a game from MCP: start it by its command line, read its log, shut
       it down
-- [ ] Rendering without a window; seeding; gamepad and text input
+- [x] Running with the window hidden (`MIRA_HIDDEN=1`), rendering off screen; a game an
+      agent launches is hidden by default
+- [ ] Rendering on a machine with no display; seeding; gamepad and text input
 - [ ] Editing through the same door: write a prefab or a scene, define signals, build and
       reload a plugin, and see the result, without leaving the conversation
 - [ ] The same tools from inside the editor (Phase 5), so a person and an agent can work on
