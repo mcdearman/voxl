@@ -56,5 +56,4 @@ Image files are watched and reloaded when they change; see [HOT_RELOAD.md](HOT_R
 - Model files load on the calling thread, and are not watched for changes.
 - There is no processing step: textures are not compressed for the GPU, and nothing is cached
   on disk.
-- Plugins can make shapes but can't yet load files.
 - The Napoleonic and Paris demos still load their assets directly.

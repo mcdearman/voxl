@@ -84,6 +84,7 @@ impl App {
         };
         app.add_event::<AppExit>();
         app.init_resource::<PluginEvents>();
+        app.init_resource::<TypeRegistry>();
         app.add_systems(Stage::First, |world: &mut World| {
             world.resource_mut::<PluginEvents>().update();
         });

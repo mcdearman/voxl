@@ -77,6 +77,11 @@ pluginMain = plugin $ \app -> do
       <*> statePtr app "chase.seed"
   let transform = transformC game
 
+  -- Saying what the components hold lets the engine save them in scenes and show them in an
+  -- inspector, though it knows nothing else about this game.
+  describeComponent app (playerC game) [Field "speed" FieldF32 1 0]
+  describeComponent app (pickupC game) [Field "phase" FieldF32 1 0]
+
   -- Runs once, however many times the plugin is reloaded.
   addSystem_ app "setup" Startup (setup game)
 

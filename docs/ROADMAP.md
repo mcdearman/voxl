@@ -78,8 +78,10 @@ contract is `include/voxl.h`; see [PLUGINS.md](PLUGINS.md).
 - [x] Events between plugins and from the engine, with each reader's place kept across
       reloads; cameras, lights and the window title; colliders, bodies, impulses, raycasts and
       contact events. The example game now needs nothing from its host.
-- [ ] Reach more of the engine from a plugin: assets loaded from files, hierarchy (`Parent`),
-      joints and character controllers, voxel terrain, text and UI, sound
+- [x] Plugins describe their components' fields, so scenes and inspectors handle them; plugins
+      load images and spawn models by name
+- [ ] Reach more of the engine from a plugin: hierarchy (`Parent`), animation, joints and
+      character controllers, voxel terrain, text and UI, sound
 - [ ] Optional terms and change filters in queries
 - [ ] Removing a plugin at runtime, with its components and systems
 - [ ] A generic script host for languages that can't build a shared library themselves
@@ -101,8 +103,9 @@ The layer Unreal's editor, saves, networking and Blueprints all stand on.
 - [x] Type registry: look up a type by name, list and edit its fields at runtime
 - [x] Serialization of any reflected value; a text scene format (JSON); see
       [SCENES.md](SCENES.md)
+- [x] Components defined by plugins are reflected once the plugin describes their fields
 - [ ] Prefabs with overrides; reflecting the physics, animation and voxel components;
-      capturing resources and plugin-defined components
+      capturing resources
 - [ ] Hierarchy as a real feature: `Children`, recursive despawn, cached propagation
 - [x] Asset server: assets by name (files, parts of model files, shapes), images decoded on
       worker threads and reloaded when the file changes, scenes saving assets by name; see
@@ -244,10 +247,10 @@ project grows.
 
 ## Next three steps
 
-1. Reflect the physics, animation and voxel components; capture plugin-defined components;
-   prefabs (Phase 1).
+1. Reflect the physics, animation and voxel components; prefabs; hierarchy as a real feature
+   (Phase 1).
 2. Image-diff tests around the demos, and the rest of the crate split (Phase 0). Two things
    seen in screenshots to fix alongside: the built-in sky is dull next to the sun it comes
    with; and objects that move every frame smear under temporal anti-aliasing (it has no
    motion vectors).
-3. Loading files from plugins (images and models by name), now that the asset server exists.
+3. System ordering, run conditions and states, then the parallel scheduler (Phase 2).

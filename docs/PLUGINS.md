@@ -86,6 +86,37 @@ Inside a system a plugin can also:
   `apply_impulse`, `set_velocity`, `velocity` and `raycast` do what they say. These do nothing
   in an app that doesn't have the engine's physics turned on.
 
+## Describing components
+
+A component a plugin registers is just bytes to the engine, until the plugin says what is in
+them with `component_describe`: a list of fields, each a name, a type, a count (more than one
+for a vector or an array) and an offset. From then on the engine treats it like one of its own
+components:
+
+- a [scene](SCENES.md) saves it and loads it back, by field name;
+- an inspector can show and edit it;
+- a field holding an entity keeps pointing at the right entity when a scene is loaded.
+
+```c
+VoxlField fields[] = {
+    {VOXL_STR("weight"), VOXL_FIELD_F32, 1, offsetof(Item, weight)},
+    {VOXL_STR("owner"), VOXL_FIELD_ENTITY, 1, offsetof(Item, owner)},
+    {VOXL_STR("tint"), VOXL_FIELD_F32, 3, offsetof(Item, tint)},
+};
+api->component_describe(app, item, fields, 3);
+```
+
+Bytes that no field covers are not saved, and load as zero. Describing is optional: an
+undescribed component works as before and is simply invisible to scenes and tools.
+
+## Files
+
+- `image_load` loads a PNG or JPEG by [name](ASSETS.md), and `set_textures` puts images on an
+  entity's material.
+- `spawn_model` spawns a glTF model: one entity where you asked, with a child for each part.
+
+Names are relative to the app's asset folder. The same name always gives the same asset.
+
 ## Events
 
 Events are how plugins talk to each other, and how the engine tells plugins that something
@@ -186,7 +217,9 @@ addSystem2 app "collect" Update
 [`plugins/chase`](../plugins/chase/Chase.hs) is a complete small game written this way. The
 scene, physics and events have typed wrappers too: `setCamera`, `setLight`, `setCollider`
 with `colliderOf (Box half)`, `setBody` with `bodyOf Dynamic`, `raycast`, and
-`registerEvent` / `sendEvent` / `readEvents`.
+`registerEvent` / `sendEvent` / `readEvents`. `describeComponent` takes the fields as
+`Field name type count offset`, matching the component's `Storable` instance, and `loadImage`,
+`setTextures` and `spawnModel` load files.
 
 Build with the script, which links the module with the bindings
 ([`bindings/haskell/Voxl.hs`](../bindings/haskell/Voxl.hs)) and a small piece of C that starts
@@ -274,7 +307,7 @@ app.run()
 
 ## What the interface does not cover yet
 
-Plugins cannot yet load assets from files (models, textures), draw text or UI, play sound,
+Plugins cannot yet play a model's animations, draw text or UI, play sound,
 use joints or character controllers, edit voxel terrain, or see any engine component other
 than `voxl.Transform`. Point and spot lights don't exist in the engine yet. Queries have no
 optional terms or change filters. A plugin cannot be removed while the app runs. The table of functions is

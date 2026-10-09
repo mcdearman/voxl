@@ -152,6 +152,58 @@ impl<T> Component<T> {
 #[derive(Clone, Copy, Debug)]
 pub struct Term(sys::VoxlTerm);
 
+/// What one field of a component holds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FieldType {
+    F32 = sys::VOXL_FIELD_F32 as isize,
+    F64 = sys::VOXL_FIELD_F64 as isize,
+    I32 = sys::VOXL_FIELD_I32 as isize,
+    I64 = sys::VOXL_FIELD_I64 as isize,
+    U8 = sys::VOXL_FIELD_U8 as isize,
+    U32 = sys::VOXL_FIELD_U32 as isize,
+    /// One byte; zero is false.
+    Bool = sys::VOXL_FIELD_BOOL as isize,
+    /// An [`Entity`]. Scenes keep it pointing at the right entity.
+    Entity = sys::VOXL_FIELD_ENTITY as isize,
+}
+
+/// One field of a component, for [`App::describe`]: `count` values of one type (more than one
+/// for a vector or an array) starting `offset` bytes in. Use `std::mem::offset_of!` for the
+/// offset.
+#[derive(Clone, Copy, Debug)]
+pub struct Field {
+    pub name: &'static str,
+    pub field_type: FieldType,
+    pub count: u32,
+    pub offset: usize,
+}
+
+impl Field {
+    pub fn new(name: &'static str, field_type: FieldType, offset: usize) -> Self {
+        Self {
+            name,
+            field_type,
+            count: 1,
+            offset,
+        }
+    }
+
+    /// `count` values in a row: a vector or an array.
+    pub fn array(name: &'static str, field_type: FieldType, count: u32, offset: usize) -> Self {
+        Self {
+            name,
+            field_type,
+            count,
+            offset,
+        }
+    }
+}
+
+/// An image, from [`System::load_image`]. Just a number, so it can be kept in [`App::state`].
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Image(pub u32);
+
 /// An event type whose events are `T`, from [`App::event`].
 pub struct Event<T> {
     id: sys::VoxlEvent,
@@ -329,6 +381,7 @@ macro_rules! impl_plain {
 }
 impl_plain!(u8, u16, u32, u64, usize, i8, i16, i32, i64, isize, f32, f64);
 unsafe impl Plain for Mesh {}
+unsafe impl Plain for Image {}
 unsafe impl<T: Plain, const N: usize> Plain for [T; N] {}
 
 /// The app being set up. Only exists inside the plugin's `load` function.
@@ -407,14 +460,35 @@ impl App {
         block.cast()
     }
 
+    /// Says what fields a component this plugin registered has, so the engine can save it in
+    /// scenes, load it back and show it in an inspector. Bytes no field covers aren't saved.
+    pub fn describe<T>(&mut self, component: Component<T>, fields: &[Field]) -> Result<(), Error> {
+        let raw: Vec<sys::VoxlField> = fields
+            .iter()
+            .map(|field| sys::VoxlField {
+                name: field.name.as_ptr(),
+                name_len: field.name.len(),
+                field_type: field.field_type as u32,
+                count: field.count,
+                offset: field.offset,
+            })
+            .collect();
+        // SAFETY: called inside `load`; `raw` and the names it points to outlive the call.
+        let status =
+            unsafe { (api().component_describe)(self.raw, component.id, raw.as_ptr(), raw.len()) };
+        if status != 0 {
+            return Err("could not describe the component (see the engine's log)".into());
+        }
+        Ok(())
+    }
+
     /// Defines an event type whose events are the bytes of `T`, or finds the one this name
     /// already has. Any plugin that knows the name can send and read it; the engine's own
     /// events are found the same way (`"voxl.Contact"` is a [`Contact`]).
     pub fn event<T: Copy + 'static>(&mut self, name: &str) -> Result<Event<T>, Error> {
         // SAFETY: called inside `load` with the engine's app pointer.
-        let id = unsafe {
-            (api().event_register)(self.raw, name.as_ptr(), name.len(), size_of::<T>())
-        };
+        let id =
+            unsafe { (api().event_register)(self.raw, name.as_ptr(), name.len(), size_of::<T>()) };
         if id == 0 {
             return Err(format!("could not register event `{name}` (is it another size?)").into());
         }
@@ -744,7 +818,12 @@ impl System {
     }
 
     /// The first collider a ray meets within `max_distance`, as of the last physics step.
-    pub fn raycast(&self, origin: [f32; 3], direction: [f32; 3], max_distance: f32) -> Option<RayHit> {
+    pub fn raycast(
+        &self,
+        origin: [f32; 3],
+        direction: [f32; 3],
+        max_distance: f32,
+    ) -> Option<RayHit> {
         let mut hit = std::mem::MaybeUninit::<RayHit>::uninit();
         // SAFETY: the engine writes `hit` whenever it returns nonzero.
         unsafe {
@@ -757,6 +836,43 @@ impl System {
             );
             (found != 0).then(|| hit.assume_init())
         }
+    }
+
+    /// Loads an image by name: a PNG or JPEG path relative to the app's asset folder, with
+    /// `?linear` appended for data such as normal maps. The same name gives the same image.
+    /// It arrives a moment later; until then it draws as plain white.
+    pub fn load_image(&mut self, name: &str) -> Option<Image> {
+        // SAFETY: called inside the system; the engine copies the name.
+        let image = unsafe { (api().image_load)(self.raw, name.as_ptr(), name.len()) };
+        (image != 0).then_some(Image(image))
+    }
+
+    /// Sets the textures of the entity's material, when this system returns.
+    pub fn set_textures(
+        &mut self,
+        entity: Entity,
+        base_color: Option<Image>,
+        normal: Option<Image>,
+        metallic_roughness: Option<Image>,
+    ) {
+        let raw = |image: Option<Image>| image.map_or(0, |image| image.0);
+        // SAFETY: called inside the system.
+        unsafe {
+            (api().set_textures)(
+                self.raw,
+                entity.0,
+                raw(base_color),
+                raw(normal),
+                raw(metallic_roughness),
+            )
+        }
+    }
+
+    /// Spawns a glTF model by name: a new entity at `transform` with a child for each part of
+    /// the model. The parts appear when this system returns.
+    pub fn spawn_model(&mut self, name: &str, transform: &Transform) -> Entity {
+        // SAFETY: called inside the system; the engine copies the name and the transform.
+        Entity(unsafe { (api().spawn_model)(self.raw, name.as_ptr(), name.len(), transform) })
     }
 
     /// Creates an entity. It can be given components right away; it appears in queries once

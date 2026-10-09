@@ -12,7 +12,7 @@ use crate::{
         World,
     },
     input::{ButtonInput, KeyCode, Mouse, MouseButton},
-    render::Mesh,
+    render::{Image, Mesh},
     time::{FixedTime, Time},
 };
 
@@ -124,6 +124,7 @@ impl System for DynamicSystem {
         access.read_resource::<Mouse>();
         access.write_resource::<Assets<Mesh>>();
         access.write_resource::<AssetServer>();
+        access.write_resource::<Assets<Image>>();
         access.read_resource::<PluginEvents>();
     }
 
@@ -305,6 +306,21 @@ impl Context<'_> {
                 None
             }
         }
+    }
+
+    /// An image by name from the asset server, loading it if this is the first time.
+    pub(crate) fn load_image(&mut self, name: &str) -> Option<u32> {
+        let images = self.world.resource_cell::<Assets<Image>>()?;
+        let server = self.world.resource_cell::<AssetServer>()?;
+        // SAFETY: as in `shape_mesh`.
+        let ((images, ticks), (server, _)) = unsafe {
+            (
+                images.get_mut::<Assets<Image>>(),
+                server.get_mut::<AssetServer>(),
+            )
+        };
+        ticks.changed = self.tick;
+        Some(server.load_image(images, name).id())
     }
 
     /// Adds a mesh to the app's assets.

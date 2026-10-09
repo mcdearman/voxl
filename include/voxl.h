@@ -127,6 +127,31 @@ typedef struct VoxlMaterial {
     float metallic;    /* 0 or 1, usually */
 } VoxlMaterial;
 
+/* What one field of a component holds, for component_describe. */
+enum {
+    VOXL_FIELD_F32 = 0,
+    VOXL_FIELD_F64 = 1,
+    VOXL_FIELD_I32 = 2,
+    VOXL_FIELD_I64 = 3,
+    VOXL_FIELD_U8 = 4,
+    VOXL_FIELD_U32 = 5,
+    VOXL_FIELD_BOOL = 6,  /* one byte; zero is false */
+    VOXL_FIELD_ENTITY = 7 /* a VoxlEntity; scenes keep it pointing at the right entity */
+};
+
+/* One field of a component: `count` values of one type (more than one for a vector or an
+ * array), starting `offset` bytes into the component. */
+typedef struct VoxlField {
+    const char *name;
+    size_t name_len;
+    uint32_t type;
+    uint32_t count;
+    size_t offset;
+} VoxlField;
+
+/* An image handle, from image_load. 0 is "no image". */
+typedef uint32_t VoxlImage;
+
 /* An event type handle, from event_register. 0 is "no event". */
 typedef uint32_t VoxlEvent;
 
@@ -213,6 +238,22 @@ typedef struct VoxlSystemDesc {
     const VoxlTerm *terms; /* the entities the system visits; may be empty */
     size_t term_count;
 } VoxlSystemDesc;
+
+/* ---- components the engine exports ---- */
+
+/* "voxl.Transform": position, rotation (a unit quaternion, x y z w) and scale, relative to the
+ * entity's parent. 48 bytes, 16-byte aligned. */
+typedef struct VoxlTransform {
+    float translation[3];
+    float _pad0;
+#if defined(__cplusplus)
+    alignas(16) float rotation[4];
+#else
+    _Alignas(16) float rotation[4];
+#endif
+    float scale[3];
+    float _pad1;
+} VoxlTransform;
 
 /* The functions the engine provides. `size` is sizeof(VoxlApi) as the engine sees it; a newer
  * engine may append functions, so check `size` before using one that is not in version 1. */
@@ -341,23 +382,31 @@ typedef struct VoxlApi {
      * physics step. `direction` need not be normalized. Returns 0 if it meets nothing. */
     uint8_t (*raycast)(VoxlSystem *system, const float *origin, const float *direction,
                        float max_distance, VoxlRayHit *hit);
+
+    /* ---- describing components (inside voxl_plugin_load) ---- */
+
+    /* Says what fields a component this plugin registered has. From then on the engine can
+     * save it in scenes, load it back, and show it in an inspector, like its own components.
+     * Bytes that no field covers are not saved, and load as zero. Returns 0 on success. */
+    int32_t (*component_describe)(VoxlApp *app, VoxlComponent component, const VoxlField *fields,
+                                  size_t field_count);
+
+    /* ---- files (inside a system) ---- */
+
+    /* Loads an image by name: a PNG or JPEG path relative to the app's asset folder, with
+     * "?linear" appended for data such as normal maps. The same name always gives the same
+     * handle. The image arrives a moment later; until then it draws as plain white. */
+    VoxlImage (*image_load)(VoxlSystem *system, const char *name, size_t len);
+    /* Sets the textures of an entity's material (giving it a default material if it has
+     * none). Pass 0 for a texture to leave that one unset. */
+    void (*set_textures)(VoxlSystem *system, VoxlEntity entity, VoxlImage base_color,
+                         VoxlImage normal, VoxlImage metallic_roughness);
+    /* Spawns a glTF model (.gltf or .glb) by name: one new entity at `transform`, with a
+     * child entity for each part of the model. Returns the new entity at once; the parts
+     * appear when the system returns. */
+    VoxlEntity (*spawn_model)(VoxlSystem *system, const char *name, size_t len,
+                              const VoxlTransform *transform);
 } VoxlApi;
-
-/* ---- components the engine exports ---- */
-
-/* "voxl.Transform": position, rotation (a unit quaternion, x y z w) and scale, relative to the
- * entity's parent. 48 bytes, 16-byte aligned. */
-typedef struct VoxlTransform {
-    float translation[3];
-    float _pad0;
-#if defined(__cplusplus)
-    alignas(16) float rotation[4];
-#else
-    _Alignas(16) float rotation[4];
-#endif
-    float scale[3];
-    float _pad1;
-} VoxlTransform;
 
 /* ---- conveniences for C and C++ ---- */
 

@@ -309,6 +309,78 @@ VOXL_EXPORT int32_t voxl_plugin_load(const VoxlApi *a, VoxlApp *app) {
 }
 "#;
 
+/// A plugin whose component the engine can understand, because the plugin describes it; and
+/// which loads an image and a model from files.
+const INVENTORY: &str = r#"
+#include <stddef.h>
+typedef struct { float weight; int32_t count; uint8_t rare; VoxlEntity owner; float tint[3]; } Item;
+static VoxlComponent transform_c, item_c;
+
+static VoxlTransform at(float x, float y, float z) {
+    VoxlTransform t = {{x, y, z}, 0, {0, 0, 0, 1}, {1, 1, 1}, 0};
+    return t;
+}
+
+static void setup(VoxlSystem *s, void *user) {
+    VoxlTransform here = at(0, 0, 0), there = at(5, 0, 0);
+    VoxlEntity owner = api->spawn(s);
+    api->insert(s, owner, transform_c, &here);
+
+    VoxlEntity sword = api->spawn(s);
+    Item item = {2.5f, 3, 1, owner, {0.1f, 0.2f, 0.3f}};
+    api->insert(s, sword, transform_c, &here);
+    api->insert(s, sword, item_c, &item);
+    api->set_mesh(s, sword, api->mesh_shape(s, VOXL_SHAPE_CUBE, 1.0f));
+    VoxlImage tile = api->image_load(s, VOXL_STR("tile.png"));
+    if (tile != api->image_load(s, VOXL_STR("tile.png"))) tile = 0; /* one name, one image */
+    api->set_textures(s, sword, tile, 0, 0);
+
+    api->spawn_model(s, VOXL_STR("hen.glb"), &there);
+    api->spawn_model(s, VOXL_STR("no-such-model.glb"), &there); /* logged, not fatal */
+}
+
+/* The item's place shows its total weight, so a change to the component from outside (an
+ * inspector, a loaded scene) is something the plugin acts on. */
+static void weigh(VoxlSystem *s, void *user) {
+    VoxlEntity e;
+    void *found[2];
+    while (api->query_next(s, &e, found)) {
+        VoxlTransform *t = found[0];
+        const Item *item = found[1];
+        t->translation[0] = item->weight * (float)item->count;
+    }
+}
+
+VOXL_EXPORT int32_t voxl_plugin_load(const VoxlApi *a, VoxlApp *app) {
+    api = a;
+    transform_c = api->component_lookup(app, VOXL_STR("voxl.Transform"), NULL, NULL);
+    item_c = api->component_register(app, VOXL_STR("inv.Item"), sizeof(Item), _Alignof(Item), NULL);
+
+    VoxlField fields[] = {
+        {VOXL_STR("weight"), VOXL_FIELD_F32, 1, offsetof(Item, weight)},
+        {VOXL_STR("count"), VOXL_FIELD_I32, 1, offsetof(Item, count)},
+        {VOXL_STR("rare"), VOXL_FIELD_BOOL, 1, offsetof(Item, rare)},
+        {VOXL_STR("owner"), VOXL_FIELD_ENTITY, 1, offsetof(Item, owner)},
+        {VOXL_STR("tint"), VOXL_FIELD_F32, 3, offsetof(Item, tint)},
+    };
+    /* A field that runs off the end of the component, and describing an engine component,
+     * must both be refused. */
+    VoxlField too_far[] = {{VOXL_STR("x"), VOXL_FIELD_F64, 1, sizeof(Item) - 4}};
+    if (api->component_describe(app, item_c, too_far, 1) == 0) return -2;
+    if (api->component_describe(app, transform_c, fields, 5) == 0) return -3;
+    if (api->component_describe(app, item_c, fields, 5) != 0) return -4;
+
+    VoxlTerm items[] = {{transform_c, VOXL_WRITE}, {item_c, VOXL_READ}};
+    VoxlSystemDesc systems[] = {
+        {VOXL_STR("setup"), VOXL_STAGE_STARTUP, 0, setup, NULL, NULL, 0},
+        {VOXL_STR("weigh"), VOXL_STAGE_UPDATE, 0, weigh, NULL, items, 2},
+    };
+    for (int i = 0; i < 2; i++)
+        if (api->system_add(app, &systems[i]) != 0) return -5;
+    return 0;
+}
+"#;
+
 struct Workspace {
     dir: PathBuf,
 }
@@ -676,6 +748,174 @@ fn a_plugin_can_own_the_scene_use_physics_and_talk_to_another_plugin() {
         app.update();
     }
     assert!(position(&app, ball).y > 1.0, "the ball was knocked upward");
+}
+
+/// An app with what a plugin needs to load files, rooted at a folder with a picture and a
+/// model in it.
+fn app_with_assets(workspace: &Workspace) -> App {
+    use crate::{
+        asset_server::AssetServer,
+        assets::Assets,
+        render::{Image, Material, Mesh, Mesh3d},
+    };
+    image::RgbaImage::from_pixel(2, 2, image::Rgba([10, 20, 30, 255]))
+        .save(workspace.dir.join("tile.png"))
+        .unwrap();
+    std::fs::copy(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("res/paris/models/animals/hen_white.glb"),
+        workspace.dir.join("hen.glb"),
+    )
+    .unwrap();
+    let mut app = app();
+    app.insert_resource(AssetServer::new(&workspace.dir))
+        .init_resource::<Assets<Mesh>>()
+        .init_resource::<Assets<Image>>()
+        .register_type::<Mesh3d>()
+        .register_type::<Material>();
+    app
+}
+
+#[test]
+fn a_described_plugin_component_can_be_inspected_saved_and_loaded() {
+    use crate::{
+        asset_server::AssetServer,
+        assets::Assets,
+        reflect::{Scene, Schema, TypeRegistry, Value},
+        render::{Image, Material, Mesh3d},
+        transform::Parent,
+    };
+
+    let workspace = Workspace::new("inventory");
+    let library = workspace.compile("inventory", INVENTORY, &["ABI=VOXL_ABI_VERSION"]);
+    let mut app = app_with_assets(&workspace);
+    app.load_native_plugin(&library).unwrap();
+    app.update();
+    app.update();
+
+    // The engine knows the shape of a component it has no type for.
+    let registry = app.world.resource::<TypeRegistry>();
+    let item_type = registry
+        .get("inv.Item")
+        .expect("the plugin described its component");
+    let Schema::Struct { fields, .. } = (item_type.schema)() else {
+        panic!("a described component is a struct");
+    };
+    let Schema::Fields(fields) = *fields else {
+        panic!("with fields");
+    };
+    let names: Vec<_> = fields.iter().map(|(name, _)| *name).collect();
+    assert_eq!(names, ["weight", "count", "rare", "owner", "tint"]);
+    assert_eq!(fields[4].1, Schema::Array(Box::new(Schema::Float), 3));
+
+    // And its values, by name.
+    let sword = (item_type.entities)(&app.world)[0];
+    let item = (item_type.get)(&app.world, sword).unwrap();
+    assert_eq!(item.field("weight"), Some(&Value::Float(2.5)));
+    assert_eq!(item.field("count"), Some(&Value::Int(3)));
+    assert_eq!(item.field("rare"), Some(&Value::Bool(true)));
+    let Some(&Value::Entity(owner)) = item.field("owner") else {
+        panic!("the owner is an entity");
+    };
+    assert!(app.world.contains_entity(Entity::from_bits(owner)));
+    assert_eq!(
+        position(&app, sword).x,
+        7.5,
+        "the plugin shows weight times count"
+    );
+
+    // An inspector edits it, and the plugin acts on the new value.
+    let mut edited = item.clone();
+    edited.set_path("count", Value::Int(10));
+    app.world
+        .resource_scope(|world, registry: &mut TypeRegistry| {
+            (registry.get("inv.Item").unwrap().insert)(world, sword, &edited).unwrap();
+            let bad = Value::Map(vec![("count".into(), Value::Text("many".into()))]);
+            assert!((registry.get("inv.Item").unwrap().insert)(world, sword, &bad).is_err());
+        });
+    app.update();
+    assert_eq!(position(&app, sword).x, 25.0);
+
+    // Files: the image it loaded by name, and the model it spawned as a parent with parts.
+    app.world.resource_scope(|world, server: &mut AssetServer| {
+        server.wait(world.resource_mut::<Assets<Image>>());
+    });
+    let texture = app
+        .world
+        .get::<Material>(sword)
+        .unwrap()
+        .base_color_texture
+        .unwrap();
+    let server = app.world.resource::<AssetServer>();
+    assert_eq!(server.name_of(texture), Some("tile.png"));
+    assert_eq!(
+        server.name_of(app.world.get::<Mesh3d>(sword).unwrap().0),
+        Some("shape:cube:1")
+    );
+    assert_eq!(
+        app.world
+            .resource::<Assets<Image>>()
+            .get(texture)
+            .unwrap()
+            .data[..4],
+        [10, 20, 30, 255]
+    );
+    let parts: Vec<Entity> = app
+        .world
+        .query::<(Entity, &Parent, &Mesh3d)>()
+        .iter()
+        .map(|(e, ..)| e)
+        .collect();
+    assert!(
+        !parts.is_empty(),
+        "the model's parts hang off the entity the plugin was given"
+    );
+    let root = app.world.get::<Parent>(parts[0]).unwrap().0;
+    assert_eq!(position(&app, root).x, 5.0);
+
+    // The whole thing saved, and loaded into another run of the same game.
+    let text = Scene::capture(&app.world, app.world.resource::<TypeRegistry>()).to_json();
+    assert!(text.contains("\"inv.Item\""), "{text}");
+    let other_workspace = Workspace::new("inventory-again");
+    let mut other = app_with_assets(&other_workspace);
+    other.load_native_plugin(&library).unwrap();
+    other.update();
+    let spawned = other
+        .world
+        .resource_scope(|world, registry: &mut TypeRegistry| {
+            Scene::from_json(&text).unwrap().spawn(world, registry)
+        });
+    assert!(spawned.skipped.is_empty(), "{:?}", spawned.skipped);
+    let registry = other.world.resource::<TypeRegistry>();
+    let item_type = registry.get("inv.Item").unwrap();
+    let loaded: Vec<Entity> = (item_type.entities)(&other.world)
+        .into_iter()
+        .filter(|e| spawned.entities.contains(e))
+        .collect();
+    let [loaded_sword] = loaded[..] else {
+        panic!("one item came from the scene");
+    };
+    let item = (item_type.get)(&other.world, loaded_sword).unwrap();
+    assert_eq!(
+        item.field("count"),
+        Some(&Value::Int(10)),
+        "the edited value was saved"
+    );
+    assert_eq!(
+        item.field("tint"),
+        Some(&Value::List(vec![
+            Value::Float(0.1f32 as f64),
+            Value::Float(0.2f32 as f64),
+            Value::Float(0.3f32 as f64)
+        ]))
+    );
+    let Some(&Value::Entity(new_owner)) = item.field("owner") else {
+        panic!("the owner is an entity");
+    };
+    assert_ne!(new_owner, owner);
+    assert!(
+        spawned.entities.contains(&Entity::from_bits(new_owner)),
+        "it points at the loaded owner"
+    );
 }
 
 /// A Haskell plugin: moves every entity with a transform `STEP` along X each frame and counts

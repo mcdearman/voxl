@@ -15,6 +15,7 @@
 //! let saved = Scene::capture(&app.world, app.world.resource::<TypeRegistry>()).to_json();
 //! ```
 
+mod blob;
 pub mod json;
 mod registry;
 mod scene;
@@ -23,7 +24,8 @@ mod value;
 #[cfg(test)]
 mod tests;
 
-pub use registry::{ComponentType, TypeRegistry};
+pub use blob::{blob_component_type, BlobField, FieldKind};
+pub use registry::{intern, ComponentType, TypeRegistry};
 pub use scene::{Scene, SceneEntity, Spawned};
 pub use value::{Reflect, ReflectError, Schema, Value};
 pub use voxl_derive::Reflect;
