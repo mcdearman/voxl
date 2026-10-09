@@ -23,7 +23,7 @@ use crate::{
     app::{App, Stage},
     ecs::Entity,
     live::{History, Live},
-    reflect::{json, Scene, TypeRegistry, Value},
+    reflect::{json, Scene, Schema, TypeRegistry, Value},
     signal::{Compare, Op, Signal, Signals},
     time::Time,
     transform::despawn_recursive,
@@ -230,6 +230,61 @@ fn with_registry<R>(
         .resource_scope(|world, registry: &mut TypeRegistry| body(world, registry))
 }
 
+/// A type's shape as plain data: what an agent or an inspector needs to know to write a
+/// value of it.
+pub fn schema_value(schema: &Schema) -> Value {
+    let fields = |fields: &[(&'static str, Schema)]| {
+        Value::Map(
+            fields
+                .iter()
+                .map(|(name, schema)| ((*name).to_owned(), schema_value(schema)))
+                .collect(),
+        )
+    };
+    let of = |kind: &str, rest: Vec<(&'static str, Value)>| {
+        let mut entries = vec![("type".to_owned(), Value::Text(kind.to_owned()))];
+        entries.extend(rest.into_iter().map(|(key, value)| (key.to_owned(), value)));
+        Value::Map(entries)
+    };
+    match schema {
+        Schema::Any => Value::Text("any".to_owned()),
+        Schema::Unit => Value::Text("nothing".to_owned()),
+        Schema::Bool => Value::Text("bool".to_owned()),
+        Schema::Int => Value::Text("integer".to_owned()),
+        Schema::Float => Value::Text("number".to_owned()),
+        Schema::Text => Value::Text("text".to_owned()),
+        Schema::Entity => Value::Text("entity".to_owned()),
+        Schema::List(item) => of("list", vec![("of", schema_value(item))]),
+        Schema::Array(item, count) => of(
+            "array",
+            vec![
+                ("of", schema_value(item)),
+                ("length", Value::Int(*count as i64)),
+            ],
+        ),
+        Schema::Optional(item) => of("optional", vec![("of", schema_value(item))]),
+        Schema::Tuple(items) => of(
+            "tuple",
+            vec![("of", Value::List(items.iter().map(schema_value).collect()))],
+        ),
+        Schema::Fields(named) => fields(named),
+        Schema::Struct { name, fields } => of(
+            "struct",
+            vec![
+                ("name", Value::Text((*name).to_owned())),
+                ("fields", schema_value(fields)),
+            ],
+        ),
+        Schema::Enum { name, variants } => of(
+            "enum",
+            vec![
+                ("name", Value::Text((*name).to_owned())),
+                ("variants", fields(variants)),
+            ],
+        ),
+    }
+}
+
 /// Carries out one request.
 fn handle(app: &mut App, request: &Value) -> Answer {
     let done = Ok(Value::Bool(true));
@@ -418,6 +473,28 @@ fn handle(app: &mut App, request: &Value) -> Answer {
                     texts(registry.resources().map(|t| t.name.to_owned())),
                 ),
             ]))
+        }
+        "schema" => {
+            let name = text(request, "name")?;
+            let registry = app.world.resource::<TypeRegistry>();
+            let schema = match (registry.get(name), registry.resource(name)) {
+                (Some(component), _) => (component.schema)(),
+                (None, Some(resource)) => (resource.schema)(),
+                (None, None) => return Err(format!("there is no type `{name}`")),
+            };
+            Ok(schema_value(&schema))
+        }
+        "screenshot" => {
+            let path = text(request, "path")?;
+            let screenshot = app
+                .world
+                .get_resource_mut::<crate::render::Screenshot>()
+                .ok_or(
+                    "this game draws nothing (it has no renderer), so there is nothing to see",
+                )?;
+            screenshot.request(path);
+            // The frame after this request is the one saved.
+            Ok(map([("path", Value::Text(path.to_owned()))]))
         }
         "entities" => {
             // Entities by what they have, optionally only those with one component.
@@ -906,6 +983,19 @@ mod tests {
         );
 
         // What can't be done says why, and changes nothing.
+        // The shape of a type, for whoever has to write one.
+        let shape = ask(&mut app, "{'cmd': 'schema', 'name': 'voxl.Transform'}");
+        assert_eq!(shape.field("type"), Some(&Value::Text("struct".into())));
+        assert_eq!(
+            shape.get_path("fields.translation.length"),
+            Some(&Value::Int(3))
+        );
+        assert_eq!(
+            ask(&mut app, "{'cmd': 'schema', 'name': 'voxl.Fog'}").get_path("fields.density"),
+            Some(&Value::Text("number".into()))
+        );
+        assert!(refused(&mut app, "{'cmd': 'schema', 'name': 'voxl.Nothing'}").contains("no type"));
+        assert!(refused(&mut app, "{'cmd': 'screenshot', 'path': 'x.png'}").contains("no renderer"));
         assert_eq!(
             refused(&mut app, "{'cmd': 'get', 'entity': 77}"),
             "there is no entity 77"

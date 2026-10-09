@@ -137,18 +137,21 @@ development as fully as a person at an editor: see the scene, know everything ab
 game's state, change it, and control time and code. The means is the Model Context Protocol
 (MCP), on top of the debug connection of Phase 1B ([LIVE.md](LIVE.md)).
 
-- [ ] An MCP server (`voxl-mcp`, JSON-RPC over stdio) that connects to a running game by its
+- [x] An MCP server (`voxl-mcp`, JSON-RPC over stdio) that connects to a running game by its
       debug address, with a tool for every command of the debug connection: entities,
       components and resources by name, spawn and despawn, systems, failures with stacks,
-      pause, step, rewind, time scale, signals, plugin reload, scene save and load
-- [ ] Seeing the scene: a screenshot tool that returns the current frame as an image; then
-      from a chosen camera or a free viewpoint, at a chosen size, with debug overlays
-      (entity ids, bounds, colliders, the signal graph)
+      pause, step, rewind, time scale, signals, plugin reload, scene save; see
+      [MCP.md](MCP.md)
+- [x] Seeing the scene: a screenshot tool that returns the next frame as an image, at a
+      chosen size
+- [ ] Screenshots from a chosen camera or a free viewpoint, with debug overlays (entity ids,
+      bounds, colliders, the signal graph); loading a scene
 - [ ] The scene in words: a compact description (what is where, what is on screen, what
       changed since last asked) for when an image is more than is needed
-- [ ] Total knowledge: the schema of every registered type, so an agent knows what it may
-      read and write and in what shape; a check that reports engine state that is not
-      reflected, and so invisible
+- [x] The schema of every registered type, so an agent knows what it may read and write and
+      in what shape
+- [ ] Total knowledge: a check that reports engine state that is not reflected, and so
+      invisible
 - [ ] Events pushed, not polled: failures, signal changes, log lines, a plugin reloading
 - [ ] Launching and owning a game: start it headless or windowed, step it deterministically
       (fixed timestep, seeded), run to a condition ("until this signal is true"), shut it down
@@ -374,5 +377,5 @@ project grows.
    seen in screenshots to fix alongside: the built-in sky is dull next to the sun it comes
    with; and objects that move every frame smear under temporal anti-aliasing (it has no
    motion vectors).
-3. The MCP server over the debug connection (Phase 1C), then the parallel executor
-   (Phase 2).
+3. The parallel executor (Phase 2); the rest of Phase 1C (headless stepping, input from an
+   agent, pushed events).

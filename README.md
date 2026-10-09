@@ -75,6 +75,8 @@ Ordering systems, run conditions and game states: [docs/SCHEDULING.md](docs/SCHE
 Failures that pause the game instead of ending it, and stepping time:
 [docs/LIVE.md](docs/LIVE.md). Game rules as signals: [docs/SIGNALS.md](docs/SIGNALS.md).
 
+AI agents driving a running game over MCP: [docs/MCP.md](docs/MCP.md).
+
 Where the engine is headed: [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## Layout

@@ -7,6 +7,7 @@ pub mod assets;
 pub mod ecs;
 pub mod input;
 pub mod live;
+pub mod mcp;
 pub mod physics;
 pub mod plugin;
 pub mod prefab;
