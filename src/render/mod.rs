@@ -310,6 +310,10 @@ pub struct Fog {
     /// How quickly the haze thins with height, per metre.
     pub height_falloff: f32,
     pub base_height: f32,
+    /// Metres from the camera before the haze begins. Zero is ordinary atmosphere, thickening
+    /// from the eye outward; a large value keeps everything nearby clear and hazes only the
+    /// distance, for hiding the edge of a world.
+    pub start: f32,
 }
 
 impl Default for Fog {
@@ -318,6 +322,7 @@ impl Default for Fog {
             density: 0.0,
             height_falloff: 0.01,
             base_height: 0.0,
+            start: 0.0,
         }
     }
 }

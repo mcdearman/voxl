@@ -110,7 +110,7 @@ fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, registry: Res
     commands.spawn((
         Transform::IDENTITY.looking_at(Vec3::new(-0.5, -1.0, -0.3), Vec3::Y),
         DirectionalLight {
-            intensity: 1.6,
+            intensity: 3.0,
             ..Default::default()
         },
     ));

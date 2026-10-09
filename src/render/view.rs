@@ -240,7 +240,7 @@ impl ViewBinding {
             camera_forward: v4(frame.camera_forward, frame.exposure),
             sun_direction: v4(frame.sun_direction, frame.sky_rotation),
             sun_color: v4(frame.sun_color, frame.sky_intensity),
-            ambient: v4(frame.ambient_color, 0.0),
+            ambient: v4(frame.ambient_color, frame.fog.start),
             fog: [
                 frame.fog.density,
                 frame.fog.height_falloff,
