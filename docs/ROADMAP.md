@@ -164,8 +164,9 @@ game's state, change it, and control time and code. The means is the Model Conte
 - [x] Running to a condition: step frames and wait for them, or run until a signal is true
 - [x] Input from the agent: keys and mouse injected as if played, so an agent can play-test
       what it built
-- [ ] Launching and owning a game: start it headless or windowed, seeded, and shut it down;
-      gamepad and text input
+- [x] Launching and owning a game from MCP: start it by its command line, read its log, shut
+      it down
+- [ ] Rendering without a window; seeding; gamepad and text input
 - [ ] Editing through the same door: write a prefab or a scene, define signals, build and
       reload a plugin, and see the result, without leaving the conversation
 - [ ] The same tools from inside the editor (Phase 5), so a person and an agent can work on

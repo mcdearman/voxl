@@ -567,6 +567,19 @@ fn handle(app: &mut App, request: &Value) -> Answer {
                 ("entities", Value::Int(app.world.entity_count() as i64)),
             ]))
         }
+        "quit" => {
+            // The same event a game sends itself to stop: the loop ends after this frame.
+            match app
+                .world
+                .get_resource_mut::<crate::ecs::Events<crate::app::AppExit>>()
+            {
+                Some(events) => {
+                    events.send(crate::app::AppExit);
+                    done
+                }
+                None => Err("this game has no way to be told to stop".to_owned()),
+            }
+        }
         "pause" => {
             app.world.resource_mut::<Live>().pause();
             done

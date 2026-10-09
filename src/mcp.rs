@@ -24,6 +24,24 @@ struct Tool {
 
 const TOOLS: &[Tool] = &[
     Tool {
+        command: "launch",
+        about: "Starts a game for these tools to drive, and waits until it answers. Give the command that runs it, as you would type it in the project's folder (for example `cargo run --example sacred_sites -- --headless`). The game is told where to listen; anything it prints goes to a log that `mira_log` reads. One game at a time: launching again stops the one before.",
+        arguments: &[
+            "command: string: the command line that runs the game",
+            "folder?: string: the folder to run it in (default: where this server was started)",
+        ],
+    },
+    Tool {
+        command: "log",
+        about: "The last lines the launched game printed (its log and anything it wrote to standard output or error). Where to look when a launch fails or the game stops answering.",
+        arguments: &["lines?: integer: how many lines from the end (default 40)"],
+    },
+    Tool {
+        command: "quit",
+        about: "Asks the game to stop, as closing its window would. A game this server launched is waited for, and stopped for good if it doesn't go.",
+        arguments: &[],
+    },
+    Tool {
         command: "status",
         about: "The game at a glance: frame, seconds of game time, time scale, whether it is paused, how many systems have failed, how many entities there are. Start here.",
         arguments: &[],
@@ -341,6 +359,20 @@ pub trait Game {
     /// Asks the game to save its next frame, waits for the file, and returns it as a PNG no
     /// more than `width` pixels wide.
     fn screenshot(&mut self, width: u32) -> Result<Vec<u8>, String>;
+
+    /// Starts a game with this command line, in this folder if one is given, and waits for
+    /// it to answer. Returns something to tell whoever asked (where it is listening).
+    fn launch(&mut self, _command: &str, _folder: Option<&str>) -> Result<String, String> {
+        Err("this server can't launch games".to_owned())
+    }
+
+    /// The last `lines` lines the launched game printed.
+    fn log(&mut self, _lines: usize) -> Result<String, String> {
+        Err("no game was launched from here, so there is no log".to_owned())
+    }
+
+    /// Called after the game has been asked to quit: waits for a launched game to go.
+    fn stopped(&mut self) {}
 }
 
 fn call(game: &mut dyn Game, name: &str, arguments: Option<&Value>) -> Value {
@@ -367,6 +399,29 @@ fn call(game: &mut dyn Game, name: &str, arguments: Option<&Value>) -> Value {
             Err(why) => content(vec![words(why)], true),
         };
     }
+    let argument = |name: &str| match arguments.and_then(|arguments| arguments.field(name)) {
+        Some(Value::Text(value)) => Some(value.as_str()),
+        _ => None,
+    };
+    if tool.command == "launch" {
+        let Some(command) = argument("command") else {
+            return content(vec![words("this tool needs `command`")], true);
+        };
+        return match game.launch(command, argument("folder")) {
+            Ok(said) => content(vec![words(said)], false),
+            Err(why) => content(vec![words(why)], true),
+        };
+    }
+    if tool.command == "log" {
+        let lines = arguments
+            .and_then(|arguments| arguments.field("lines"))
+            .and_then(Value::as_f64)
+            .map_or(40, |lines| lines.clamp(1.0, 2000.0) as usize);
+        return match game.log(lines) {
+            Ok(log) => content(vec![words(log)], false),
+            Err(why) => content(vec![words(why)], true),
+        };
+    }
     let mut request = vec![("cmd".to_owned(), text(tool.command))];
     if let Some(Value::Map(arguments)) = arguments {
         request.extend(arguments.iter().filter(|(key, _)| key != "cmd").cloned());
@@ -379,6 +434,9 @@ fn call(game: &mut dyn Game, name: &str, arguments: Option<&Value>) -> Value {
             Ok(answer)
         }
     });
+    if tool.command == "quit" && asked.is_ok() {
+        game.stopped();
+    }
     match asked {
         Ok(answer) => {
             let mut parts = Vec::new();

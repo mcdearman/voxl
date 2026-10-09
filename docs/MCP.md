@@ -27,6 +27,7 @@ Each tool is one command of the [debug connection](LIVE.md#the-debug-connection)
 
 | Tools | For |
 | --- | --- |
+| `mira_launch`, `mira_log`, `mira_quit` | starting a game for the other tools to drive, reading what it prints, stopping it |
 | `mira_status` | where the game is: frame, time, paused, failures, entity count |
 | `mira_screenshot` | **seeing the scene**: the next rendered frame as an image, scaled to `width` (1024) |
 | `mira_describe` | the scene in words: the camera, and what there is, things on screen first and nearest first, with where on the screen each appears |
@@ -43,6 +44,20 @@ Each tool is one command of the [debug connection](LIVE.md#the-debug-connection)
 
 A command the game refuses comes back as a tool result marked as an error, with the reason in
 words, so the agent can read it and try something else.
+
+## Owning a game
+
+An agent doesn't need a person to start the game for it. `mira_launch` runs a command line in
+the project's folder, tells the game where to listen, and waits until it answers, however long
+the build takes; `mira_log` reads the last lines the game printed, which is where a failed
+launch explains itself; `mira_quit` asks it to stop and makes sure it has. A game the server
+launched is stopped when the agent's connection closes.
+
+```text
+mira_launch  {"command": "cargo run --example sacred_sites -- --headless"}
+mira_signals
+mira_quit
+```
 
 ## Playing to a moment
 
@@ -81,7 +96,8 @@ well as the game's. A plugin's components appear once the plugin
   what.
 - Nothing is pushed through MCP: an agent finds out about a failure or a signal changing by
   asking. (The debug connection itself can push; see [LIVE.md](LIVE.md).)
-- The server doesn't launch games or run them without a window. Stepped frames are each
-  `Live::step` long (1/60 s), so a stepped run is repeatable as far as the game itself is.
+- A game with a window still opens its window; there is no drawing without one yet. Stepped
+  frames are each `Live::step` long (1/60 s), so a stepped run is repeatable as far as the
+  game itself is.
 - Input is keys, mouse buttons and mouse movement; no gamepad, no text entry.
 - Anyone who can reach the debug address can do all of this. Keep it on the machine.

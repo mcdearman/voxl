@@ -26,6 +26,25 @@ use mira::{
 struct Remote {
     address: String,
     shots: u32,
+    /// A game this server started, and where what it prints is kept.
+    child: Option<(std::process::Child, PathBuf)>,
+}
+
+impl Remote {
+    /// Stops the game this server launched, if it is still going.
+    fn stop_child(&mut self) {
+        if let Some((mut child, _)) = self.child.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+}
+
+impl Drop for Remote {
+    fn drop(&mut self) {
+        // A game launched for an agent doesn't outlive the agent's connection.
+        self.stop_child();
+    }
 }
 
 impl Game for Remote {
@@ -52,6 +71,90 @@ impl Game for Remote {
             (None, Some(Value::Text(why))) => Err(why.clone()),
             _ => Err(format!("the game answered {line:?}")),
         }
+    }
+
+    fn launch(&mut self, command: &str, folder: Option<&str>) -> Result<String, String> {
+        self.stop_child();
+        // A port nothing else has: ask the system for one, then give it up to the game.
+        let port = std::net::TcpListener::bind("127.0.0.1:0")
+            .and_then(|listener| listener.local_addr())
+            .map_err(|err| format!("can't find a free port: {err}"))?
+            .port();
+        let address = format!("127.0.0.1:{port}");
+        let log = std::env::temp_dir().join(format!("mira-mcp-{}-game.log", std::process::id()));
+        let out = std::fs::File::create(&log)
+            .map_err(|err| format!("can't write {}: {err}", log.display()))?;
+        let err = out.try_clone().map_err(|err| err.to_string())?;
+        let mut shell = std::process::Command::new("sh");
+        shell
+            .arg("-c")
+            // `exec`, so that stopping the child stops the game and not only its shell.
+            .arg(format!("exec {command}"))
+            .env("MIRA_DEBUG", &address)
+            .stdin(std::process::Stdio::null())
+            .stdout(out)
+            .stderr(err);
+        if let Some(folder) = folder {
+            shell.current_dir(folder);
+        }
+        let child = shell
+            .spawn()
+            .map_err(|err| format!("can't run `{command}`: {err}"))?;
+        self.child = Some((child, log.clone()));
+        self.address = address.clone();
+        // Building and loading can take a while; the game is ready when it answers.
+        let started = Instant::now();
+        let status = Value::Map(vec![("cmd".to_owned(), Value::Text("status".to_owned()))]);
+        loop {
+            if self.ask(&status).is_ok() {
+                return Ok(format!(
+                    "the game is running and listening on {address}; what it prints is in {}",
+                    log.display()
+                ));
+            }
+            let (child, _) = self.child.as_mut().expect("set just above");
+            if let Ok(Some(code)) = child.try_wait() {
+                let tail = self.log(30).unwrap_or_default();
+                self.child = None;
+                return Err(format!(
+                    "the game stopped before it answered ({code}). It printed:\n{tail}"
+                ));
+            }
+            if started.elapsed() > Duration::from_secs(900) {
+                self.stop_child();
+                return Err(
+                    "the game didn't answer within fifteen minutes; it has been stopped".to_owned(),
+                );
+            }
+            std::thread::sleep(Duration::from_millis(250));
+        }
+    }
+
+    fn log(&mut self, lines: usize) -> Result<String, String> {
+        let (_, log) = self
+            .child
+            .as_ref()
+            .ok_or("no game was launched from here, so there is no log")?;
+        let text = std::fs::read_to_string(log)
+            .map_err(|err| format!("can't read {}: {err}", log.display()))?;
+        let all: Vec<&str> = text.lines().collect();
+        Ok(all[all.len().saturating_sub(lines)..].join("\n"))
+    }
+
+    fn stopped(&mut self) {
+        // Give a game this server launched a moment to go by itself, then make sure.
+        let Some((child, _)) = self.child.as_mut() else {
+            return;
+        };
+        let started = Instant::now();
+        while started.elapsed() < Duration::from_secs(5) {
+            if matches!(child.try_wait(), Ok(Some(_))) {
+                self.child = None;
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        self.stop_child();
     }
 
     fn screenshot(&mut self, width: u32) -> Result<Vec<u8>, String> {
@@ -112,7 +215,11 @@ fn main() {
             address = args.next().unwrap_or(address);
         }
     }
-    let mut game = Remote { address, shots: 0 };
+    let mut game = Remote {
+        address,
+        shots: 0,
+        child: None,
+    };
     let mut out = std::io::stdout().lock();
     for line in std::io::stdin().lock().lines() {
         let Ok(line) = line else {
