@@ -370,6 +370,13 @@ pub struct VoxlApi {
     pub set_parent:
         unsafe extern "C" fn(system: *mut VoxlSystem, child: VoxlEntity, parent: VoxlEntity),
     pub despawn_tree: unsafe extern "C" fn(system: *mut VoxlSystem, entity: VoxlEntity),
+
+    pub spawn_prefab: unsafe extern "C" fn(
+        system: *mut VoxlSystem,
+        name: *const u8,
+        len: usize,
+        transform: *const VoxlTransform,
+    ) -> VoxlEntity,
 }
 
 /// `voxl.Transform`: 48 bytes, 16-byte aligned.

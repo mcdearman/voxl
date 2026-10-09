@@ -8,6 +8,7 @@ pub mod ecs;
 pub mod input;
 pub mod physics;
 pub mod plugin;
+pub mod prefab;
 pub mod reflect;
 pub mod render;
 pub mod tasks;
@@ -24,13 +25,14 @@ pub mod prelude {
         asset_server::AssetServer,
         assets::{Assets, Handle},
         ecs::prelude::*,
-        reflect::{Reflect, Scene, TypeRegistry},
         input::{ButtonInput, KeyCode, Mouse, MouseButton},
         physics::{
             fluid::{Emitter, ParticleFluid, WaterSurface},
             BodyKind, CharacterController, Collider, Joint, JointKind, PhysicsPlugin, PhysicsWorld,
             RigidBody,
         },
+        prefab::{PrefabInstance, PrefabPlugin, Prefabs},
+        reflect::{NotSaved, Reflect, Scene, TypeRegistry},
         render::{
             AmbientLight, Animator, Camera, Color, DirectionalLight, Environment, Fog, Gait,
             GltfScene, Image, Leg, Limb, LodLevel, Lods, Material, Mesh, Mesh3d, NotShadowCaster,

@@ -41,13 +41,26 @@ pub type GetFn = Box<dyn Fn(&World, Entity) -> Option<Value>>;
 pub type InsertFn = Box<dyn Fn(&mut World, Entity, &Value) -> Result<(), ReflectError>>;
 pub type RemoveFn = Box<dyn Fn(&mut World, Entity)>;
 pub type EntitiesFn = Box<dyn Fn(&World) -> Vec<Entity>>;
+pub type GetResourceFn = Box<dyn Fn(&World) -> Option<Value>>;
+pub type InsertResourceFn = Box<dyn Fn(&mut World, &Value) -> Result<(), ReflectError>>;
 
-/// The component types that can be reached by name. A resource; add to it with
-/// `App::register_type`.
+/// What can be done with a resource type knowing only its name.
+pub struct ResourceType {
+    pub name: &'static str,
+    pub schema: Box<dyn Fn() -> Schema>,
+    /// The resource's value, if the world has it.
+    pub get: GetResourceFn,
+    /// Builds the resource from a value and puts it in the world, replacing any it had.
+    pub insert: InsertResourceFn,
+}
+
+/// The component and resource types that can be reached by name. A resource; add to it with
+/// `App::register_type` and `App::register_resource_type`.
 #[derive(Default)]
 pub struct TypeRegistry {
     types: Vec<ComponentType>,
     names: HashMap<&'static str, usize>,
+    resources: Vec<ResourceType>,
 }
 
 impl TypeRegistry {
@@ -94,5 +107,31 @@ impl TypeRegistry {
     /// Every registered type, in the order they were registered.
     pub fn iter(&self) -> impl Iterator<Item = &ComponentType> {
         self.types.iter()
+    }
+
+    /// Makes a resource reachable by name, and part of captured scenes.
+    pub fn register_resource<R: Reflect>(&mut self) {
+        if self.resource(R::type_name()).is_some() {
+            return;
+        }
+        self.resources.push(ResourceType {
+            name: R::type_name(),
+            schema: Box::new(R::schema),
+            get: Box::new(|world| world.get_resource::<R>().map(R::to_value)),
+            insert: Box::new(|world, value| {
+                let resource = R::from_value(value)?;
+                world.insert_resource(resource);
+                Ok(())
+            }),
+        });
+    }
+
+    pub fn resource(&self, name: &str) -> Option<&ResourceType> {
+        self.resources.iter().find(|resource| resource.name == name)
+    }
+
+    /// Every registered resource type, in the order they were registered.
+    pub fn resources(&self) -> impl Iterator<Item = &ResourceType> {
+        self.resources.iter()
     }
 }

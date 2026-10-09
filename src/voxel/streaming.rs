@@ -16,7 +16,8 @@ use crate::{
 };
 
 /// Chunks are kept loaded around entities with this component (usually the camera).
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, crate::reflect::Reflect)]
+#[reflect(name = "voxl.ChunkViewer")]
 pub struct ChunkViewer;
 
 impl Component for ChunkViewer {}

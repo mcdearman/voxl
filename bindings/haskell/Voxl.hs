@@ -90,6 +90,7 @@ module Voxl
   , loadImage
   , setTextures
   , spawnModel
+  , spawnPrefab
     -- * Events
   , Event
   , registerEvent
@@ -217,6 +218,8 @@ foreign import ccall unsafe "voxl_hs_set_textures"
   c_set_textures :: Ptr () -> Word64 -> Word32 -> Word32 -> Word32 -> IO ()
 foreign import ccall unsafe "voxl_hs_spawn_model"
   c_spawn_model :: Ptr () -> Ptr CChar -> CSize -> Ptr Transform -> IO Word64
+foreign import ccall unsafe "voxl_hs_spawn_prefab"
+  c_spawn_prefab :: Ptr () -> Ptr CChar -> CSize -> Ptr Transform -> IO Word64
 foreign import ccall unsafe "voxl_hs_set_parent" c_set_parent :: Ptr () -> Word64 -> Word64 -> IO ()
 foreign import ccall unsafe "voxl_hs_despawn_tree" c_despawn_tree :: Ptr () -> Word64 -> IO ()
 foreign import ccall unsafe "voxl_hs_spawn" c_spawn :: Ptr () -> IO Word64
@@ -898,6 +901,14 @@ spawnModel :: System -> String -> Transform -> IO Entity
 spawnModel (System system) name at =
   withName name $ \chars len ->
     Foreign.with at (fmap Entity . c_spawn_model system chars len)
+
+-- | Spawns an instance of a prefab by name (a scene file, or a name the app gave a scene):
+-- a new entity at the transform, with the prefab's entities below it. They appear on the
+-- next frame, and are rebuilt whenever the prefab's file is saved again.
+spawnPrefab :: System -> String -> Transform -> IO Entity
+spawnPrefab (System system) name at =
+  withName name $ \chars len ->
+    Foreign.with at (fmap Entity . c_spawn_prefab system chars len)
 
 -- What the engine calls for every Haskell system: `user` is the stable pointer to its
 -- function. An exception must not escape into the engine, so it is logged instead.

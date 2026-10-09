@@ -2,9 +2,9 @@ use std::collections::HashMap;
 
 use crate::{
     ecs::{event_update_system, Component, Events, IntoSystems, Schedule, World},
-    reflect::{Reflect, TypeRegistry},
     input::InputPlugin,
     plugin::{NativePlugins, PluginEvents},
+    reflect::{Reflect, TypeRegistry},
     render::RenderPlugin,
     time::{FixedTime, Time, TimePlugin},
     transform::TransformPlugin,
@@ -116,6 +116,15 @@ impl App {
 
     /// Makes a component type reachable by name, so scenes can save and load it and tools
     /// can inspect it.
+    /// Makes a resource reachable by name, and saved with scenes.
+    pub fn register_resource_type<R: Reflect>(&mut self) -> &mut Self {
+        self.world.init_resource::<TypeRegistry>();
+        self.world
+            .resource_mut::<TypeRegistry>()
+            .register_resource::<R>();
+        self
+    }
+
     pub fn register_type<C: Component + Reflect>(&mut self) -> &mut Self {
         self.world.init_resource::<TypeRegistry>();
         self.world.resource_mut::<TypeRegistry>().register::<C>();
@@ -227,6 +236,7 @@ impl Plugin for DefaultPlugins {
             .add_plugins(WindowPlugin)
             .add_plugins(InputPlugin)
             .add_plugins(TransformPlugin)
+            .add_plugins(crate::prefab::PrefabPlugin)
             .add_plugins(RenderPlugin);
     }
 }

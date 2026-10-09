@@ -49,10 +49,28 @@ which does not survive; give it one with `AssetServer::name` if it should.
 
 Image files are watched and reloaded when they change; see [HOT_RELOAD.md](HOT_RELOAD.md).
 
+## Unloading
+
+Handles are plain ids, not reference counts, so nothing is freed behind your back. Free what
+is no longer used when it suits the game, after changing level for instance:
+
+```rust
+let unloaded = AssetServer::unload_unused(&mut app.world);
+```
+
+A named image or mesh is in use if a registered component on some entity refers to it (a
+`Mesh3d`, a `Material`'s textures, a `Lods` level), or if it is part of a model file another
+part of which is in use: a model stays or goes whole. Everything else is removed, from the
+GPU too. Unloading loses nothing for good, because asking for the name loads it again, which
+is what spawning a scene or a prefab does.
+
+A handle held where the engine can't see it, in a resource of yours or a component that isn't
+registered, goes stale when its asset is unloaded. Protect those with `server.keep(handle)`
+(and `release` later). Assets without a name are never unloaded.
+
 ## What isn't here yet
 
-- Assets are never unloaded. Handles are plain ids rather than reference counts; the plan is to
-  free what no component refers to by tracing reflected components.
+- Unloading is something the game asks for; nothing unloads on its own under memory pressure.
 - Model files load on the calling thread, and are not watched for changes.
 - There is no processing step: textures are not compressed for the GPU, and nothing is cached
   on disk.

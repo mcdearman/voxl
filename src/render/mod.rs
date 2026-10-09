@@ -195,7 +195,8 @@ impl Material {
 }
 
 /// One level of detail: drawn while the camera is nearer than `max_distance`.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Reflect)]
+#[reflect(name = "voxl.LodLevel")]
 pub struct LodLevel {
     pub max_distance: f32,
     pub mesh: Handle<Mesh>,
@@ -204,7 +205,8 @@ pub struct LodLevel {
 
 /// Swaps in simpler meshes as the camera moves away, instead of `Mesh3d`. Levels are ordered
 /// nearest first; beyond the last one the entity isn't drawn at all.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Reflect)]
+#[reflect(name = "voxl.Lods")]
 pub struct Lods(pub Vec<LodLevel>);
 
 impl Component for Lods {}
@@ -216,7 +218,8 @@ impl Lods {
 }
 
 /// Keeps a mesh out of the shadow cascades, for things too thin or diffuse to cast.
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, Reflect)]
+#[reflect(name = "voxl.NotShadowCaster")]
 pub struct NotShadowCaster;
 
 impl Component for NotShadowCaster {}
@@ -290,7 +293,8 @@ impl Environment {
 }
 
 /// Extra flat light from every direction, on top of the sky's.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Reflect)]
+#[reflect(name = "voxl.AmbientLight", default)]
 pub struct AmbientLight {
     pub color: Color,
     pub intensity: f32,
@@ -306,7 +310,8 @@ impl Default for AmbientLight {
 }
 
 /// Haze that thickens with distance and thins with height, lit by the sky. Off by default.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Reflect)]
+#[reflect(name = "voxl.Fog", default)]
 pub struct Fog {
     /// Extinction per metre at `base_height`.
     pub density: f32,
@@ -907,7 +912,11 @@ impl Plugin for RenderPlugin {
         app.register_type::<Camera>()
             .register_type::<DirectionalLight>()
             .register_type::<Mesh3d>()
-            .register_type::<Material>();
+            .register_type::<Material>()
+            .register_type::<Lods>()
+            .register_type::<NotShadowCaster>()
+            .register_resource_type::<AmbientLight>()
+            .register_resource_type::<Fog>();
         app.init_resource::<Assets<Mesh>>()
             .init_resource::<Assets<Image>>()
             .init_resource::<AmbientLight>()

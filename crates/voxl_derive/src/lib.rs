@@ -128,9 +128,19 @@ fn shape(fields: &Fields, what: &str) -> syn::Result<Shape> {
                 loads.push((ident, present, Some((key, missing))));
             }
             let from_value = move |fallback: Option<&Tokens>| {
+                // Checked once, where the first saved field is read: without it a value of
+                // the wrong shape would have every field missing, and load as the default.
+                let mut check = Some(quote! {
+                    if !::core::matches!(value, ::voxl::reflect::Value::Map(_)) {
+                        return ::core::result::Result::Err(
+                            ::voxl::reflect::ReflectError::expected("a map", value)
+                        );
+                    }
+                });
                 let fields = loads.iter().map(|(ident, present, lookup)| match lookup {
                     None => quote!(#ident: #present),
                     Some((key, missing)) => {
+                        let check = check.take();
                         // With a default for the whole type, a missing field takes its value
                         // from there instead of being an error.
                         let missing = match fallback {
@@ -138,9 +148,12 @@ fn shape(fields: &Fields, what: &str) -> syn::Result<Shape> {
                             None => missing.clone(),
                         };
                         quote! {
-                            #ident: match value.field(#key) {
-                                ::core::option::Option::Some(field) => #present,
-                                ::core::option::Option::None => #missing,
+                            #ident: {
+                                #check
+                                match value.field(#key) {
+                                    ::core::option::Option::Some(field) => #present,
+                                    ::core::option::Option::None => #missing,
+                                }
                             }
                         }
                     }

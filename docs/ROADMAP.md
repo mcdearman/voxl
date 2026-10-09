@@ -105,16 +105,20 @@ The layer Unreal's editor, saves, networking and Blueprints all stand on.
 - [x] Serialization of any reflected value; a text scene format (JSON); see
       [SCENES.md](SCENES.md)
 - [x] Components defined by plugins are reflected once the plugin describes their fields
-- [ ] Prefabs with overrides; reflecting the physics, animation and voxel components;
-      capturing resources
+- [x] Prefabs: a scene by name, instanced under an entity, rebuilt when its file changes,
+      with per-instance overrides; plugins can spawn them
+- [x] Reflecting the physics components (bodies, colliders with every shape, joints,
+      character controllers), `Lods`, `Interpolate`, `ChunkViewer`
+- [x] Scenes capture registered resources (a level's fog and ambient light)
+- [ ] Saving skeletal animation state and edited voxel chunks
 - [x] Hierarchy as a real feature: `Children` kept from `Parent`, recursive despawn, and
       propagation that walks down from the roots (one multiply per entity at any depth)
 - [x] Asset server: assets by name (files, parts of model files, shapes), images decoded on
       worker threads and reloaded when the file changes, scenes saving assets by name; see
       [ASSETS.md](ASSETS.md)
-- [ ] Unloading assets nothing refers to (by tracing reflected components, since handles stay
-      plain ids), model files loaded off the main thread and watched, dependencies between
-      assets
+- [x] Unloading assets nothing refers to, by tracing reflected components (handles stay
+      plain ids): `AssetServer::unload_unused`
+- [ ] Model files loaded off the main thread and watched, dependencies between assets
 - [ ] Asset processing: textures to BC7/ASTC with mips, meshes to a binary format, cached by
       content hash
 - [ ] Load skins and animations from glTF
@@ -249,8 +253,7 @@ project grows.
 
 ## Next three steps
 
-1. Reflect the physics, animation and voxel components; prefabs; unloading unused assets
-   (Phase 1).
+1. Saving edited voxel chunks; model files loaded off the main thread and watched (Phase 1).
 2. Image-diff tests around the demos, and the rest of the crate split (Phase 0). Two things
    seen in screenshots to fix alongside: the built-in sky is dull next to the sun it comes
    with; and objects that move every frame smear under temporal anti-aliasing (it has no

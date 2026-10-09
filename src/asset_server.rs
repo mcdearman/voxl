@@ -16,7 +16,7 @@
 use std::{
     any::TypeId,
     cell::RefCell,
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     path::{Path, PathBuf},
     sync::Arc,
     time::{Duration, Instant, SystemTime},
@@ -27,14 +27,15 @@ use anyhow::Context;
 use crate::{
     assets::{Assets, Handle},
     ecs::{ResMut, World},
-    render::{GltfScene, Image, Mesh},
+    reflect::{TypeRegistry, Value},
+    render::{GltfScene, Image, Mesh, Skinned},
     tasks::{Mailbox, TaskPool},
 };
 
 /// A file's modification time and size: enough to tell that it was saved again.
-type Stamp = (SystemTime, u64);
+pub(crate) type Stamp = (SystemTime, u64);
 
-fn stamp(path: &Path) -> Option<Stamp> {
+pub(crate) fn stamp(path: &Path) -> Option<Stamp> {
     let meta = std::fs::metadata(path).ok()?;
     Some((meta.modified().ok()?, meta.len()))
 }
@@ -67,6 +68,8 @@ pub struct AssetServer {
     names: Names,
     ids: HashMap<(TypeId, String), u32>,
     resolvers: HashMap<&'static str, Resolver>,
+    /// Assets `unload_unused` leaves alone whether or not anything is seen to use them.
+    kept: HashSet<(TypeId, u32)>,
     gltf: HashMap<String, Arc<GltfScene>>,
     pool: Option<TaskPool>,
     decoded: Mailbox<DecodedImage>,
@@ -125,6 +128,7 @@ impl AssetServer {
             names: HashMap::new(),
             ids: HashMap::new(),
             resolvers,
+            kept: HashSet::new(),
             gltf: HashMap::new(),
             pool: None,
             decoded: Mailbox::default(),
@@ -196,6 +200,101 @@ impl AssetServer {
         })
     }
 
+    // --- unloading ---
+
+    /// Protects an asset from [`AssetServer::unload_unused`]. For handles held where the
+    /// engine can't see them: in a resource, or in a component that isn't registered.
+    pub fn keep<T: 'static>(&mut self, handle: Handle<T>) {
+        self.kept.insert((TypeId::of::<T>(), handle.id()));
+    }
+
+    /// Undoes [`AssetServer::keep`].
+    pub fn release<T: 'static>(&mut self, handle: Handle<T>) {
+        self.kept.remove(&(TypeId::of::<T>(), handle.id()));
+    }
+
+    /// Unloads the named images and meshes that nothing uses, freeing their memory on the GPU
+    /// too, and returns how many went. Call it at a quiet moment: after changing level, say.
+    ///
+    /// An asset is in use if a registered component on some entity refers to it, if it was
+    /// [kept](AssetServer::keep), or if it is part of a model file another part of which is
+    /// in use. Handles held anywhere else go stale, so keep those. Nothing is lost for good:
+    /// asking for an unloaded name loads it again, which is what spawning a scene does.
+    /// Assets without a name are never touched.
+    pub fn unload_unused(world: &mut World) -> usize {
+        if !world.contains_resource::<AssetServer>() || !world.contains_resource::<TypeRegistry>() {
+            return 0;
+        }
+        world.resource_scope(|world, server: &mut AssetServer| {
+            let mut used: HashSet<(TypeId, u32)> = server.kept.clone();
+            // A skinned mesh draws with a copy, and refers to the original from a component
+            // that can't be saved.
+            for skinned in world.query::<&Skinned>().iter() {
+                used.insert((TypeId::of::<Mesh>(), skinned.source.id()));
+            }
+            let mut named: HashSet<(String, String)> = HashSet::new();
+            let registry = world.resource::<TypeRegistry>();
+            with_names(server, || {
+                for component in registry.iter() {
+                    for entity in (component.entities)(world) {
+                        let Some(mut value) = (component.get)(world, entity) else {
+                            continue;
+                        };
+                        value.for_each_asset(&mut |asset| {
+                            if let Value::Asset { kind, name } = asset {
+                                named.insert((kind.clone(), name.clone()));
+                            }
+                        });
+                    }
+                }
+            });
+            let in_use = |key: &(TypeId, u32), kind: &str, name: &str| {
+                used.contains(key) || named.contains(&(kind.to_owned(), name.to_owned()))
+            };
+            // A model file stays or goes whole: its parts refer to each other.
+            let files: HashSet<String> = server
+                .names
+                .iter()
+                .filter(|(key, (kind, name))| name.contains('#') && in_use(key, kind, name))
+                .map(|(_, (_, name))| file_part(name).to_owned())
+                .collect();
+            let unused: Vec<(TypeId, u32, String)> = server
+                .names
+                .iter()
+                .filter(|(key, (kind, name))| {
+                    !in_use(key, kind, name)
+                        && !(name.contains('#') && files.contains(file_part(name)))
+                })
+                .map(|(&(asset_type, id), (_, name))| (asset_type, id, name.clone()))
+                .collect();
+
+            let mut unloaded = 0;
+            for (asset_type, id, name) in unused {
+                if asset_type == TypeId::of::<Image>() {
+                    if let Some(images) = world.get_resource_mut::<Assets<Image>>() {
+                        images.remove(Handle::from_id(id));
+                    }
+                    server.watched.retain(|watched| watched.id != id);
+                } else if asset_type == TypeId::of::<Mesh>() {
+                    if let Some(meshes) = world.get_resource_mut::<Assets<Mesh>>() {
+                        meshes.remove(Handle::from_id(id));
+                    }
+                } else {
+                    // Some other kind of asset, kept somewhere this doesn't know about.
+                    continue;
+                }
+                server.names.remove(&(asset_type, id));
+                server.ids.remove(&(asset_type, name));
+                unloaded += 1;
+            }
+            server.gltf.retain(|file, _| files.contains(file));
+            if unloaded > 0 {
+                log::info!("unloaded {unloaded} unused assets");
+            }
+            unloaded
+        })
+    }
+
     // --- images ---
 
     /// Loads a PNG or JPEG as a colour texture. Add `?linear` to the name for data such as
@@ -241,6 +340,13 @@ impl AssetServer {
 
     fn accept(&mut self, images: &mut Assets<Image>, decoded: DecodedImage) {
         self.loading -= 1;
+        // Unloaded while it was being decoded: nothing wants it any more.
+        if !self
+            .names
+            .contains_key(&(TypeId::of::<Image>(), decoded.id))
+        {
+            return;
+        }
         match decoded.image {
             Ok(image) => {
                 let reloaded = images.contains_id(decoded.id);
@@ -719,5 +825,132 @@ mod tests {
         // A world with no asset server at all.
         let spawned = scene.spawn(&mut World::new(), &registry);
         assert!(spawned.skipped[0].contains("this app has no asset server"));
+    }
+    #[test]
+    fn unused_assets_are_unloaded_and_come_back_when_asked_for() {
+        let dir = TempDir::new("unload");
+        for name in ["wall.png", "floor.png", "sign.png"] {
+            dir.png(name, [9, 9, 9, 255]);
+        }
+        std::fs::copy(
+            "res/paris/models/animals/hen_white.glb",
+            dir.0.join("hen.glb"),
+        )
+        .unwrap();
+        std::fs::copy(
+            "res/paris/models/animals/hen_white.glb",
+            dir.0.join("cock.glb"),
+        )
+        .unwrap();
+        let (mut world, registry) = world(&dir.0);
+        world.insert_resource(registry);
+
+        let (wall, floor, sign, cube, sphere, hen, cock) =
+            world.resource_scope(|world, server: &mut AssetServer| {
+                world.resource_scope(|world, meshes: &mut Assets<Mesh>| {
+                    let images = world.resource_mut::<Assets<Image>>();
+                    (
+                        server.load_image(images, "wall.png"),
+                        server.load_image(images, "floor.png"),
+                        server.load_image(images, "sign.png"),
+                        server.cube(meshes, 1.0),
+                        server.sphere(meshes, 2.0),
+                        server.load_gltf("hen.glb", meshes, images).unwrap(),
+                        server.load_gltf("cock.glb", meshes, images).unwrap(),
+                    )
+                })
+            });
+        // In use: the cube and the wall on one entity, one part of the hen on another, and
+        // the sign held where the engine can't see it. The floor is still being decoded.
+        world.spawn((
+            Transform::IDENTITY,
+            Mesh3d(cube),
+            Material {
+                base_color_texture: Some(wall),
+                ..Default::default()
+            },
+        ));
+        world.spawn((Transform::IDENTITY, Mesh3d(hen.parts[0].mesh)));
+        world.resource_mut::<AssetServer>().keep(sign);
+        let hen_assets = |server: &AssetServer, file: &str| {
+            server
+                .names
+                .values()
+                .filter(|(_, name)| file_part(name) == file)
+                .count()
+        };
+        let whole_hen = hen_assets(world.resource::<AssetServer>(), "hen.glb");
+        let whole_cock = hen_assets(world.resource::<AssetServer>(), "cock.glb");
+        assert!(whole_cock > 0);
+
+        let unloaded = AssetServer::unload_unused(&mut world);
+        assert_eq!(
+            unloaded,
+            2 + whole_cock,
+            "the floor, the sphere and the whole cock"
+        );
+        wait(&mut world);
+        let server = world.resource::<AssetServer>();
+        assert_eq!(server.find::<Image>("wall.png"), Some(wall));
+        assert_eq!(server.find::<Image>("sign.png"), Some(sign));
+        assert_eq!(server.find::<Image>("floor.png"), None);
+        assert_eq!(server.find::<Mesh>("shape:sphere:2"), None);
+        assert_eq!(
+            hen_assets(server, "hen.glb"),
+            whole_hen,
+            "a model in use stays whole"
+        );
+        assert_eq!(hen_assets(server, "cock.glb"), 0);
+        let (meshes, images) = (
+            world.resource::<Assets<Mesh>>(),
+            world.resource::<Assets<Image>>(),
+        );
+        assert!(meshes.get(cube).is_some() && meshes.get(sphere).is_none());
+        assert!(
+            meshes.get(cock.parts[0].mesh).is_none() && meshes.get(hen.parts[0].mesh).is_some()
+        );
+        assert!(images.get(wall).is_some() && images.get(sign).is_some());
+        assert!(
+            images.get(floor).is_none(),
+            "its decode arrived to find it unwanted"
+        );
+        assert_eq!(
+            AssetServer::unload_unused(&mut world),
+            0,
+            "nothing more to unload"
+        );
+
+        // Asked for again, they load again, under new handles.
+        let (floor_again, cock_again) = world.resource_scope(|world, server: &mut AssetServer| {
+            world.resource_scope(|world, meshes: &mut Assets<Mesh>| {
+                let images = world.resource_mut::<Assets<Image>>();
+                (
+                    server.load_image(images, "floor.png"),
+                    server.load_gltf("cock.glb", meshes, images).unwrap(),
+                )
+            })
+        });
+        wait(&mut world);
+        assert_ne!(floor_again, floor);
+        assert_eq!(
+            pixel(world.resource::<Assets<Image>>(), floor_again),
+            Some([9, 9, 9, 255])
+        );
+        assert!(world
+            .resource::<Assets<Mesh>>()
+            .get(cock_again.parts[0].mesh)
+            .is_some());
+
+        // Released and no longer on any entity, the rest go too.
+        world.resource_mut::<AssetServer>().release(sign);
+        let entities: Vec<_> = world.query::<crate::ecs::Entity>().iter().collect();
+        for entity in entities {
+            world.despawn(entity);
+        }
+        assert!(AssetServer::unload_unused(&mut world) > whole_hen);
+        assert!(world.resource::<AssetServer>().names.is_empty());
+        assert!(world.resource::<Assets<Mesh>>().is_empty());
+        wait(&mut world);
+        assert!(world.resource::<Assets<Image>>().is_empty());
     }
 }

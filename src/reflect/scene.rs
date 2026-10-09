@@ -7,7 +7,8 @@ use super::{
 };
 use crate::{
     asset_server::{self, AssetServer},
-    ecs::{Entity, World},
+    ecs::{Component, Entity, World},
+    transform::Parent,
 };
 
 /// The format of scene files. Raised when a change would make old readers misread new files.
@@ -21,6 +22,9 @@ const VERSION: i64 = 1;
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Scene {
     pub entities: Vec<SceneEntity>,
+    /// Registered resources by type name: the settings that belong to a level (its fog, its
+    /// ambient light). Empty in a prefab.
+    pub resources: Vec<(String, Value)>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -31,6 +35,13 @@ pub struct SceneEntity {
     /// Component values by type name, in the order the types were registered.
     pub components: Vec<(String, Value)>,
 }
+
+/// Keeps an entity out of captured scenes: for what is made again when a scene is loaded
+/// (the entities a prefab instance spawned), and what should never be saved at all.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct NotSaved;
+
+impl Component for NotSaved {}
 
 /// What happened when a scene was spawned.
 #[derive(Debug, Default)]
@@ -43,22 +54,66 @@ pub struct Spawned {
 }
 
 impl Scene {
-    /// Captures every entity that has at least one registered component. Handles to assets
-    /// the world's `AssetServer` knows by name are saved as those names.
+    /// Captures every entity that has at least one registered component and isn't marked
+    /// [`NotSaved`]. Handles to assets the world's `AssetServer` knows by name are saved as
+    /// those names.
     pub fn capture(world: &World, registry: &TypeRegistry) -> Self {
+        Self::capture_where(world, registry, |_| true)
+    }
+
+    /// Captures one entity and everything below it in the hierarchy: what to save as a
+    /// prefab. The entity's own `Parent`, which leads outside the scene, is left out.
+    pub fn capture_tree(world: &World, registry: &TypeRegistry, root: Entity) -> Self {
+        let mut families: HashMap<Entity, Vec<Entity>> = HashMap::new();
+        if let Some(parents) = world.storage::<Parent>() {
+            for &child in parents.entities() {
+                let parent = parents.get(child).expect("listed, so present").0;
+                families.entry(parent).or_default().push(child);
+            }
+        }
+        let mut tree = std::collections::HashSet::new();
+        let mut pending = vec![root];
+        while let Some(next) = pending.pop() {
+            if tree.insert(next) {
+                pending.extend(families.remove(&next).unwrap_or_default());
+            }
+        }
+        let mut scene = Self::capture_where(world, registry, |entity| tree.contains(&entity));
+        let parent_name = <Parent as super::Reflect>::type_name();
+        if let Some(saved) = scene.entities.iter_mut().find(|e| e.id == root.to_bits()) {
+            saved.components.retain(|(name, _)| name != parent_name);
+        }
+        // A prefab is spawned many times into worlds that have their own settings.
+        scene.resources.clear();
+        scene
+    }
+
+    fn capture_where(
+        world: &World,
+        registry: &TypeRegistry,
+        keep: impl Fn(Entity) -> bool,
+    ) -> Self {
+        let keep = |entity| keep(entity) && !world.has::<NotSaved>(entity);
         match world.get_resource::<AssetServer>() {
             Some(server) => {
-                asset_server::with_names(server, || Self::capture_plain(world, registry))
+                asset_server::with_names(server, || Self::capture_plain(world, registry, &keep))
             }
-            None => Self::capture_plain(world, registry),
+            None => Self::capture_plain(world, registry, &keep),
         }
     }
 
-    fn capture_plain(world: &World, registry: &TypeRegistry) -> Self {
+    fn capture_plain(
+        world: &World,
+        registry: &TypeRegistry,
+        keep: &dyn Fn(Entity) -> bool,
+    ) -> Self {
         // Ordered by entity, so the same world always gives the same file.
         let mut entities: BTreeMap<Entity, Vec<(String, Value)>> = BTreeMap::new();
         for component in registry.iter() {
             for entity in (component.entities)(world) {
+                if !keep(entity) {
+                    continue;
+                }
                 if let Some(value) = (component.get)(world, entity) {
                     entities
                         .entry(entity)
@@ -75,11 +130,16 @@ impl Scene {
                     components,
                 })
                 .collect(),
+            resources: registry
+                .resources()
+                .filter_map(|resource| Some((resource.name.to_owned(), (resource.get)(world)?)))
+                .collect(),
         }
     }
 
-    /// Creates the scene's entities in a world. Components that can't be restored are
-    /// skipped and reported, so one bad value doesn't lose the rest of a level.
+    /// Creates the scene's entities in a world, and replaces the resources it holds.
+    /// Components and resources that can't be restored are skipped and reported, so one bad
+    /// value doesn't lose the rest of a level.
     pub fn spawn(&self, world: &mut World, registry: &TypeRegistry) -> Spawned {
         let entities: Vec<Entity> = self.entities.iter().map(|_| world.spawn_empty()).collect();
         let new_ids: HashMap<u64, u64> = self
@@ -134,6 +194,25 @@ impl Scene {
                 }
             }
         }
+        for (name, value) in &self.resources {
+            let Some(resource) = registry.resource(name) else {
+                skipped.push(format!("unknown resource `{name}`"));
+                continue;
+            };
+            let mut value = value.clone();
+            let mut dangling = false;
+            value.for_each_entity(&mut |id| match new_ids.get(id) {
+                Some(new) => *id = *new,
+                None => dangling = true,
+            });
+            if dangling {
+                skipped.push(format!(
+                    "resource `{name}` refers to an entity outside the scene"
+                ));
+            } else if let Err(err) = (resource.insert)(world, &value) {
+                skipped.push(format!("resource `{name}`: {err}"));
+            }
+        }
         Spawned { entities, skipped }
     }
 
@@ -151,10 +230,14 @@ impl Scene {
                 ])
             })
             .collect();
-        Value::Map(vec![
+        let mut scene = vec![
             ("version".to_owned(), Value::Int(VERSION)),
             ("entities".to_owned(), Value::List(entities)),
-        ])
+        ];
+        if !self.resources.is_empty() {
+            scene.push(("resources".to_owned(), Value::Map(self.resources.clone())));
+        }
+        Value::Map(scene)
     }
 
     pub fn from_value(value: &Value) -> Result<Self, ReflectError> {
@@ -191,7 +274,15 @@ impl Scene {
                 })
             })
             .collect::<Result<_, _>>()?;
-        Ok(Self { entities })
+        let resources = match value.field("resources") {
+            Some(Value::Map(resources)) => resources.clone(),
+            None => Vec::new(),
+            Some(_) => return Err(ReflectError::new("the scene's `resources` must be a map")),
+        };
+        Ok(Self {
+            entities,
+            resources,
+        })
     }
 
     /// Writes the scene to a file as JSON.
