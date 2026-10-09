@@ -2,7 +2,25 @@
 
 The editor and engine app (roadmap Phase 5) is built on [Neo](https://github.com/mcdearman/neo),
 with the game shown inside a Neo window. This page records what has been agreed with the Neo
-project and what exists on each side. Nothing of the app itself is built yet.
+project and what exists on each side.
+
+## What there is
+
+`crates/mira_editor`: a Neo window with the game in a viewport, under a bar to pause, resume
+and step it. The game is any mira `App`, built as it would be to run alone:
+
+```rust
+mira_editor::run(my_game::build()?)?;
+```
+
+```sh
+cargo run -p mira_editor --example sacred_sites_editor
+```
+
+What is done in the viewport is the game's: pointer, wheel and keys, in the game's own
+terms. "Mouselook" holds and hides the pointer for games that turn with the mouse (Escape
+lets go). The bar follows the game, so a game paused from outside, by an agent say, shows as
+paused. Everything else on this page is still to come.
 
 ## The game inside another program
 
@@ -33,7 +51,7 @@ app.host_resized(width, height);
 
 Agreed in outline with the Neo session (October 2026); built there, not here.
 
-1. **The viewport.** The shell hands the app its device and queue (`App::graphics`), and
+1. **The viewport** (done, Neo `caaacc0`, Armature `9cd6e9d`). The shell hands the app its device and queue (`App::graphics`), and
    asks beforehand which optional features the app wants; an image made from a texture
    (`Image::from_texture`); a `viewport` widget that reports its bounds and scale, takes
    focus, forwards pointer and key input, captures the pointer for mouselook, and asks for
