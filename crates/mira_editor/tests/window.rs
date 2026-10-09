@@ -101,6 +101,23 @@ fn the_app_is_worked_by_clicking_on_it() {
         "ten steps of a tenth: from {before} to {after}"
     );
 
+    // Something written in the agent's panel and sent with Enter joins the conversation;
+    // with no agent given to the app, the answer says so.
+    window.click(Point::new(350.0, 670.0));
+    window.type_text("Why is the clock stopped?");
+    window.frame(TICK, 1.0);
+    window.key(Key::Enter, Default::default());
+    window.frame(TICK, 1.0);
+    window.frame(TICK, 1.0);
+    let said: Vec<&str> = window
+        .app()
+        .said()
+        .iter()
+        .map(|said| said.text.as_str())
+        .collect();
+    assert_eq!(said.first(), Some(&"Why is the clock stopped?"), "{said:?}");
+    assert!(said.len() == 2 && said[1].contains("no agent"), "{said:?}");
+
     if let Ok(path) = std::env::var("MIRA_EDITOR_SHOT") {
         window.save_png(path, 1.0).expect("the picture saved");
     }

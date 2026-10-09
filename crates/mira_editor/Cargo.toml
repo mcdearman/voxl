@@ -6,7 +6,7 @@ description = "mira's engine app: a game shown and worked on inside a Neo window
 
 [dependencies]
 mira = { path = "../.." }
-neo = { git = "https://github.com/mcdearman/neo", rev = "4548bd4fe70dbd83a118f8b9ccd9d19f16402d1e" }
+neo = { git = "https://github.com/mcdearman/neo", rev = "d6c11d16eff982f3f0158dc31a8a1119a8d177f0" }
 
 [dev-dependencies]
 anyhow = "1"
