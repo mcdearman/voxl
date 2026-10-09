@@ -211,9 +211,7 @@ impl App {
                 }
             }
         }
-        if frame != Frame::Hold {
-            crate::input::play_injected(&mut self.world);
-        }
+        crate::input::play_injected(&mut self.world, frame != Frame::Hold);
         for stage in EARLY_STAGES {
             self.run_stage(stage);
         }
