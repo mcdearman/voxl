@@ -1,8 +1,10 @@
+use std::collections::HashMap;
+
 use glam::{Mat3, Mat4, Quat, Vec3};
 
 use crate::{
     app::{App, Plugin, Stage},
-    ecs::{Commands, Component, Entity, Query, Res, With, Without},
+    ecs::{Commands, Component, Entity, EntityCommands, Local, Query, Res, With, Without, World},
     reflect::Reflect,
     time::FixedTime,
 };
@@ -160,7 +162,14 @@ fn record_simulated_transforms(mut query: Query<(&Transform, &mut Interpolate)>)
     }
 }
 
-fn interpolate_transforms(fixed: Res<FixedTime>, mut query: Query<(&mut Transform, &Interpolate)>) {
+fn interpolate_transforms(
+    fixed: Option<Res<FixedTime>>,
+    mut query: Query<(&mut Transform, &Interpolate)>,
+) {
+    // Without a fixed timestep there is nothing to blend between.
+    let Some(fixed) = fixed else {
+        return;
+    };
     let t = fixed.overstep_fraction();
     for (mut transform, interpolate) in &mut query {
         if let Some((previous, current)) = interpolate.steps {
@@ -173,7 +182,131 @@ fn interpolate_transforms(fixed: Res<FixedTime>, mut query: Query<(&mut Transfor
     }
 }
 
-const MAX_DEPTH: usize = 64;
+/// The entities whose `Parent` is this one, in entity order. The engine keeps it up to date
+/// from the `Parent` components every frame; read it, and change `Parent` to change it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Children(Vec<Entity>);
+
+impl Component for Children {}
+
+impl Children {
+    pub fn iter(&self) -> impl Iterator<Item = Entity> + '_ {
+        self.0.iter().copied()
+    }
+
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+/// What the parent links looked like when `Children` was last rebuilt.
+#[derive(Default, PartialEq, Eq, Clone, Copy)]
+struct HierarchyState {
+    parents: usize,
+    entities: usize,
+    newest_change: u64,
+    orphans: usize,
+}
+
+/// Rebuilds `Children` from `Parent` when the links have changed. Looking costs one pass over
+/// the `Parent` components; rebuilding only happens when something is different.
+fn sync_children(world: &mut World) {
+    let mut state = HierarchyState {
+        entities: world.entity_count(),
+        ..Default::default()
+    };
+    if let Some(parents) = world.storage::<Parent>() {
+        state.parents = parents.len();
+        for &child in parents.entities() {
+            let ticks = parents.ticks(child).expect("listed, so present");
+            state.newest_change = state.newest_change.max(ticks.changed);
+            let parent = parents.get(child).expect("listed, so present").0;
+            state.orphans += !world.contains_entity(parent) as usize;
+        }
+    }
+    if world.get_resource::<HierarchyState>() == Some(&state) {
+        return;
+    }
+    world.insert_resource(state);
+
+    let mut families: HashMap<Entity, Vec<Entity>> = HashMap::new();
+    for (child, parent) in world.query::<(Entity, &Parent)>().iter() {
+        families.entry(parent.0).or_default().push(child);
+    }
+    // Take `Children` away from entities that no longer have any.
+    let stale: Vec<Entity> = world
+        .query::<(Entity, &Children)>()
+        .iter()
+        .filter(|(entity, _)| !families.contains_key(entity))
+        .map(|(entity, _)| entity)
+        .collect();
+    for entity in stale {
+        world.remove::<Children>(entity);
+    }
+    for (parent, mut children) in families {
+        if !world.contains_entity(parent) {
+            continue;
+        }
+        children.sort_unstable();
+        // Only write when the list differs, so `Changed<Children>` means what it says.
+        if world
+            .get::<Children>(parent)
+            .is_none_or(|old| old.0 != children)
+        {
+            world.insert(parent, Children(children));
+        }
+    }
+}
+
+/// Despawns an entity and everything below it in the hierarchy. Returns how many entities
+/// were despawned.
+pub fn despawn_recursive(world: &mut World, entity: Entity) -> usize {
+    // From the `Parent` components themselves, not `Children`, so that links made earlier in
+    // the same frame count too.
+    let mut families: HashMap<Entity, Vec<Entity>> = HashMap::new();
+    for (child, parent) in world.query::<(Entity, &Parent)>().iter() {
+        families.entry(parent.0).or_default().push(child);
+    }
+    let mut pending = vec![entity];
+    let mut despawned = 0;
+    while let Some(next) = pending.pop() {
+        if let Some(children) = families.remove(&next) {
+            pending.extend(children);
+        }
+        despawned += world.despawn(next) as usize;
+    }
+    despawned
+}
+
+/// Hierarchy operations on an entity being commanded.
+pub trait HierarchyCommands {
+    /// Makes this entity a child of `parent`: its `Transform` becomes relative to it.
+    fn set_parent(&mut self, parent: Entity) -> &mut Self;
+    /// Makes this entity a root again.
+    fn remove_parent(&mut self) -> &mut Self;
+    /// Despawns this entity and everything below it.
+    fn despawn_recursive(&mut self);
+}
+
+impl HierarchyCommands for EntityCommands<'_> {
+    fn set_parent(&mut self, parent: Entity) -> &mut Self {
+        self.insert(Parent(parent))
+    }
+
+    fn remove_parent(&mut self) -> &mut Self {
+        self.remove::<Parent>()
+    }
+
+    fn despawn_recursive(&mut self) {
+        self.add(|world, entity| {
+            despawn_recursive(world, entity);
+        });
+    }
+}
 
 fn add_global_transforms(
     mut commands: Commands,
@@ -184,25 +317,33 @@ fn add_global_transforms(
     }
 }
 
-/// Walks up the parent chain for every entity. Simple and O(n × depth); a real hierarchy would
-/// walk down from the roots and skip unchanged subtrees.
+/// Works out every world-space matrix by walking down from the roots, so each entity costs
+/// one matrix multiply however deep it is. An entity whose parent is gone, or has no
+/// transform, is treated as a root.
 fn propagate_transforms(
-    mut globals: Query<(Entity, &mut GlobalTransform)>,
-    locals: Query<(&Transform, Option<&Parent>)>,
+    roots: Query<Entity, (With<GlobalTransform>, Without<Parent>)>,
+    parented: Query<(Entity, &Parent), With<GlobalTransform>>,
+    mut nodes: Query<(&Transform, &mut GlobalTransform, Option<&Children>)>,
+    mut pending: Local<Vec<(Entity, Mat4)>>,
 ) {
-    for (entity, mut global) in &mut globals {
-        let mut matrix = Mat4::IDENTITY;
-        let mut current = Some(entity);
-        for _ in 0..MAX_DEPTH {
-            let Some((transform, parent)) = current.and_then(|e| locals.get(e)) else {
-                break;
-            };
-            matrix = transform.matrix() * matrix;
-            current = parent.map(|p| p.0);
+    pending.clear();
+    pending.extend(roots.iter().map(|entity| (entity, Mat4::IDENTITY)));
+    for (entity, parent) in &parented {
+        if !nodes.contains(parent.0) {
+            pending.push((entity, Mat4::IDENTITY));
         }
+    }
+    while let Some((entity, parent_matrix)) = pending.pop() {
+        let Some((transform, mut global, children)) = nodes.get_mut(entity) else {
+            continue;
+        };
+        let matrix = parent_matrix * transform.matrix();
         // Only write on change so `Changed<GlobalTransform>` stays meaningful.
         if global.0 != matrix {
             global.0 = matrix;
+        }
+        if let Some(children) = children {
+            pending.extend(children.iter().map(|child| (child, matrix)));
         }
     }
 }
@@ -224,8 +365,204 @@ impl Plugin for TransformPlugin {
                 (
                     interpolate_transforms,
                     add_global_transforms,
+                    sync_children,
                     propagate_transforms,
                 ),
             );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{app::App, ecs::Changed, ecs::ResMut};
+
+    fn app() -> App {
+        let mut app = App::new();
+        app.add_plugins(TransformPlugin);
+        app
+    }
+
+    fn children(app: &App, entity: Entity) -> Option<Vec<Entity>> {
+        app.world
+            .get::<Children>(entity)
+            .map(|c| c.iter().collect())
+    }
+
+    fn global(app: &App, entity: Entity) -> Vec3 {
+        app.world
+            .get::<GlobalTransform>(entity)
+            .unwrap()
+            .translation()
+    }
+
+    #[test]
+    fn children_follow_the_parent_links() {
+        let mut app = app();
+        let parent = app.world.spawn(Transform::IDENTITY);
+        let other = app.world.spawn(Transform::IDENTITY);
+        let kids: Vec<Entity> = (0..3)
+            .map(|_| app.world.spawn((Transform::IDENTITY, Parent(parent))))
+            .collect();
+        app.update();
+        assert_eq!(children(&app, parent), Some(kids.clone()));
+        assert_eq!(children(&app, other), None);
+
+        // Moved to another parent.
+        app.world.insert(kids[1], Parent(other));
+        app.update();
+        assert_eq!(children(&app, parent), Some(vec![kids[0], kids[2]]));
+        assert_eq!(children(&app, other), Some(vec![kids[1]]));
+
+        // Despawned, and made a root again.
+        app.world.despawn(kids[0]);
+        app.world.remove::<Parent>(kids[1]);
+        app.update();
+        assert_eq!(children(&app, parent), Some(vec![kids[2]]));
+        assert_eq!(children(&app, other), None, "the last child left");
+    }
+
+    #[test]
+    fn children_only_change_when_the_links_do() {
+        #[derive(Default)]
+        struct Changes(usize);
+        let mut app = app();
+        app.init_resource::<Changes>().add_systems(
+            Stage::Last,
+            |changed: Query<Entity, Changed<Children>>, mut count: ResMut<Changes>| {
+                count.0 += changed.count();
+            },
+        );
+        let parent = app.world.spawn(Transform::IDENTITY);
+        let child = app.world.spawn((Transform::IDENTITY, Parent(parent)));
+        app.update();
+        assert_eq!(app.world.resource::<Changes>().0, 1);
+        for _ in 0..5 {
+            app.world.get_mut::<Transform>(child).unwrap().translation.x += 1.0;
+            app.update();
+        }
+        assert_eq!(
+            app.world.resource::<Changes>().0,
+            1,
+            "moving things isn't a change of family"
+        );
+    }
+
+    #[test]
+    fn transforms_combine_down_any_depth() {
+        let mut app = app();
+        let root = app
+            .world
+            .spawn(Transform::from_xyz(1.0, 0.0, 0.0).with_scale(Vec3::splat(2.0)));
+        let child = app
+            .world
+            .spawn((Transform::from_xyz(0.0, 1.0, 0.0), Parent(root)));
+        let grandchild = app
+            .world
+            .spawn((Transform::from_xyz(0.0, 0.0, 1.0), Parent(child)));
+        // A chain much longer than anything real, each link one unit further along X.
+        let mut link = app.world.spawn(Transform::IDENTITY);
+        let chain_root = link;
+        for _ in 0..500 {
+            link = app
+                .world
+                .spawn((Transform::from_xyz(1.0, 0.0, 0.0), Parent(link)));
+        }
+        app.update();
+        assert_eq!(
+            global(&app, child),
+            Vec3::new(1.0, 2.0, 0.0),
+            "scaled by its parent"
+        );
+        assert_eq!(global(&app, grandchild), Vec3::new(1.0, 2.0, 2.0));
+        assert_eq!(global(&app, link), Vec3::new(500.0, 0.0, 0.0));
+
+        // Moving a root moves everything under it, the same frame.
+        app.world.get_mut::<Transform>(root).unwrap().translation.x = 10.0;
+        app.world
+            .get_mut::<Transform>(chain_root)
+            .unwrap()
+            .translation
+            .y = 3.0;
+        app.update();
+        assert_eq!(global(&app, grandchild), Vec3::new(10.0, 2.0, 2.0));
+        assert_eq!(global(&app, link), Vec3::new(500.0, 3.0, 0.0));
+    }
+
+    #[test]
+    fn an_entity_whose_parent_is_gone_stands_on_its_own() {
+        let mut app = app();
+        let parent = app.world.spawn(Transform::from_xyz(5.0, 0.0, 0.0));
+        let child = app
+            .world
+            .spawn((Transform::from_xyz(1.0, 0.0, 0.0), Parent(parent)));
+        let no_place = app.world.spawn_empty();
+        let under_nothing = app
+            .world
+            .spawn((Transform::from_xyz(2.0, 0.0, 0.0), Parent(no_place)));
+        app.update();
+        assert_eq!(global(&app, child).x, 6.0);
+        assert_eq!(
+            global(&app, under_nothing).x,
+            2.0,
+            "a parent with no transform doesn't move it"
+        );
+
+        app.world.despawn(parent);
+        app.update();
+        assert_eq!(global(&app, child).x, 1.0);
+    }
+
+    #[test]
+    fn despawning_recursively_takes_the_whole_subtree() {
+        let mut app = app();
+        let root = app.world.spawn(Transform::IDENTITY);
+        let branch = app.world.spawn((Transform::IDENTITY, Parent(root)));
+        let leaf = app.world.spawn((Transform::IDENTITY, Parent(branch)));
+        let bystander = app.world.spawn(Transform::IDENTITY);
+        app.update();
+        // Added since `Children` was last rebuilt: still part of the tree.
+        let late = app.world.spawn((Transform::IDENTITY, Parent(leaf)));
+
+        assert_eq!(despawn_recursive(&mut app.world, branch), 3);
+        for gone in [branch, leaf, late] {
+            assert!(!app.world.contains_entity(gone));
+        }
+        assert!(app.world.contains_entity(root) && app.world.contains_entity(bystander));
+        app.update();
+        assert_eq!(children(&app, root), None);
+
+        // Through commands.
+        let child = app.world.spawn((Transform::IDENTITY, Parent(root)));
+        app.add_systems(Stage::Update, move |mut commands: Commands| {
+            commands.entity(root).despawn_recursive();
+        });
+        app.update();
+        assert!(!app.world.contains_entity(root) && !app.world.contains_entity(child));
+        assert_eq!(despawn_recursive(&mut app.world, root), 0, "already gone");
+    }
+
+    #[test]
+    fn parents_can_be_set_through_commands() {
+        let mut app = app();
+        let parent = app.world.spawn(Transform::from_xyz(0.0, 4.0, 0.0));
+        let child = app.world.spawn(Transform::IDENTITY);
+        app.add_systems(
+            Stage::Update,
+            move |mut commands: Commands, mut done: Local<bool>| {
+                if !std::mem::replace(&mut *done, true) {
+                    commands.entity(child).set_parent(parent);
+                }
+            },
+        );
+        app.update();
+        assert_eq!(global(&app, child).y, 4.0);
+        assert_eq!(children(&app, parent), Some(vec![child]));
+
+        app.add_systems(Stage::Update, move |mut commands: Commands| {
+            commands.entity(child).remove_parent();
+        });
+        app.update();
+        assert_eq!(global(&app, child).y, 0.0);
     }
 }

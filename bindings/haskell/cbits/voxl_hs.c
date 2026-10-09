@@ -280,3 +280,11 @@ VoxlEntity voxl_hs_spawn_model(VoxlSystem *system, const char *name, size_t len,
                                const VoxlTransform *transform) {
     return api->spawn_model(system, name, len, transform);
 }
+
+void voxl_hs_set_parent(VoxlSystem *system, VoxlEntity child, VoxlEntity parent) {
+    api->set_parent(system, child, parent);
+}
+
+void voxl_hs_despawn_tree(VoxlSystem *system, VoxlEntity entity) {
+    api->despawn_tree(system, entity);
+}

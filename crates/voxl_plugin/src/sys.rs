@@ -366,6 +366,10 @@ pub struct VoxlApi {
         len: usize,
         transform: *const VoxlTransform,
     ) -> VoxlEntity,
+
+    pub set_parent:
+        unsafe extern "C" fn(system: *mut VoxlSystem, child: VoxlEntity, parent: VoxlEntity),
+    pub despawn_tree: unsafe extern "C" fn(system: *mut VoxlSystem, entity: VoxlEntity),
 }
 
 /// `voxl.Transform`: 48 bytes, 16-byte aligned.

@@ -37,7 +37,7 @@ pub mod prelude {
             Pattern, PostProcess, RayTracingSettings, Reach, ShadowSettings, VolumetricLight,
         },
         time::{FixedTime, Time},
-        transform::{GlobalTransform, Interpolate, Parent, Transform},
+        transform::{Children, GlobalTransform, HierarchyCommands, Interpolate, Parent, Transform},
         voxel::{BlockId, BlockRegistry, ChunkViewer, VoxelPlugin, VoxelSettings, VoxelWorld},
         window::{Window, WindowFocused, WindowResized, WindowSettings},
     };
