@@ -25,6 +25,10 @@ pub struct WindowSettings {
     pub width: u32,
     pub height: u32,
     pub vsync: bool,
+    /// Whether the window is shown. A hidden window still renders, off screen, so a game can
+    /// be run and looked at (in screenshots) without anything appearing: for tests, tools
+    /// and agents. `MIRA_HIDDEN=1` hides it whatever this says.
+    pub visible: bool,
 }
 
 impl Default for WindowSettings {
@@ -34,6 +38,7 @@ impl Default for WindowSettings {
             width: 1280,
             height: 720,
             vsync: true,
+            visible: true,
         }
     }
 }
@@ -117,11 +122,20 @@ impl Plugin for WindowPlugin {
 struct Runner {
     app: App,
     window: Option<Arc<winit::window::Window>>,
+    /// The window is hidden, so nothing asks for it to be redrawn: frames are run from the
+    /// loop itself, at about sixty a second.
+    hidden: bool,
+    last_frame: Option<std::time::Instant>,
 }
 
 pub(crate) fn run(app: App) -> anyhow::Result<()> {
     let event_loop = EventLoop::new()?;
-    let mut runner = Runner { app, window: None };
+    let mut runner = Runner {
+        app,
+        window: None,
+        hidden: false,
+        last_frame: None,
+    };
     event_loop.run_app(&mut runner)?;
     Ok(())
 }
@@ -149,9 +163,16 @@ impl ApplicationHandler for Runner {
             .get_resource::<WindowSettings>()
             .cloned()
             .unwrap_or_default();
+        let hidden =
+            !settings.visible || std::env::var("MIRA_HIDDEN").is_ok_and(|hidden| hidden != "0");
         let attributes = winit::window::Window::default_attributes()
             .with_title(&settings.title)
-            .with_inner_size(LogicalSize::new(settings.width, settings.height));
+            .with_inner_size(LogicalSize::new(settings.width, settings.height))
+            .with_visible(!hidden);
+        self.hidden = hidden;
+        if hidden {
+            log::info!("the window is hidden; rendering off screen");
+        }
         let handle = match event_loop.create_window(attributes) {
             Ok(handle) => Arc::new(handle),
             Err(err) => {
@@ -253,9 +274,27 @@ impl ApplicationHandler for Runner {
         }
     }
 
-    fn about_to_wait(&mut self, _: &ActiveEventLoop) {
-        if let Some(window) = &self.window {
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        let Some(window) = &self.window else {
+            return;
+        };
+        if !self.hidden {
             window.request_redraw();
+            return;
         }
+        // Nobody redraws a window that isn't shown, so the frame is run here, paced by
+        // sleeping since there is no display to wait for.
+        let frame = std::time::Duration::from_micros(16_667);
+        if let Some(spent) = self.last_frame.map(|last| last.elapsed()) {
+            if spent < frame {
+                std::thread::sleep(frame - spent);
+            }
+        }
+        self.last_frame = Some(std::time::Instant::now());
+        self.app.update();
+        if self.app.should_exit() {
+            event_loop.exit();
+        }
+        event_loop.set_control_flow(winit::event_loop::ControlFlow::Poll);
     }
 }

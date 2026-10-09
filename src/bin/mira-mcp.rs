@@ -73,7 +73,12 @@ impl Game for Remote {
         }
     }
 
-    fn launch(&mut self, command: &str, folder: Option<&str>) -> Result<String, String> {
+    fn launch(
+        &mut self,
+        command: &str,
+        folder: Option<&str>,
+        hidden: bool,
+    ) -> Result<String, String> {
         self.stop_child();
         // A port nothing else has: ask the system for one, then give it up to the game.
         let port = std::net::TcpListener::bind("127.0.0.1:0")
@@ -91,6 +96,7 @@ impl Game for Remote {
             // `exec`, so that stopping the child stops the game and not only its shell.
             .arg(format!("exec {command}"))
             .env("MIRA_DEBUG", &address)
+            .env("MIRA_HIDDEN", if hidden { "1" } else { "0" })
             .stdin(std::process::Stdio::null())
             .stdout(out)
             .stderr(err);

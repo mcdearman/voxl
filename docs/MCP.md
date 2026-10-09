@@ -53,6 +53,11 @@ the build takes; `mira_log` reads the last lines the game printed, which is wher
 launch explains itself; `mira_quit` asks it to stop and makes sure it has. A game the server
 launched is stopped when the agent's connection closes.
 
+A launched game runs with its window hidden unless asked otherwise (`"hidden": false`): it
+renders as usual, off screen, and `mira_screenshot` shows what would have been on it, so an
+agent can work on a game without windows opening on the person's screen. Any game can be run
+that way with `MIRA_HIDDEN=1`, or `WindowSettings { visible: false, .. }`.
+
 ```text
 mira_launch  {"command": "cargo run --example sacred_sites -- --headless"}
 mira_signals
@@ -96,8 +101,8 @@ well as the game's. A plugin's components appear once the plugin
   what.
 - Nothing is pushed through MCP: an agent finds out about a failure or a signal changing by
   asking. (The debug connection itself can push; see [LIVE.md](LIVE.md).)
-- A game with a window still opens its window; there is no drawing without one yet. Stepped
-  frames are each `Live::step` long (1/60 s), so a stepped run is repeatable as far as the
-  game itself is.
+- A hidden game still needs a display to make its (unseen) window on, so it can't yet run
+  on a machine with none. Stepped frames are each `Live::step` long (1/60 s), so a stepped
+  run is repeatable as far as the game itself is.
 - Input is keys, mouse buttons and mouse movement; no gamepad, no text entry.
 - Anyone who can reach the debug address can do all of this. Keep it on the machine.

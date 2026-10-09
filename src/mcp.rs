@@ -29,6 +29,7 @@ const TOOLS: &[Tool] = &[
         arguments: &[
             "command: string: the command line that runs the game",
             "folder?: string: the folder to run it in (default: where this server was started)",
+            "hidden?: boolean: run it with its window hidden; it still renders, and screenshots still work (default true, so nothing appears on the person's screen)",
         ],
     },
     Tool {
@@ -362,7 +363,12 @@ pub trait Game {
 
     /// Starts a game with this command line, in this folder if one is given, and waits for
     /// it to answer. Returns something to tell whoever asked (where it is listening).
-    fn launch(&mut self, _command: &str, _folder: Option<&str>) -> Result<String, String> {
+    fn launch(
+        &mut self,
+        _command: &str,
+        _folder: Option<&str>,
+        _hidden: bool,
+    ) -> Result<String, String> {
         Err("this server can't launch games".to_owned())
     }
 
@@ -407,7 +413,11 @@ fn call(game: &mut dyn Game, name: &str, arguments: Option<&Value>) -> Value {
         let Some(command) = argument("command") else {
             return content(vec![words("this tool needs `command`")], true);
         };
-        return match game.launch(command, argument("folder")) {
+        let hidden = !matches!(
+            arguments.and_then(|arguments| arguments.field("hidden")),
+            Some(Value::Bool(false))
+        );
+        return match game.launch(command, argument("folder"), hidden) {
             Ok(said) => content(vec![words(said)], false),
             Err(why) => content(vec![words(why)], true),
         };
