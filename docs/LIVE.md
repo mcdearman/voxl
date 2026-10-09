@@ -44,6 +44,8 @@ fn show_failures(live: Res<Live>) {
 - `live.catch_failures` turns this on and off. It is on in debug builds and off in release
   builds, where a panic is a panic; `MIRA_LIVE=1` or `MIRA_LIVE=0` overrides either.
 - `live.pause_on_failure = false` keeps the game running without the failed system.
+- `MIRA_PAUSED=1` starts a game paused at its first moment, to be stepped from there: the
+  same frames every time.
 - A system that fails does so once, not once a frame.
 
 What a caught failure can't promise: the system stopped half way, so what it was changing may

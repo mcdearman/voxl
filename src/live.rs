@@ -79,7 +79,9 @@ impl Default for Live {
             catch_failures,
             pause_on_failure: true,
             step: Duration::from_secs_f64(1.0 / 60.0),
-            paused: false,
+            // `MIRA_PAUSED=1` starts the game held at its first moment, to be stepped from
+            // there: the same frames every time, for tests that compare pictures.
+            paused: std::env::var("MIRA_PAUSED").is_ok_and(|paused| paused != "0"),
             paused_by_failure: false,
             steps: 0,
             resume: false,
