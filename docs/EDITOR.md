@@ -9,7 +9,9 @@ project and what exists on each side.
 `crates/mira_editor`: a Neo window with the game in a viewport, under a bar to pause, resume
 and step it. Beside it: the game's entities as a tree (children under their `Parent`; drag
 one onto another to make it its child, or beside one to share its parent), an inspector
-that shows what the chosen entity is made of, component by component and field by field,
+in which the chosen entity's parts are fields to change (numbers and vectors drag or take a
+typed value, true-or-false is a switch; text, entity and asset references are shown but not
+yet changed there), each change written straight to the running game,
 and the game's signals with their values. All are read from the game a few times a second.
 They are panels of a dock:
 drag a tab to move a panel, onto another to stack them or to an edge to split; drag the bar
@@ -74,7 +76,7 @@ Agreed in outline with the Neo session (October 2026); built there, not here.
    a redraw every frame while playing; and a call once per presented frame, before drawing,
    in which mira steps and renders, so the picture shown is never a frame behind.
 2. **Docking** (done, Neo `25c92b0`): a split tree, tabbed groups, the layout saved and restored.
-3. **A tree** (done, Neo `6b21f77`; expand, select, rename, drag to reparent) and **fields** for a property
+3. **A tree** and **fields** (done, Neo `4548bd4`; expand, select, rename, drag to reparent) and **fields** for a property
    view: numbers that drag, vectors, entity references, a colour picker. The view itself is
    generated on mira's side from reflection.
 4. **Dragging between panels.**

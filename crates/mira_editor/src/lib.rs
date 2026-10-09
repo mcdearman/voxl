@@ -54,6 +54,9 @@ pub enum Message {
     Opened(Entity, bool),
     /// An entity was dragged onto, before or after another in the tree.
     Moved(Entity, Entity, Place),
+    /// A field of the chosen entity was given a new value in the inspector: the component
+    /// by its full name, the way down to the field, and the value.
+    Edited(String, Vec<String>, Value),
 }
 
 /// The panels, by the names the layout knows them by.
@@ -93,7 +96,7 @@ struct Lists {
     /// Every entity with a component the game has registered, those components, and the
     /// entity it is a child of.
     entities: Vec<(Entity, Vec<String>, Option<Entity>)>,
-    /// The components of the chosen entity, by name, as plain data.
+    /// The components of the chosen entity, by their full names, as plain data.
     chosen: Vec<(String, Value)>,
     /// Every signal and its value.
     signals: Vec<(String, Signal)>,
@@ -106,12 +109,12 @@ impl Lists {
         let mut entities: std::collections::BTreeMap<Entity, Vec<String>> = Default::default();
         if let Some(registry) = world.get_resource::<TypeRegistry>() {
             for component in registry.iter() {
-                let name = component.name.rsplit('.').next().unwrap_or(component.name);
+                let name = short(component.name);
                 for entity in (component.entities)(world) {
                     entities.entry(entity).or_default().push(name.to_owned());
                 }
                 if let Some(value) = chosen.and_then(|chosen| (component.get)(world, chosen)) {
-                    made_of.push((name.to_owned(), value));
+                    made_of.push((component.name.to_owned(), value));
                 }
             }
         }
@@ -297,25 +300,7 @@ impl Editor {
                 .padding(6.0),
             )
             .into(),
-            INSPECTOR => match self.chosen {
-                None => lines(
-                    [(
-                        "Choose an entity in the tree.".to_owned(),
-                        String::new(),
-                        false,
-                    )]
-                    .into_iter(),
-                ),
-                Some(entity) => lines(
-                    [(format!("entity {}", entity.index()), String::new(), true)]
-                        .into_iter()
-                        .chain(self.lists.chosen.iter().flat_map(|(name, value)| {
-                            let mut rows = vec![(name.clone(), String::new(), true)];
-                            said(value, 1, &mut rows);
-                            rows
-                        })),
-                ),
-            },
+            INSPECTOR => self.inspector(),
             SIGNALS => lines(self.lists.signals.iter().map(|(name, value)| {
                 let shown = match value {
                     Signal::Bool(value) => value.to_string(),
@@ -325,6 +310,31 @@ impl Editor {
             })),
             _ => text("").into(),
         }
+    }
+
+    /// What the chosen entity is made of, each field in a control that changes it.
+    fn inspector(&self) -> Element<Message> {
+        let Some(entity) = self.chosen else {
+            return lines(
+                [(
+                    "Choose an entity in the tree.".to_owned(),
+                    String::new(),
+                    false,
+                )]
+                .into_iter(),
+            );
+        };
+        let mut rows = column().spacing(6.0).width(Length::Fill);
+        rows = rows.push(
+            text(format!("entity {}", entity.index()))
+                .mono()
+                .tone(Tone::Muted),
+        );
+        for (component, value) in &self.lists.chosen {
+            rows = rows.push(text(short(component)).weight(Weight::SEMIBOLD));
+            rows = fields(rows, component, &mut Vec::new(), value);
+        }
+        scrollable(container(rows).padding(10.0)).into()
     }
 
     /// The entities under `parent` (or at the top), each with its own below it.
@@ -368,55 +378,124 @@ impl Editor {
     }
 }
 
-/// Writes a value out as rows, a field to a row, what is inside a field indented under it.
-fn said(value: &Value, depth: usize, rows: &mut Vec<(String, String, bool)>) {
-    let indent = "  ".repeat(depth);
-    let plain = |value: &Value| match value {
-        Value::Null => Some("none".to_owned()),
-        Value::Bool(value) => Some(value.to_string()),
-        Value::Int(value) => Some(value.to_string()),
-        Value::Float(value) => Some(format!("{value:.3}")),
-        Value::Text(value) => Some(value.clone()),
-        Value::Entity(bits) => Some(format!("entity {}", Entity::from_bits(*bits).index())),
-        Value::Asset { kind, name } => Some(format!("{kind} {name}")),
-        // A short list of numbers reads best on one line: a vector, a colour.
-        Value::List(items) if items.len() <= 4 => items
-            .iter()
-            .map(|item| match item {
-                Value::Float(value) => Some(format!("{value:.3}")),
-                Value::Int(value) => Some(value.to_string()),
-                _ => None,
-            })
-            .collect::<Option<Vec<_>>>()
-            .map(|parts| parts.join("  ")),
-        Value::List(_) | Value::Map(_) => None,
+/// A component's name without where it comes from: `mira.Transform` is `Transform`.
+fn short(name: &str) -> &str {
+    name.rsplit('.').next().unwrap_or(name)
+}
+
+/// Puts `new` where `path` leads inside `value`: field names through maps, places through
+/// lists. Says whether there was such a place.
+fn put(value: &mut Value, path: &[String], new: Value) -> bool {
+    let Some((step, rest)) = path.split_first() else {
+        *value = new;
+        return true;
     };
-    let fields: Vec<(String, &Value)> = match value {
+    let inside = match value {
         Value::Map(fields) => fields
-            .iter()
-            .map(|(name, field)| (name.clone(), field))
-            .collect(),
-        Value::List(items) if plain(value).is_none() => items
-            .iter()
-            .enumerate()
-            .map(|(index, item)| (index.to_string(), item))
-            .collect(),
-        other => {
-            rows.push((indent, plain(other).unwrap_or_default(), false));
-            return;
-        }
+            .iter_mut()
+            .find(|(name, _)| name == step)
+            .map(|(_, field)| field),
+        Value::List(items) => step.parse::<usize>().ok().and_then(|at| items.get_mut(at)),
+        _ => None,
     };
-    for (name, field) in fields {
-        let shown = plain(field);
-        rows.push((
-            format!("{indent}{name}"),
-            shown.clone().unwrap_or_default(),
-            false,
-        ));
-        if shown.is_none() {
-            said(field, depth + 1, rows);
-        }
+    inside.is_some_and(|inside| put(inside, rest, new))
+}
+
+/// The numbers of a list that is nothing but two to four of them: a vector, a colour.
+fn numbers(items: &[Value]) -> Option<Vec<f64>> {
+    if !(2..=4).contains(&items.len()) {
+        return None;
     }
+    items
+        .iter()
+        .map(|item| match item {
+            Value::Float(value) => Some(*value),
+            _ => None,
+        })
+        .collect()
+}
+
+/// A row of the inspector: what the field is called, and the control for it.
+fn field_row(name: &str, depth: usize, control: Element<Message>) -> Element<Message> {
+    row()
+        .spacing(8.0)
+        .align(Align::Center)
+        .push(
+            text(format!("{}{name}", "  ".repeat(depth)))
+                .mono()
+                .tone(Tone::Muted)
+                .width(96.0),
+        )
+        .push(control)
+        .into()
+}
+
+/// Adds the controls for a value to the inspector's rows: one for each plain field, and
+/// what is inside a field under its name. Each control sends the field's whole new value.
+fn fields(
+    mut rows: Column<Message>,
+    component: &str,
+    path: &mut Vec<String>,
+    value: &Value,
+) -> Column<Message> {
+    let depth = path.len();
+    let name = path.last().cloned().unwrap_or_default();
+    let edited = {
+        let (component, path) = (component.to_owned(), path.clone());
+        move |value: Value| Message::Edited(component.clone(), path.clone(), value)
+    };
+    let said = |shown: String| -> Element<Message> { text(shown).mono().into() };
+    let control: Element<Message> = match value {
+        Value::Bool(on) => toggle(*on, move |on| edited(Value::Bool(on))).into(),
+        Value::Float(number) => number_field(*number)
+            .on_change(move |number| edited(Value::Float(number)))
+            .width(Length::Fill)
+            .into(),
+        Value::Int(number) => number_field(*number as f64)
+            .step(1.0)
+            .on_change(move |number| edited(Value::Int(number.round() as i64)))
+            .width(Length::Fill)
+            .into(),
+        Value::List(items) if numbers(items).is_some() => {
+            let parts = numbers(items).expect("checked just above");
+            let whole = parts.clone();
+            vector_field(&parts, 0.1, move |part, number| {
+                let mut whole = whole.clone();
+                whole[part] = number;
+                edited(Value::List(whole.into_iter().map(Value::Float).collect()))
+            })
+        }
+        // What has parts is a name, with the parts under it.
+        Value::Map(_) | Value::List(_) => {
+            if depth > 0 {
+                rows = rows.push(field_row(&name, depth - 1, said(String::new())));
+            }
+            let inside: Vec<(String, &Value)> = match value {
+                Value::Map(fields) => fields
+                    .iter()
+                    .map(|(name, field)| (name.clone(), field))
+                    .collect(),
+                Value::List(items) => items
+                    .iter()
+                    .enumerate()
+                    .map(|(at, item)| (at.to_string(), item))
+                    .collect(),
+                _ => Vec::new(),
+            };
+            for (step, field) in inside {
+                path.push(step);
+                rows = fields(rows, component, path, field);
+                path.pop();
+            }
+            return rows;
+        }
+        // Shown, and not yet changed here.
+        Value::Null => said("none".to_owned()),
+        Value::Text(written) => said(written.clone()),
+        Value::Entity(bits) => said(format!("entity {}", Entity::from_bits(*bits).index())),
+        Value::Asset { kind, name } => said(format!("{kind} {name}")),
+    };
+    rows.push(field_row(&name, depth.saturating_sub(1), control))
 }
 
 /// A list of rows, each a name and what there is to say of it, scrolling when it is long.
@@ -588,6 +667,25 @@ impl App for Editor {
                 }
                 self.lists = Lists::of(&self.game, self.chosen);
             }
+            Message::Edited(component, path, value) => {
+                let Some(entity) = self.chosen else { return };
+                let world = &mut self.game.world;
+                // The component as it is now, with the one field changed, put back whole.
+                world.resource_scope(|world, registry: &mut TypeRegistry| {
+                    let Some(kind) = registry.get(&component) else {
+                        return;
+                    };
+                    let Some(mut whole) = (kind.get)(world, entity) else {
+                        return;
+                    };
+                    if put(&mut whole, &path, value) {
+                        if let Err(why) = (kind.insert)(world, entity, &whole) {
+                            eprintln!("{component} would not take that: {why}");
+                        }
+                    }
+                });
+                self.lists = Lists::of(&self.game, self.chosen);
+            }
             Message::Arranged(layout) => {
                 // Kept for next time; an arrangement that can't be written is still used.
                 let _ = std::fs::create_dir_all(".mira")
@@ -707,19 +805,57 @@ mod tests {
             Lists::of(&game, None).signals,
             [("open".to_owned(), Signal::Bool(true))]
         );
-        // What the chosen entity is made of, a field to a row.
-        let mut rows = Vec::new();
-        said(&lists.chosen[0].1, 1, &mut rows);
-        assert_eq!(lists.chosen[0].0, "Transform");
+        assert_eq!(lists.chosen[0].0, "mira.Transform");
+    }
+
+    #[test]
+    fn a_field_changed_in_the_inspector_is_changed_in_the_game() {
+        use mira::prelude::*;
+        let mut game = mira::app::App::new();
+        game.add_plugins(mira::transform::TransformPlugin);
+        let entity = game.world.spawn(Transform::from_xyz(1.0, 2.0, 3.0));
+        let mut editor = Editor::new(game);
+        editor.update(Message::Chosen(entity));
+        let edit = |editor: &mut Editor, path: &[&str], value: Value| {
+            let path = path.iter().map(|step| step.to_string()).collect();
+            editor.update(Message::Edited("mira.Transform".into(), path, value));
+        };
+        // A whole vector, as the vector field sends it; then one part of another.
+        let moved = Value::List(vec![
+            Value::Float(5.0),
+            Value::Float(2.0),
+            Value::Float(3.0),
+        ]);
+        edit(&mut editor, &["translation"], moved);
+        edit(&mut editor, &["scale", "1"], Value::Float(4.0));
+        let at = *editor.game().world.get::<Transform>(entity).unwrap();
+        assert_eq!(at.translation, Vec3::new(5.0, 2.0, 3.0));
+        assert_eq!(at.scale, Vec3::new(1.0, 4.0, 1.0));
+        // The inspector shows what the game now has.
+        let shown = &editor.lists.chosen[0].1;
+        assert_eq!(shown.get_path("translation.0"), Some(&Value::Float(5.0)));
+
+        // A field that isn't there, or a value the component can't be made from, changes
+        // nothing.
+        edit(&mut editor, &["weight"], Value::Float(9.0));
+        edit(&mut editor, &["translation"], Value::Text("north".into()));
+        assert_eq!(*editor.game().world.get::<Transform>(entity).unwrap(), at);
+
+        // Where a path leads, and where it doesn't.
+        let mut value = Value::Map(vec![(
+            "a".into(),
+            Value::List(vec![Value::Int(1), Value::Int(2)]),
+        )]);
+        assert!(put(&mut value, &["a".into(), "1".into()], Value::Int(7)));
+        assert_eq!(value.get_path("a.1"), Some(&Value::Int(7)));
+        assert!(!put(&mut value, &["a".into(), "5".into()], Value::Int(7)));
+        assert!(!put(&mut value, &["b".into()], Value::Int(7)));
         assert_eq!(
-            rows[0],
-            (
-                "  translation".to_owned(),
-                "1.000  2.000  3.000".to_owned(),
-                false
-            )
+            numbers(&[Value::Float(1.0), Value::Float(2.0)]),
+            Some(vec![1.0, 2.0])
         );
-        assert!(rows.iter().any(|(name, _, _)| name == "  scale"));
+        assert_eq!(numbers(&[Value::Float(1.0)]), None);
+        assert_eq!(numbers(&[Value::Float(1.0), Value::Int(2)]), None);
     }
 
     #[test]
@@ -770,7 +906,7 @@ mod tests {
             .iter()
             .map(|(name, _)| name.as_str())
             .collect();
-        assert_eq!(made_of, ["Transform", "Parent"]);
+        assert_eq!(made_of, ["mira.Transform", "mira.Parent"]);
     }
 
     #[test]
