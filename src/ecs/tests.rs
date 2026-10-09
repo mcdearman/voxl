@@ -20,6 +20,83 @@ fn run<M>(world: &mut World, systems: impl super::IntoSystems<M>) {
     schedule.run(world);
 }
 
+/// A query guesses that an entity sits at the same place in every component's storage as in
+/// the one it is walking. The guess must never matter to what the query finds.
+#[test]
+fn a_query_finds_the_same_whatever_order_components_were_added_in() {
+    let mut world = World::new();
+    let entities: Vec<Entity> = (0..40).map(|_| world.spawn(())).collect();
+    // Positions in order, velocities backwards, markers on every third; then holes knocked
+    // in each, so that removal's swapping has moved things too.
+    for (i, &entity) in entities.iter().enumerate() {
+        world.insert(entity, Pos(i as i32));
+    }
+    for (i, &entity) in entities.iter().enumerate().rev() {
+        world.insert(entity, Vel(i as i32 * 10));
+    }
+    for &entity in entities.iter().step_by(3) {
+        world.insert(entity, Marker);
+    }
+    world.remove::<Pos>(entities[5]);
+    world.remove::<Vel>(entities[30]);
+    world.despawn(entities[12]);
+    // An entity made since, in the slot the despawned one had.
+    let late = world.spawn((Vel(-10), Pos(-1), Marker));
+
+    let mut pairs: Vec<(i32, i32)> = world
+        .query::<(&Pos, &Vel)>()
+        .iter()
+        .map(|(pos, vel)| (pos.0, vel.0))
+        .collect();
+    pairs.sort_unstable();
+    let mut expected: Vec<(i32, i32)> = (0..40)
+        .filter(|i| ![5, 30, 12].contains(i))
+        .map(|i| (i, i * 10))
+        .chain([(-1, -10)])
+        .collect();
+    expected.sort_unstable();
+    assert_eq!(pairs, expected);
+
+    // Walking the markers, the guess is wrong for nearly everything else.
+    let mut marked: Vec<i32> = world
+        .query_filtered::<&Pos, (With<Marker>, With<Vel>)>()
+        .iter()
+        .map(|pos| pos.0)
+        .collect();
+    marked.sort_unstable();
+    let mut expected: Vec<i32> = (0..40)
+        .step_by(3)
+        .filter(|i| ![12, 30].contains(i))
+        .chain([-1])
+        .collect();
+    expected.sort_unstable();
+    assert_eq!(marked, expected);
+    assert_eq!(
+        world
+            .query_filtered::<Entity, Without<Vel>>()
+            .iter()
+            .count(),
+        1
+    );
+
+    // Written through a query, each value lands on its own entity.
+    for (mut pos, vel) in &mut world.query::<(&mut Pos, &Vel)>() {
+        pos.0 = vel.0 + 1;
+    }
+    assert_eq!(world.get::<Pos>(entities[7]), Some(&Pos(71)));
+    assert_eq!(world.get::<Pos>(late), Some(&Pos(-9)));
+    assert_eq!(
+        world.get::<Pos>(entities[30]),
+        Some(&Pos(30)),
+        "it has no Vel"
+    );
+    // Asked for by name, with no walk to guess from.
+    assert_eq!(
+        world.query::<(&Pos, &Vel)>().get(entities[39]),
+        Some((&Pos(391), &Vel(390)))
+    );
+}
+
 #[test]
 fn stale_entities_are_rejected() {
     let mut world = World::new();

@@ -226,7 +226,15 @@ and see it change in the running scene.
       running in turn; clean under Miri with worker threads
 - [ ] Splitting one query's work across threads; relaxing "commands end a batch" where a
       later system needn't see them; a ThreadSanitizer run in CI
-- [ ] Table storage as an option beside sparse sets, chosen per component
+- [x] A faster walk through the storage there is: a query guesses that an entity sits at the
+      same place in each component it reads as in the one it walks, which is so for
+      components spawned together. Measured with `examples/query_bench` (200,000 entities,
+      one thread): one component 3.8 to 1.6 ns an entity; three components spawned together
+      6.4 to 5.0; three added in different orders unchanged at 7.4
+- [ ] Table storage as an option beside sparse sets, chosen per component. By the same
+      measurement it would win back the gap between "spawned together" and "added in
+      different orders" (about a third) and little else, for a rewrite of storage, queries
+      and everything that reaches components by name; worth doing when a game shows that gap
 - [x] Hooks: run code when a component is added or removed (`on_add`, `on_remove`)
 - [ ] Observers for other events (a component changing, custom events aimed at an entity);
       hooks from plugins
