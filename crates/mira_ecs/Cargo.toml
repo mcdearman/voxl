@@ -1,0 +1,9 @@
+[package]
+name = "mira_ecs"
+version = "0.1.0"
+edition = "2021"
+description = "mira's entity component system: a sparse-set world, function systems, and a schedule that runs them in parallel"
+
+[dependencies]
+mira_derive = { path = "../mira_derive" }
+log = "0.4"

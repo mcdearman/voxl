@@ -64,7 +64,7 @@ impl<E> Events<E> {
     }
 }
 
-pub(crate) fn event_update_system<E: 'static>(world: &mut World) {
+pub fn event_update_system<E: 'static>(world: &mut World) {
     if let Some(events) = world.get_resource_mut::<Events<E>>() {
         events.update();
     }
