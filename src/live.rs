@@ -479,13 +479,16 @@ mod tests {
     fn time_can_be_slowed() {
         let mut time = Time::default();
         time.set_scale(0.25);
+        let started = std::time::Instant::now();
         time.tick();
         std::thread::sleep(Duration::from_millis(40));
         time.tick();
+        // Measured around the ticks, so a slow machine can't make this fail.
+        let real = started.elapsed();
         let delta = time.delta();
         assert!(
-            delta >= Duration::from_millis(10) && delta < Duration::from_millis(30),
-            "{delta:?}"
+            delta >= Duration::from_millis(10) && delta <= real.mul_f32(0.26),
+            "{delta:?} of {real:?}"
         );
         assert_eq!(time.elapsed(), delta);
     }
