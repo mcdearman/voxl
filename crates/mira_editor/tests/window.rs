@@ -11,10 +11,10 @@
 
 use std::time::Duration;
 
-use mira::live::Live;
+use mira::{live::Live, prelude::Transform};
 use mira_editor::Editor;
 use neo::testing::Harness;
-use neo::{Key, Point, Size};
+use neo::{Event, Key, Point, PointerButton, Size};
 
 #[path = "../../../examples/sacred_sites/game.rs"]
 mod game;
@@ -68,6 +68,38 @@ fn the_app_is_worked_by_clicking_on_it() {
     let second = window.app().chosen().expect("still one chosen");
     assert_ne!(first, second, "Down moved to the next row");
     assert_eq!(second.index(), first.index() + 1);
+
+    // The inspector shows the chosen entity's parts in fields. Dragging the first number of
+    // its position to the right moves the entity in the game.
+    let x = |window: &Harness<Editor>| {
+        let world = &window.app().game().world;
+        world
+            .get::<Transform>(second)
+            .expect("it has a place")
+            .translation
+            .x
+    };
+    let before = x(&window);
+    let field = Point::new(920.0, 509.0);
+    window.event(Event::PointerMoved { pos: field });
+    window.event(Event::PointerPressed {
+        pos: field,
+        button: PointerButton::Primary,
+    });
+    for step in 1..=10 {
+        let pos = Point::new(field.x + step as f32 * 4.0, field.y);
+        window.event(Event::PointerMoved { pos });
+    }
+    window.event(Event::PointerReleased {
+        pos: Point::new(field.x + 40.0, field.y),
+        button: PointerButton::Primary,
+    });
+    window.frame(TICK, 1.0);
+    let after = x(&window);
+    assert!(
+        (after - before - 1.0).abs() < 0.01,
+        "ten steps of a tenth: from {before} to {after}"
+    );
 
     if let Ok(path) = std::env::var("MIRA_EDITOR_SHOT") {
         window.save_png(path, 1.0).expect("the picture saved");
