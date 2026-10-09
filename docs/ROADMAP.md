@@ -114,8 +114,7 @@ being able to see inside.
       despawn, save the scene, pause and step, see failures with their stacks, reload
       plugins, read and rewire the signal graph
 - [x] A command-line client for it (`mira-debug`)
-- [ ] The same protocol under the editor (Phase 5); pushing changes to a client that is
-      watching, instead of being asked
+- [ ] The same protocol under the editor (Phase 5)
 - [ ] Hot reload of the host's own Rust systems, not only plugins (the engine as a library the
       game reloads)
 - [x] Rewind: snapshots of the world every few frames (reflection makes them); step back to
@@ -152,7 +151,9 @@ game's state, change it, and control time and code. The means is the Model Conte
       in what shape
 - [ ] Total knowledge: a check that reports engine state that is not reflected, and so
       invisible
-- [ ] Events pushed, not polled: failures, signal changes, log lines, a plugin reloading
+- [x] Events pushed, not polled, over the debug connection: failures, signal changes, pauses
+      (`watch`, `mira-debug events`)
+- [ ] The same events through MCP; log lines and plugin reloads as events
 - [x] Running to a condition: step frames and wait for them, or run until a signal is true
 - [x] Input from the agent: keys and mouse injected as if played, so an agent can play-test
       what it built

@@ -33,6 +33,92 @@ use crate::{
 struct Client {
     stream: TcpStream,
     unread: Vec<u8>,
+    /// What this client last knew, if it asked to be told of changes.
+    watching: Option<Known>,
+}
+
+/// The state a watching client has been told of, to tell it only what is new.
+struct Known {
+    failures: usize,
+    paused: bool,
+    signals: Vec<(String, Signal)>,
+}
+
+impl Known {
+    fn of(app: &App) -> Self {
+        let live = app.world.resource::<Live>();
+        Self {
+            failures: live.failures().len(),
+            paused: live.is_paused(),
+            signals: app
+                .world
+                .get_resource::<Signals>()
+                .map_or(Vec::new(), |signals| {
+                    signals
+                        .graph()
+                        .into_iter()
+                        .map(|node| (node.name, node.value))
+                        .collect()
+                }),
+        }
+    }
+
+    /// What has happened since this was last brought up to date, oldest first.
+    fn news(&mut self, app: &App) -> Vec<Value> {
+        let now = Self::of(app);
+        let mut news = Vec::new();
+        let event = |kind: &str, mut fields: Vec<(&'static str, Value)>| {
+            fields.insert(0, ("event", Value::Text(kind.to_owned())));
+            map(fields)
+        };
+        let live = app.world.resource::<Live>();
+        for failure in live.failures().iter().skip(self.failures) {
+            news.push(event("failure", vec![("failure", failure_value(failure))]));
+        }
+        for (name, value) in &now.signals {
+            let before = self
+                .signals
+                .iter()
+                .find(|(known, _)| known == name)
+                .map(|(_, v)| *v);
+            if before != Some(*value) {
+                let value = match value {
+                    Signal::Bool(b) => Value::Bool(*b),
+                    Signal::Number(n) => Value::Float(*n),
+                };
+                news.push(event(
+                    "signal",
+                    vec![("name", Value::Text(name.clone())), ("value", value)],
+                ));
+            }
+        }
+        if now.paused != self.paused {
+            let frame = app
+                .world
+                .get_resource::<Time>()
+                .map_or(0, Time::frame_count);
+            news.push(event(
+                if now.paused { "paused" } else { "resumed" },
+                vec![("frame", Value::Int(frame as i64))],
+            ));
+        }
+        *self = now;
+        news
+    }
+}
+
+fn failure_value(failure: &crate::live::Failure) -> Value {
+    map([
+        ("system", Value::Text(failure.system.clone())),
+        ("stage", Value::Text(format!("{:?}", failure.stage))),
+        ("frame", Value::Int(failure.frame as i64)),
+        ("message", Value::Text(failure.message.clone())),
+        ("location", Value::Text(failure.location.clone())),
+        (
+            "stack",
+            texts(failure.stack.lines().map(|line| line.trim().to_owned())),
+        ),
+    ])
 }
 
 /// Listens for debuggers. Held by the app; made by [`App::listen_for_debugger`].
@@ -60,6 +146,7 @@ impl DebugServer {
                 self.clients.push(Client {
                     stream,
                     unread: Vec::new(),
+                    watching: None,
                 });
             }
         }
@@ -495,19 +582,7 @@ fn handle(app: &mut App, request: &Value) -> Answer {
                 .resource::<Live>()
                 .failures()
                 .iter()
-                .map(|failure| {
-                    map([
-                        ("system", Value::Text(failure.system.clone())),
-                        ("stage", Value::Text(format!("{:?}", failure.stage))),
-                        ("frame", Value::Int(failure.frame as i64)),
-                        ("message", Value::Text(failure.message.clone())),
-                        ("location", Value::Text(failure.location.clone())),
-                        (
-                            "stack",
-                            texts(failure.stack.lines().map(|line| line.trim().to_owned())),
-                        ),
-                    ])
-                })
+                .map(failure_value)
                 .collect(),
         )),
         "systems" => {
@@ -808,6 +883,8 @@ fn handle(app: &mut App, request: &Value) -> Answer {
                 Err(format!("there is no signal `{name}`"))
             }
         }
+        // Answered by the server itself when it comes over a socket.
+        "watch" => Err("watching needs a connection that stays open".to_owned()),
         other => Err(format!("there is no command `{other}`")),
     }
 }
@@ -963,8 +1040,37 @@ impl App {
             return;
         };
         for (client, line) in server.requests() {
-            let answer = respond(self, &line);
+            // `watch` is about the connection, which only the server knows.
+            let watch = json::parse(&line).ok().and_then(|request| {
+                let on = match request.field("cmd") {
+                    Some(Value::Text(cmd)) if cmd == "watch" => {
+                        !matches!(request.field("on"), Some(Value::Bool(false)))
+                    }
+                    _ => return None,
+                };
+                Some((on, request.field("id").cloned()))
+            });
+            let answer = match watch {
+                Some((on, id)) => {
+                    server.clients[client].watching = on.then(|| Known::of(self));
+                    let mut fields = Vec::new();
+                    fields.extend(id.map(|id| ("id".to_owned(), id)));
+                    fields.push(("ok".to_owned(), Value::Bool(on)));
+                    json::to_line(&Value::Map(fields))
+                }
+                None => respond(self, &line),
+            };
             server.answer(client, &answer);
+        }
+        // Tell the clients that asked what has changed since the last frame.
+        for client in 0..server.clients.len() {
+            let news = match &mut server.clients[client].watching {
+                Some(known) => known.news(self),
+                None => continue,
+            };
+            for event in news {
+                server.answer(client, &json::to_line(&event));
+            }
         }
         server.drop_closed();
         // A request may have replaced the server; the one that was serving stays.
@@ -1326,5 +1432,78 @@ mod tests {
             std::thread::sleep(Duration::from_millis(5));
         }
         assert!(app.debug.as_ref().unwrap().clients.is_empty());
+    }
+    #[test]
+    fn a_watching_client_is_told_what_happens() {
+        fn fragile(broken: Option<Res<Broken>>) {
+            assert!(broken.is_none(), "it broke");
+        }
+        struct Broken;
+
+        let mut app = app();
+        app.world.resource_mut::<Live>().catch_failures = true;
+        app.add_systems(Stage::Update, fragile);
+        let address = app.listen_for_debugger("127.0.0.1:0").unwrap();
+        let mut stream = TcpStream::connect(address).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_millis(20)))
+            .unwrap();
+        let mut lines = BufReader::new(stream.try_clone().unwrap());
+        // Runs frames until a whole line has arrived, or says what did instead.
+        let mut next = |app: &mut App| {
+            let mut line = String::new();
+            for _ in 0..300 {
+                app.update();
+                if lines.read_line(&mut line).is_ok() && line.ends_with('\n') {
+                    return json::parse(&line).unwrap();
+                }
+            }
+            panic!("nothing arrived; so far {line:?}");
+        };
+        let event = |value: &Value| match value.field("event") {
+            Some(Value::Text(kind)) => kind.clone(),
+            _ => panic!("not an event: {value:?}"),
+        };
+
+        stream
+            .write_all(b"{\"id\": 1, \"cmd\": \"watch\"}\n")
+            .unwrap();
+        assert_eq!(next(&mut app).field("ok"), Some(&Value::Bool(true)));
+        // `warm` comes true on its own as the frames go by: the first thing worth telling.
+        let told = next(&mut app);
+        assert_eq!(event(&told), "signal");
+        assert_eq!(told.field("name"), Some(&Value::Text("warm".into())));
+        assert_eq!(told.field("value"), Some(&Value::Bool(true)));
+
+        // A system fails: the failure with its stack, then the pause it caused.
+        app.world.insert_resource(Broken);
+        let told = next(&mut app);
+        assert_eq!(event(&told), "failure");
+        assert_eq!(
+            told.get_path("failure.message"),
+            Some(&Value::Text("it broke".into()))
+        );
+        assert_eq!(event(&next(&mut app)), "paused");
+
+        // Requests are still answered on the same connection, in among the news.
+        app.world.remove_resource::<Broken>();
+        stream.write_all(b"{\"cmd\": \"resume\"}\n").unwrap();
+        assert_eq!(next(&mut app).field("ok"), Some(&Value::Bool(true)));
+        assert_eq!(event(&next(&mut app)), "resumed");
+        // And no more once it asks not to be told.
+        stream
+            .write_all(b"{\"cmd\": \"watch\", \"on\": false}\n")
+            .unwrap();
+        assert_eq!(next(&mut app).field("ok"), Some(&Value::Bool(false)));
+        app.world.resource_mut::<Signals>().set("quiet", true);
+        stream
+            .write_all(b"{\"id\": 9, \"cmd\": \"status\"}\n")
+            .unwrap();
+        assert_eq!(
+            next(&mut app).field("id"),
+            Some(&Value::Int(9)),
+            "the next line is the answer"
+        );
+        assert!(refused(&mut app, "{'cmd': 'watch'}").contains("stays open"));
     }
 }

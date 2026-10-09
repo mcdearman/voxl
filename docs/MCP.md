@@ -75,7 +75,8 @@ resources. A plugin's components appear once the plugin
 - The screenshot is the game's own view. A chosen camera or free viewpoint, and overlays
   (entity ids, colliders, the signal graph), are to come; so is a description of the scene in
   words.
-- Nothing is pushed: an agent finds out about a failure or a signal changing by asking.
+- Nothing is pushed through MCP: an agent finds out about a failure or a signal changing by
+  asking. (The debug connection itself can push; see [LIVE.md](LIVE.md).)
 - The server doesn't launch games or run them without a window. Stepped frames are each
   `Live::step` long (1/60 s), so a stepped run is repeatable as far as the game itself is.
 - Input is keys, mouse buttons and mouse movement; no gamepad, no text entry.

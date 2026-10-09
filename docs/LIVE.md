@@ -139,6 +139,7 @@ answered at the start of a frame, whether or not the game is paused.
 | `history` | | the moments that can be gone back to |
 | `rewind` | `frames` (60) or `to_frame` | steps back, pauses, and says where it landed |
 | `failures` | | every caught failure, with its stack |
+| `watch` | `on` (true) | from then on, events are sent to this connection as they happen |
 | `systems` | `stage` (all) | each stage's systems in order, with constraints and timings |
 | `types` | | the names of registered components and resources |
 | `entities` | `with` (a component), `limit` (200) | entities and what each has |
@@ -156,6 +157,18 @@ answered at the start of a frame, whether or not the game is paused.
 | `signal_connect` | `name`, `input`, `to` | |
 | `signal_define` | `name`, `op`, `inputs`, and `value` or `seconds` where the op has one | |
 | `signal_remove` | `name` | |
+
+A client can also ask to be told what happens instead of asking over and over. After
+`{"cmd": "watch"}` the game sends that connection a line whenever a system fails (with its
+stack), a signal changes value, or the game pauses or resumes; requests on the same connection
+are still answered, in among the news. `{"cmd": "watch", "on": false}` stops it.
+`mira-debug events` prints them as they come:
+
+```text
+{"event": "signal", "name": "blue.contesting", "value": true}
+{"event": "failure", "failure": {"system": "chase::move_player", "message": "…", "stack": […]}}
+{"event": "paused", "frame": 812}
+```
 
 Entities are their numbers as `entities` lists them. Values have the shape they have in a
 [scene file](SCENES.md). The operations are `constant`, `and`, `or`, `not`, `count`, `sum`,
