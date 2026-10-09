@@ -124,6 +124,7 @@ impl System for DynamicSystem {
         access.read_resource::<Mouse>();
         access.write_resource::<Assets<Mesh>>();
         access.write_resource::<AssetServer>();
+        access.read_resource::<crate::signal::Signals>();
         access.write_resource::<Assets<Image>>();
         access.read_resource::<PluginEvents>();
     }

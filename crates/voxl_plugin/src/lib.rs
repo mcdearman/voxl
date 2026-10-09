@@ -624,6 +624,48 @@ mod failure {
     }
 }
 
+/// How a signal is worked out from its inputs.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum SignalOp {
+    And,
+    Or,
+    Not,
+    /// How many inputs are true.
+    Count,
+    Sum,
+    /// The second input if the first is true, otherwise the third.
+    Select,
+    /// Seconds the first input has been true; a true second input resets it.
+    Timer,
+    /// True once the input has been true this many seconds without a break.
+    HeldFor(f64),
+    Less,
+    LessOrEqual,
+    Equal,
+    GreaterOrEqual,
+    Greater,
+}
+
+impl SignalOp {
+    fn code(self) -> (u32, f64) {
+        match self {
+            SignalOp::And => (sys::VOXL_SIGNAL_AND, 0.0),
+            SignalOp::Or => (sys::VOXL_SIGNAL_OR, 0.0),
+            SignalOp::Not => (sys::VOXL_SIGNAL_NOT, 0.0),
+            SignalOp::Count => (sys::VOXL_SIGNAL_COUNT, 0.0),
+            SignalOp::Sum => (sys::VOXL_SIGNAL_SUM, 0.0),
+            SignalOp::Select => (sys::VOXL_SIGNAL_SELECT, 0.0),
+            SignalOp::Timer => (sys::VOXL_SIGNAL_TIMER, 0.0),
+            SignalOp::HeldFor(seconds) => (sys::VOXL_SIGNAL_HELD_FOR, seconds),
+            SignalOp::Less => (sys::VOXL_SIGNAL_LESS, 0.0),
+            SignalOp::LessOrEqual => (sys::VOXL_SIGNAL_LESS_OR_EQUAL, 0.0),
+            SignalOp::Equal => (sys::VOXL_SIGNAL_EQUAL, 0.0),
+            SignalOp::GreaterOrEqual => (sys::VOXL_SIGNAL_GREATER_OR_EQUAL, 0.0),
+            SignalOp::Greater => (sys::VOXL_SIGNAL_GREATER, 0.0),
+        }
+    }
+}
+
 /// One run of a system. Only exists inside the system's function.
 pub struct System {
     raw: *mut sys::VoxlSystem,
@@ -925,6 +967,52 @@ impl System {
     pub fn spawn_model(&mut self, name: &str, transform: &Transform) -> Entity {
         // SAFETY: called inside the system; the engine copies the name and the transform.
         Entity(unsafe { (api().spawn_model)(self.raw, name.as_ptr(), name.len(), transform) })
+    }
+
+    /// Sets a true-or-false signal, defining it if need be, when this system returns: how a
+    /// plugin tells the signal graph a fact of its own.
+    pub fn set_signal(&mut self, name: &str, value: bool) {
+        // SAFETY: called inside the system; the engine copies the name.
+        unsafe { (api().signal_set)(self.raw, name.as_ptr(), name.len(), value as u8 as f64, 0) }
+    }
+
+    /// Sets a numeric signal, defining it if need be, when this system returns.
+    pub fn set_signal_number(&mut self, name: &str, value: f64) {
+        // SAFETY: as above.
+        unsafe { (api().signal_set)(self.raw, name.as_ptr(), name.len(), value, 1) }
+    }
+
+    /// A signal's value as of its last update, a truth being 1 or 0; `None` if there is no
+    /// such signal.
+    pub fn signal(&self, name: &str) -> Option<f64> {
+        let mut value = 0.0;
+        // SAFETY: called inside the system; `value` is writable.
+        let found = unsafe { (api().signal_get)(self.raw, name.as_ptr(), name.len(), &mut value) };
+        (found != 0).then_some(value)
+    }
+
+    /// Whether a signal is true. One that doesn't exist is not.
+    pub fn signal_is_true(&self, name: &str) -> bool {
+        self.signal(name).is_some_and(|value| value != 0.0)
+    }
+
+    /// Defines a signal worked out from others (a rule), or replaces its definition, when
+    /// this system returns.
+    pub fn define_signal(&mut self, name: &str, op: SignalOp, inputs: &[&str]) {
+        let (code, param) = op.code();
+        let inputs = inputs.join(" ");
+        // SAFETY: called inside the system; the engine copies the strings.
+        unsafe {
+            (api().signal_define)(
+                self.raw,
+                name.as_ptr(),
+                name.len(),
+                code,
+                param,
+                inputs.as_ptr(),
+                inputs.len(),
+            )
+        }
     }
 
     /// Says this run of the system has failed, as a panic in it would: in a debug build the

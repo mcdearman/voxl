@@ -191,8 +191,10 @@ derived from other values, which the engine keeps true.
 - [ ] Sources skipped when what they read hasn't changed
 - [ ] Dependencies known to the engine: which signals read which, shown in the debug
       connection, with the current value of each (Phase 1B)
-- [ ] Signals from plugins, through the C interface; a Haskell layer in the applicative style
-      of the bindings' queries
+- [x] Signals from plugins, through the C interface (set, get, define), with Rust and Haskell
+      bindings
+- [ ] A Haskell layer in the applicative style of the bindings' queries, so a rule reads as
+      an expression
 - [x] The sacred-site rule as a worked example and a test
 - [x] Signals as data, not closures: a graph of named nodes (sources read from the world;
       operations such as and, or, not, count, compare, held-for) joined by connections, which
@@ -200,10 +202,10 @@ derived from other values, which the engine keeps true.
 - [ ] Saving and loading a signal graph; signals carrying entities
 - [x] The signal graph over the debug connection: read every node and its value, set
       constants, connect inputs, force outputs, define and remove nodes, while the game runs
-- [ ] A signal graph viewer (Chris, October 2026): watch which signals are active as you
-      play, and edit signals and their connections live to change the game's rules while
-      developing; a window drawn from the debug connection's data, then a panel of the
-      editor (Phase 5)
+- [x] A signal graph viewer in the terminal (`voxl-debug watch`): which signals are active as
+      you play, what feeds what, what just changed; edited live from a second terminal
+- [ ] The graphical viewer (Chris, October 2026): the graph laid out, signals and connections
+      edited by hand while the game runs; a panel of the editor (Phase 5)
 
 **Exit test:** the sacred-site game: two teams, several sites, units walking on and off and
 dying in any order; the timer is right in every case because no code ever sets it.
@@ -328,5 +330,5 @@ project grows.
    seen in screenshots to fix alongside: the built-in sky is dull next to the sun it comes
    with; and objects that move every frame smear under temporal anti-aliasing (it has no
    motion vectors).
-3. The signal graph viewer and signals from plugins (Phase 2B). Then the parallel scheduler
+3. The parallel scheduler, on the ordering constraints and access sets that are now there
    (Phase 2).

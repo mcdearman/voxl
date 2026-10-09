@@ -102,11 +102,67 @@ Redefining a node keeps its value and what it has timed, so changing a rule does
 its clocks. An input connected to a name that doesn't exist reads false and is reported in
 the node's `problem`. `signals.to_value()` is the whole graph as plain data.
 
+## The viewer
+
+With the game listening for debuggers ([LIVE.md](LIVE.md#the-debug-connection)), this draws
+the graph in a terminal and keeps it up to date as you play. The sacred-site game is an
+example to try it on (it has no window; it only runs and listens):
+
+```sh
+cargo run --example sacred_sites        # the game
+cargo run --bin voxl-debug -- watch     # in another terminal
+```
+
+```text
+frame 4821  80.4s  running  failures: 0
+
+○ red.wins = false  (compare GreaterOrEqual)
+├─ ● red.clock = 7  (timer)
+│  ├─ ○ red.clock.running = false  (and) *
+│  │  ├─ ● red.holds_all = true  (source)
+│  │  └─ ○ blue.calm = false  (not) *
+│  │     └─ ● blue.contesting = true  (source) *
+│  └─ ○ red.lost_a_site = false  (not)
+│     └─ ● red.holds_all = true  (source)
+└─ ● win_after = 600  (constant)
+```
+
+Each signal nothing else reads is at the left, with what it reads below it. `●` is true (or
+not zero), `*` changed on the last update, `!` is forced. Change the graph from another
+terminal and watch it follow:
+
+```sh
+cargo run --bin voxl-debug -- signal_set name=win_after value=30
+cargo run --bin voxl-debug -- signal_force name=blue.contesting value=false
+cargo run --bin voxl-debug -- signal_connect name=red.clock.running input=1 to=always
+cargo run --bin voxl-debug -- signal_define name=blue.calm op=held_for seconds=3 inputs='["blue.away"]'
+```
+
+## From a plugin
+
+A plugin gives the graph its own facts by setting signals from a system, builds rules on them
+as data, and reads any signal by name:
+
+```haskell
+addSystem_ app "rules" Update $ \sys -> do
+  setSignal sys "blue.contesting" =<< anyBlueOnARedSite sys
+  defineSignal sys "blue.calm" SignalNot ["blue.contesting"]
+  defineSignal sys "red.clock.running" SignalAnd ["red.holds_all", "blue.calm"]
+  defineSignal sys "red.clock" SignalTimer ["red.clock.running"]
+  won <- signalIsTrue sys "red.wins"
+  when won (announce sys)
+```
+
+In C these are `signal_set`, `signal_get` and `signal_define` in `include/voxl.h`; in Rust,
+`System::set_signal`, `signal`, `define_signal`. What a plugin sets in one frame the graph has
+in the next. Defining the same rule again changes nothing, so a plugin can define its rules
+every frame or once; either way they are there again after a reload, with their clocks intact.
+
 ## What isn't here yet
 
-- The viewer itself. It will be a client of the [debug connection](LIVE.md), then a panel of
-  the editor.
-- Signals from plugins, and a Haskell layer over them.
+- A graphical viewer, with the graph laid out and edited by hand: a panel of the editor.
+- Sources written in a plugin as functions the engine calls (a plugin sets its facts from a
+  system instead).
 - Signals that carry more than a truth or a number (an entity, a set of entities).
 - Saving a graph to a file and loading it, as scenes are.
 - Sources are asked every frame; they are not yet skipped when what they read hasn't changed.

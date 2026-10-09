@@ -91,6 +91,13 @@ module Voxl
   , setTextures
   , spawnModel
   , spawnPrefab
+    -- * Signals
+  , SignalOp (..)
+  , setSignal
+  , setSignalNumber
+  , signal
+  , signalIsTrue
+  , defineSignal
     -- * Events
   , Event
   , registerEvent
@@ -218,6 +225,12 @@ foreign import ccall unsafe "voxl_hs_set_textures"
   c_set_textures :: Ptr () -> Word64 -> Word32 -> Word32 -> Word32 -> IO ()
 foreign import ccall unsafe "voxl_hs_spawn_model"
   c_spawn_model :: Ptr () -> Ptr CChar -> CSize -> Ptr Transform -> IO Word64
+foreign import ccall unsafe "voxl_hs_signal_set"
+  c_signal_set :: Ptr () -> Ptr CChar -> CSize -> CDouble -> Word32 -> IO ()
+foreign import ccall unsafe "voxl_hs_signal_get"
+  c_signal_get :: Ptr () -> Ptr CChar -> CSize -> Ptr CDouble -> IO Word32
+foreign import ccall unsafe "voxl_hs_signal_define"
+  c_signal_define :: Ptr () -> Ptr CChar -> CSize -> Word32 -> CDouble -> Ptr CChar -> CSize -> IO ()
 foreign import ccall unsafe "voxl_hs_system_fail"
   c_system_fail :: Ptr () -> Ptr CChar -> CSize -> IO ()
 foreign import ccall unsafe "voxl_hs_spawn_prefab"
@@ -911,6 +924,72 @@ spawnPrefab :: System -> String -> Transform -> IO Entity
 spawnPrefab (System system) name at =
   withName name $ \chars len ->
     Foreign.with at (fmap Entity . c_spawn_prefab system chars len)
+
+-- | How a signal is worked out from its inputs.
+data SignalOp
+  = SignalAnd
+  | SignalOr
+  | SignalNot
+  | -- | How many inputs are true.
+    SignalCount
+  | SignalSum
+  | -- | The second input if the first is true, otherwise the third.
+    SignalSelect
+  | -- | Seconds the first input has been true; a true second input resets it.
+    SignalTimer
+  | -- | True once the input has been true this many seconds without a break.
+    SignalHeldFor !Double
+  | SignalLess
+  | SignalLessOrEqual
+  | SignalEqual
+  | SignalGreaterOrEqual
+  | SignalGreater
+  deriving (Eq, Show)
+
+-- | Sets a true-or-false signal, defining it if need be, when this system returns: how a
+-- plugin tells the signal graph a fact of its own.
+setSignal :: System -> String -> Bool -> IO ()
+setSignal (System system) name value =
+  withName name $ \chars len -> c_signal_set system chars len (if value then 1 else 0) 0
+
+-- | Sets a numeric signal, defining it if need be, when this system returns.
+setSignalNumber :: System -> String -> Double -> IO ()
+setSignalNumber (System system) name value =
+  withName name $ \chars len -> c_signal_set system chars len (realToFrac value) 1
+
+-- | A signal's value as of its last update, a truth being 1 or 0; 'Nothing' if there is no
+-- such signal.
+signal :: System -> String -> IO (Maybe Double)
+signal (System system) name =
+  withName name $ \chars len -> alloca $ \out -> do
+    found <- c_signal_get system chars len out
+    if found == 0 then pure Nothing else Just . realToFrac <$> peek out
+
+-- | Whether a signal is true. One that doesn't exist is not.
+signalIsTrue :: System -> String -> IO Bool
+signalIsTrue system name = maybe False (/= 0) <$> signal system name
+
+-- | Defines a signal worked out from others (a rule), or replaces its definition, when this
+-- system returns. The inputs are signal names.
+defineSignal :: System -> String -> SignalOp -> [String] -> IO ()
+defineSignal (System system) name op inputs =
+  withName name $ \chars len -> withName (unwords inputs) $ \inputChars inputLen ->
+    c_signal_define system chars len code (realToFrac param) inputChars inputLen
+  where
+    (code, param) = case op of
+      SignalAnd -> (0, 0 :: Double)
+      SignalOr -> (1, 0)
+      SignalNot -> (2, 0)
+      SignalCount -> (3, 0)
+      SignalSum -> (4, 0)
+      SignalSelect -> (5, 0)
+      SignalTimer -> (6, 0)
+      SignalHeldFor seconds -> (7, seconds)
+      SignalLess -> (8, 0)
+      SignalLessOrEqual -> (9, 0)
+      SignalEqual -> (10, 0)
+      SignalGreaterOrEqual -> (11, 0)
+      SignalGreater -> (12, 0)
 
 -- What the engine calls for every Haskell system: `user` is the stable pointer to its
 -- function. An exception must not escape into the engine, so the engine is told of it instead.

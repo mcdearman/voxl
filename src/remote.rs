@@ -558,6 +558,112 @@ fn handle(app: &mut App, request: &Value) -> Answer {
     }
 }
 
+/// Draws the signal graph (what the `signals` command answers) as text: each signal that
+/// nothing else reads, with what it reads below it, and so on down to the sources.
+///
+/// ```text
+/// ○ red.wins = false  (compare GreaterOrEqual)
+/// ├─ ● red.clock = 7  (timer)
+/// │  ├─ ● red.clock.running = true  (and) *
+/// │  │  ├─ ● red.holds_all = true  (source)
+/// ```
+///
+/// `●` is true or not zero, `*` changed on the last update, `!` is forced.
+pub fn signals_text(graph: &Value) -> String {
+    let Value::List(nodes) = graph else {
+        return String::new();
+    };
+    let name_of = |node: &Value| match node.field("name") {
+        Some(Value::Text(name)) => name.clone(),
+        _ => String::new(),
+    };
+    let inputs_of = |node: &Value| match node.field("inputs") {
+        Some(Value::List(inputs)) => inputs
+            .iter()
+            .filter_map(|input| match input {
+                Value::Text(name) => Some(name.clone()),
+                _ => None,
+            })
+            .collect(),
+        _ => Vec::new(),
+    };
+    let find = |name: &str| nodes.iter().find(|node| name_of(node) == name);
+    let read: std::collections::HashSet<String> = nodes.iter().flat_map(inputs_of).collect();
+
+    fn line(node: &Value, name: &str) -> String {
+        let value = match node.field("value") {
+            Some(Value::Bool(b)) => b.to_string(),
+            Some(Value::Float(n)) if n.fract() == 0.0 && n.abs() < 1e15 => format!("{n:.0}"),
+            Some(Value::Float(n)) => format!("{n:.3}"),
+            _ => "?".to_owned(),
+        };
+        let on = !matches!(value.as_str(), "false" | "0" | "?");
+        let flag = |key: &str, mark: &str| match node.field(key) {
+            Some(Value::Bool(true)) => mark.to_owned(),
+            _ => String::new(),
+        };
+        let kind = match node.field("kind") {
+            Some(Value::Text(kind)) => kind.as_str(),
+            _ => "?",
+        };
+        let problem = match node.field("problem") {
+            Some(Value::Text(problem)) => format!("  ({problem})"),
+            _ => String::new(),
+        };
+        format!(
+            "{} {name} = {value}  ({kind}){}{}{problem}",
+            if on { "●" } else { "○" },
+            flag("changed", " *"),
+            flag("forced", " !"),
+        )
+    }
+
+    let mut out = String::new();
+    // (name, the prefix its line gets, the prefix its children's lines get, its ancestors)
+    let mut pending: Vec<(String, String, String, Vec<String>)> = nodes
+        .iter()
+        .map(name_of)
+        .filter(|name| !read.contains(name))
+        .rev()
+        .map(|name| (name, String::new(), String::new(), Vec::new()))
+        .collect();
+    let mut drawn = std::collections::HashSet::new();
+    loop {
+        let Some((name, prefix, below, above)) = pending.pop() else {
+            // Signals on a circle have nothing above them: start again from the first of
+            // them that hasn't been drawn.
+            match nodes.iter().map(name_of).find(|name| !drawn.contains(name)) {
+                Some(name) => pending.push((name, String::new(), String::new(), Vec::new())),
+                None => break,
+            }
+            continue;
+        };
+        drawn.insert(name.clone());
+        let Some(node) = find(&name) else {
+            out += &format!("{prefix}? {name}  (no such signal)\n");
+            continue;
+        };
+        if above.contains(&name) {
+            out += &format!("{prefix}↺ {name}\n");
+            continue;
+        }
+        out += &format!("{prefix}{}\n", line(node, &name));
+        let inputs = inputs_of(node);
+        let mut path = above.clone();
+        path.push(name);
+        for (index, input) in inputs.iter().enumerate().rev() {
+            let last = index + 1 == inputs.len();
+            pending.push((
+                input.clone(),
+                format!("{below}{}", if last { "└─ " } else { "├─ " }),
+                format!("{below}{}", if last { "   " } else { "│  " }),
+                path.clone(),
+            ));
+        }
+    }
+    out
+}
+
 /// Answers one line of the protocol with one line.
 pub fn respond(app: &mut App, line: &str) -> String {
     let (id, answer) = match json::parse(line) {
@@ -836,6 +942,44 @@ mod tests {
             "{'cmd': 'signal_define', 'name': 'x', 'op': 'xor'}"
         )
         .contains("xor"));
+    }
+
+    #[test]
+    fn the_signal_graph_is_drawn_as_a_tree() {
+        let mut app = app();
+        let signals = app.world.resource_mut::<Signals>();
+        signals.set("limit", 3.0);
+        signals.set("always", true);
+        signals.define("ready", Op::And, ["warm", "always", "gone"]);
+        signals.define("tick", Op::Not, ["tock"]);
+        signals.define("tock", Op::Or, ["tick", "ready"]);
+        for _ in 0..4 {
+            app.update();
+        }
+        app.world
+            .resource_mut::<Signals>()
+            .force("always", Some(Signal::Bool(false)));
+        app.update();
+        let graph = ask(&mut app, "{'cmd': 'signals'}");
+        let drawn = signals_text(&graph);
+        let lines: Vec<&str> = drawn.lines().collect();
+        assert_eq!(lines[0], "● limit = 3  (constant)");
+        // `tick` and `tock` read each other, so nothing is above them: the first line that
+        // isn't `limit` must still reach every node.
+        for name in ["warm", "always", "ready", "tick", "tock", "gone"] {
+            assert!(drawn.contains(name), "{name} is missing from:\n{drawn}");
+        }
+        assert!(
+            drawn.contains("○ always = false  (constant) * !"),
+            "{drawn}"
+        );
+        assert!(drawn.contains("? gone  (no such signal)"), "{drawn}");
+        assert!(
+            drawn.contains("↺ "),
+            "the circle is closed, not followed for ever:\n{drawn}"
+        );
+        assert!(drawn.contains("├─ ") && drawn.contains("└─ "), "{drawn}");
+        assert_eq!(signals_text(&Value::Null), "");
     }
 
     #[test]

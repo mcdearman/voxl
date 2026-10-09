@@ -8,6 +8,8 @@
 //! voxl-debug signals
 //! voxl-debug signal_force name=blue.contesting value=false
 //! voxl-debug --at 127.0.0.1:7878 pause
+//! voxl-debug watch                     # the signal graph, redrawn as the game runs
+//! voxl-debug watch every=0.5
 //! ```
 //!
 //! The first word is the command and the rest are its arguments. A value that reads as JSON
@@ -34,6 +36,9 @@ fn main() -> ExitCode {
         eprintln!("usage: voxl-debug [--at address] <command> [name=value ...]");
         return ExitCode::from(2);
     };
+    if command == "watch" {
+        return watch(&address, &args[1..]);
+    }
     let mut request = vec![("cmd".to_owned(), Value::Text(command.clone()))];
     for arg in &args[1..] {
         let Some((name, value)) = arg.split_once('=') else {
@@ -78,5 +83,53 @@ fn main() -> ExitCode {
             print!("{line}");
             ExitCode::FAILURE
         }
+    }
+}
+
+fn ask(address: &str, request: &str) -> std::io::Result<Value> {
+    let mut stream = TcpStream::connect(address)?;
+    stream.set_read_timeout(Some(Duration::from_secs(10)))?;
+    stream.write_all(request.as_bytes())?;
+    stream.write_all(b"\n")?;
+    let mut line = String::new();
+    BufReader::new(stream).read_line(&mut line)?;
+    let answer = json::parse(&line).map_err(|err| std::io::Error::other(err.to_string()))?;
+    answer
+        .field("ok")
+        .cloned()
+        .ok_or_else(|| std::io::Error::other(format!("refused: {line}")))
+}
+
+/// Shows the signal graph and redraws it until interrupted: which signals are true, which
+/// just changed, what feeds what.
+fn watch(address: &str, args: &[String]) -> ExitCode {
+    let every = args
+        .iter()
+        .find_map(|arg| arg.strip_prefix("every=")?.parse::<f64>().ok())
+        .unwrap_or(0.2);
+    loop {
+        let drawn = ask(address, r#"{"cmd": "status"}"#).and_then(|status| {
+            let graph = ask(address, r#"{"cmd": "signals"}"#)?;
+            let number = |key: &str| status.field(key).and_then(Value::as_f64).unwrap_or(0.0);
+            let paused = matches!(status.field("paused"), Some(Value::Bool(true)));
+            Ok(format!(
+                "frame {}  {:.1}s  {}  failures: {}\n\n{}",
+                number("frame"),
+                number("seconds"),
+                if paused { "PAUSED" } else { "running" },
+                number("failures"),
+                voxl::remote::signals_text(&graph),
+            ))
+        });
+        match drawn {
+            // Home the cursor, draw, and clear what is left of the last drawing.
+            Ok(drawn) => print!("\x1b[H{}\x1b[J", drawn.replace('\n', "\x1b[K\n")),
+            Err(err) => {
+                eprintln!("no answer from a game at {address}: {err}");
+                return ExitCode::FAILURE;
+            }
+        }
+        let _ = std::io::stdout().flush();
+        std::thread::sleep(Duration::from_secs_f64(every.max(0.02)));
     }
 }

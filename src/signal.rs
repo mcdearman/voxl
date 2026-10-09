@@ -167,15 +167,19 @@ pub struct Signals {
 
 impl Signals {
     fn put(&mut self, name: &str, kind: Kind, inputs: Vec<String>) {
-        self.order.clear();
         match self.names.get(name) {
             // Redefined: its value and what it has timed carry over, so that changing a
             // rule while the game runs doesn't restart its clocks.
             Some(&index) => {
+                // The order only depends on who reads whom.
+                if self.nodes[index].inputs != inputs {
+                    self.order.clear();
+                }
                 self.nodes[index].kind = kind;
                 self.nodes[index].inputs = inputs;
             }
             None => {
+                self.order.clear();
                 self.names.insert(name.to_owned(), self.nodes.len());
                 self.nodes.push(Node {
                     name: name.to_owned(),
@@ -220,6 +224,22 @@ impl Signals {
     /// Defines a constant, or sets one that exists.
     pub fn set(&mut self, name: &str, value: impl Into<Signal>) {
         self.define::<String>(name, Op::Constant(value.into()), []);
+    }
+
+    /// The value of a constant, if the named signal is one.
+    pub fn constant(&self, name: &str) -> Option<Signal> {
+        match &self.nodes[*self.names.get(name)?].kind {
+            Kind::Op(Op::Constant(value)) => Some(*value),
+            _ => None,
+        }
+    }
+
+    /// Whether a node is defined exactly this way already.
+    pub fn is_defined_as(&self, name: &str, op: Op, inputs: &[String]) -> bool {
+        self.names.get(name).is_some_and(|&index| {
+            let node = &self.nodes[index];
+            matches!(&node.kind, Kind::Op(existing) if *existing == op) && node.inputs == inputs
+        })
     }
 
     /// Connects one input of a node to a different signal. Returns whether there was such an
