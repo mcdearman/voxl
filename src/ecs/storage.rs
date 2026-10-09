@@ -94,6 +94,20 @@ impl<T> ComponentSet<T> {
         (dense != EMPTY && self.entities[dense as usize] == entity).then_some(dense as usize)
     }
 
+    /// The slot of `entity`, looking first at `guess`. A query walking one component's
+    /// entities in order asks for each of them here, and in every other component it reads,
+    /// with the place it has reached: right for the component it walks, and for the others
+    /// when they were filled in the same order, as components spawned together are. A right
+    /// guess is one load and a compare, where finding the slot from the entity is two loads
+    /// in two arrays; a wrong one costs the compare and falls back.
+    #[inline]
+    pub fn dense_index_near(&self, entity: Entity, guess: usize) -> Option<usize> {
+        if self.entities.get(guess) == Some(&entity) {
+            return Some(guess);
+        }
+        self.dense_index(entity)
+    }
+
     pub fn contains(&self, entity: Entity) -> bool {
         self.dense_index(entity).is_some()
     }

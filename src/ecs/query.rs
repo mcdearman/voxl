@@ -38,11 +38,16 @@ pub unsafe trait QueryData {
     /// Same as `fetch`.
     unsafe fn driver<'f>(fetch: &'f Self::Fetch<'_>) -> Option<&'f [Entity]>;
 
+    /// `at` is where `entity` sits in the list being walked, or anything at all when there
+    /// is no list: a guess at where it sits in this fetch's storage too, which is right for
+    /// the storage that list came from, and for any other that was filled in the same order.
+    ///
     /// # Safety
     /// For mutable data, the caller must not create two live items for the same entity.
     unsafe fn get<'q>(
         fetch: &Self::Fetch<'_>,
         entity: Entity,
+        at: usize,
         ticks: SystemTicks,
     ) -> Option<Self::Item<'q>>;
 }
@@ -71,9 +76,16 @@ pub unsafe trait QueryFilter {
     /// Same as `fetch`.
     unsafe fn driver<'f>(fetch: &'f Self::Fetch<'_>) -> Option<&'f [Entity]>;
 
+    /// `at` is a guess at where `entity` sits, as for [`QueryData::get`].
+    ///
     /// # Safety
     /// Same as `fetch`.
-    unsafe fn matches(fetch: &Self::Fetch<'_>, entity: Entity, ticks: SystemTicks) -> bool;
+    unsafe fn matches(
+        fetch: &Self::Fetch<'_>,
+        entity: Entity,
+        at: usize,
+        ticks: SystemTicks,
+    ) -> bool;
 }
 
 fn storage<C: Component>(world: &World) -> &ComponentSet<C> {
@@ -113,8 +125,13 @@ unsafe impl<T: Component> QueryData for &T {
         Some(fetch.entities())
     }
 
-    unsafe fn get<'q>(fetch: &Self::Fetch<'_>, entity: Entity, _: SystemTicks) -> Option<&'q T> {
-        let dense = fetch.dense_index(entity)?;
+    unsafe fn get<'q>(
+        fetch: &Self::Fetch<'_>,
+        entity: Entity,
+        at: usize,
+        _: SystemTicks,
+    ) -> Option<&'q T> {
+        let dense = fetch.dense_index_near(entity, at)?;
         Some(fetch.value(dense))
     }
 }
@@ -145,9 +162,10 @@ unsafe impl<T: Component> QueryData for &mut T {
     unsafe fn get<'q>(
         fetch: &Self::Fetch<'_>,
         entity: Entity,
+        at: usize,
         ticks: SystemTicks,
     ) -> Option<Mut<'q, T>> {
-        let dense = fetch.dense_index(entity)?;
+        let dense = fetch.dense_index_near(entity, at)?;
         Some(Mut {
             value: fetch.value_mut(dense),
             ticks: fetch.ticks_mut(dense),
@@ -174,6 +192,7 @@ unsafe impl QueryData for Entity {
     unsafe fn get<'q>(
         _: &Self::Fetch<'_>,
         entity: Entity,
+        _: usize,
         _: SystemTicks,
     ) -> Option<Self::Item<'q>> {
         Some(entity)
@@ -207,9 +226,10 @@ unsafe impl<D: QueryData> QueryData for Option<D> {
     unsafe fn get<'q>(
         fetch: &Self::Fetch<'_>,
         entity: Entity,
+        at: usize,
         ticks: SystemTicks,
     ) -> Option<Self::Item<'q>> {
-        Some(D::get(fetch, entity, ticks))
+        Some(D::get(fetch, entity, at, ticks))
     }
 }
 
@@ -244,10 +264,11 @@ macro_rules! impl_query_data_tuple {
             unsafe fn get<'q>(
                 fetch: &Self::Fetch<'_>,
                 entity: Entity,
+                at: usize,
                 ticks: SystemTicks,
             ) -> Option<Self::Item<'q>> {
                 let ($($D,)*) = fetch;
-                Some(($($D::get($D, entity, ticks)?,)*))
+                Some(($($D::get($D, entity, at, ticks)?,)*))
             }
         }
 
@@ -295,8 +316,8 @@ unsafe impl<T: Component> QueryFilter for With<T> {
         Some(fetch.entities())
     }
 
-    unsafe fn matches(fetch: &Self::Fetch<'_>, entity: Entity, _: SystemTicks) -> bool {
-        fetch.contains(entity)
+    unsafe fn matches(fetch: &Self::Fetch<'_>, entity: Entity, at: usize, _: SystemTicks) -> bool {
+        fetch.dense_index_near(entity, at).is_some()
     }
 }
 
@@ -319,8 +340,8 @@ unsafe impl<T: Component> QueryFilter for Without<T> {
         None
     }
 
-    unsafe fn matches(fetch: &Self::Fetch<'_>, entity: Entity, _: SystemTicks) -> bool {
-        !fetch.contains(entity)
+    unsafe fn matches(fetch: &Self::Fetch<'_>, entity: Entity, at: usize, _: SystemTicks) -> bool {
+        fetch.dense_index_near(entity, at).is_none()
     }
 }
 
@@ -346,9 +367,14 @@ macro_rules! impl_tick_filter {
                 Some(fetch.entities())
             }
 
-            unsafe fn matches(fetch: &Self::Fetch<'_>, entity: Entity, ticks: SystemTicks) -> bool {
+            unsafe fn matches(
+                fetch: &Self::Fetch<'_>,
+                entity: Entity,
+                at: usize,
+                ticks: SystemTicks,
+            ) -> bool {
                 fetch
-                    .dense_index(entity)
+                    .dense_index_near(entity, at)
                     .is_some_and(|dense| fetch.ticks_at(dense).$check(ticks.last_run))
             }
         }
@@ -383,9 +409,14 @@ macro_rules! impl_query_filter_tuple {
                 best
             }
 
-            unsafe fn matches(fetch: &Self::Fetch<'_>, entity: Entity, ticks: SystemTicks) -> bool {
+            unsafe fn matches(
+                fetch: &Self::Fetch<'_>,
+                entity: Entity,
+                at: usize,
+                ticks: SystemTicks,
+            ) -> bool {
                 let ($($F,)*) = fetch;
-                true $(&& $F::matches($F, entity, ticks))*
+                true $(&& $F::matches($F, entity, at, ticks))*
             }
         }
     };
@@ -443,9 +474,9 @@ impl<'w, D: QueryData, F: QueryFilter> Query<'w, D, F> {
 
     /// # Safety
     /// For mutable data, the caller must not create two live items for the same entity.
-    unsafe fn fetch_item(&self, entity: Entity) -> Option<D::Item<'_>> {
-        if F::matches(&self.filter, entity, self.ticks) {
-            D::get(&self.data, entity, self.ticks)
+    unsafe fn fetch_item(&self, entity: Entity, at: usize) -> Option<D::Item<'_>> {
+        if F::matches(&self.filter, entity, at, self.ticks) {
+            D::get(&self.data, entity, at, self.ticks)
         } else {
             None
         }
@@ -455,7 +486,8 @@ impl<'w, D: QueryData, F: QueryFilter> Query<'w, D, F> {
         if !self.world.contains_entity(entity) {
             return None;
         }
-        self.fetch_item(entity)
+        // Asked for by name, not met on a walk: there is no guess to make.
+        self.fetch_item(entity, usize::MAX)
     }
 
     unsafe fn iter_unchecked(&self) -> QueryIter<'_, 'w, D, F> {
@@ -554,10 +586,11 @@ impl<'q, D: QueryData, F: QueryFilter> Iterator for QueryIter<'q, '_, D, F> {
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
-            let entity = self.entities.get(self.pos)?;
+            let at = self.pos;
+            let entity = self.entities.get(at)?;
             self.pos += 1;
             // SAFETY: each entity is visited once; mutable iteration borrows the query mutably.
-            if let Some(item) = unsafe { self.query.fetch_item(entity) } {
+            if let Some(item) = unsafe { self.query.fetch_item(entity, at) } {
                 return Some(item);
             }
         }
