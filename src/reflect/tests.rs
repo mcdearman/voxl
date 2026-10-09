@@ -386,7 +386,12 @@ fn engine_plugins_register_their_components() {
     let names: Vec<_> = registry.iter().map(|t| t.name).collect();
     assert_eq!(
         names,
-        ["voxl.Transform", "voxl.Parent", "voxl.Interpolate", "test.Health"]
+        [
+            "voxl.Transform",
+            "voxl.Parent",
+            "voxl.Interpolate",
+            "test.Health"
+        ]
     );
 }
 
@@ -417,4 +422,48 @@ fn scenes_save_to_and_load_from_files_through_an_app() {
 
     assert!(Scene::load(dir.join("missing.json")).is_err());
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_level_keeps_its_settings() {
+    use crate::render::{AmbientLight, Fog};
+
+    let mut registry = registry();
+    registry.register_resource::<Fog>();
+    registry.register_resource::<AmbientLight>();
+    let mut world = World::new();
+    world.spawn(Transform::IDENTITY);
+    let fog = Fog {
+        density: 0.02,
+        start: 40.0,
+        ..Default::default()
+    };
+    world.insert_resource(fog);
+
+    // Only what the world has is saved; a scene without resources has no such key at all.
+    let scene = Scene::capture(&world, &registry);
+    assert_eq!(scene.resources.len(), 1);
+    let text = scene.to_json();
+    assert!(text.contains("voxl.Fog") && !text.contains("voxl.AmbientLight"));
+    assert!(!Scene::capture(&World::new(), &registry)
+        .to_json()
+        .contains("resources"));
+
+    let mut other = World::new();
+    other.insert_resource(Fog::default());
+    let mut scene = Scene::from_json(&text).unwrap();
+    scene.resources.push(("game.Weather".into(), Value::Null));
+    scene
+        .resources
+        .push(("voxl.AmbientLight".into(), Value::Int(3)));
+    let spawned = scene.spawn(&mut other, &registry);
+    assert_eq!(other.get_resource::<Fog>(), Some(&fog));
+    assert_eq!(spawned.skipped.len(), 2, "{:?}", spawned.skipped);
+    assert!(!other.contains_resource::<AmbientLight>());
+
+    // A part of the world saved as a prefab carries no settings.
+    let root = world.spawn(Transform::IDENTITY);
+    assert!(Scene::capture_tree(&world, &registry, root)
+        .resources
+        .is_empty());
 }

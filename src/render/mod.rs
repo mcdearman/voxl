@@ -293,7 +293,8 @@ impl Environment {
 }
 
 /// Extra flat light from every direction, on top of the sky's.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Reflect)]
+#[reflect(name = "voxl.AmbientLight", default)]
 pub struct AmbientLight {
     pub color: Color,
     pub intensity: f32,
@@ -309,7 +310,8 @@ impl Default for AmbientLight {
 }
 
 /// Haze that thickens with distance and thins with height, lit by the sky. Off by default.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Reflect)]
+#[reflect(name = "voxl.Fog", default)]
 pub struct Fog {
     /// Extinction per metre at `base_height`.
     pub density: f32,
@@ -912,7 +914,9 @@ impl Plugin for RenderPlugin {
             .register_type::<Mesh3d>()
             .register_type::<Material>()
             .register_type::<Lods>()
-            .register_type::<NotShadowCaster>();
+            .register_type::<NotShadowCaster>()
+            .register_resource_type::<AmbientLight>()
+            .register_resource_type::<Fog>();
         app.init_resource::<Assets<Mesh>>()
             .init_resource::<Assets<Image>>()
             .init_resource::<AmbientLight>()

@@ -116,6 +116,15 @@ impl App {
 
     /// Makes a component type reachable by name, so scenes can save and load it and tools
     /// can inspect it.
+    /// Makes a resource reachable by name, and saved with scenes.
+    pub fn register_resource_type<R: Reflect>(&mut self) -> &mut Self {
+        self.world.init_resource::<TypeRegistry>();
+        self.world
+            .resource_mut::<TypeRegistry>()
+            .register_resource::<R>();
+        self
+    }
+
     pub fn register_type<C: Component + Reflect>(&mut self) -> &mut Self {
         self.world.init_resource::<TypeRegistry>();
         self.world.resource_mut::<TypeRegistry>().register::<C>();

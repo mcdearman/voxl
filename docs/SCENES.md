@@ -75,6 +75,9 @@ for problem in &spawned.skipped {
 - **Assets come back.** A mesh or texture loaded through the [`AssetServer`](ASSETS.md) is
   saved by name (`{"$asset": "image", "name": "textures/bricks.png"}`) and loaded again when
   the scene is, so a scene file works in a later run.
+- **Levels keep their settings.** Registered resources are saved too, and replace the world's
+  when the scene is spawned: `Fog` and `AmbientLight` to begin with, and any of yours after
+  `app.register_resource_type::<Weather>()`. A prefab (`Scene::capture_tree`) carries none.
 - **Files are plain JSON**, indented, with fields in a stable order, so they diff cleanly and
   any tool can read them.
 
@@ -134,6 +137,7 @@ value.set_path("translation.1", Value::Float(4.0));
   `CharacterController`. A saved body keeps its velocity; forces applied that step and
   whether it was asleep are not saved. `Animator` and `Skinned` are not registered: they
   hold a skeleton and clips from a model file, so save the model's name and spawn it again.
-- Resources are not captured. A plugin's components are, once the plugin
+- Only `Fog` and `AmbientLight` are registered among the engine's resources. A plugin's
+  components are saved once the plugin
   [describes](PLUGINS.md#describing-components) them.
 - There are no prefabs (a scene used as a template, with overrides) yet.
