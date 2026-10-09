@@ -30,7 +30,7 @@ use mira::{
     window::{Window, WindowEvents},
 };
 use winit::{
-    event::{ElementState, MouseScrollDelta, WindowEvent},
+    event::{ElementState, Ime, MouseScrollDelta, WindowEvent},
     keyboard::{Key as WinitKey, NamedKey, PhysicalKey},
 };
 
@@ -154,6 +154,11 @@ fn hear<A: App + 'static>(world: &mut World) {
         .get_resource::<WindowEvents>()
         .map_or(Vec::new(), |events| events.0.clone());
     let scale = scale_of(world);
+    // A hidden window is never given the keyboard, yet what is played into it is meant to
+    // be heard: its interface always counts as the one being typed at.
+    let hidden = world
+        .get_resource::<Window>()
+        .is_some_and(Window::is_hidden);
     let mut taken_keys: Vec<KeyCode> = Vec::new();
     let mut taken_buttons: Vec<MouseButton> = Vec::new();
     {
@@ -186,10 +191,12 @@ fn hear<A: App + 'static>(world: &mut World) {
                     })
                 }
                 WindowEvent::MouseWheel { delta, .. } => {
+                    // Armature counts how far the content moves: the wheel turned up, or
+                    // towards the left, is a negative distance.
                     let delta = match delta {
-                        MouseScrollDelta::LineDelta(x, y) => Point::new(x * 20.0, y * 20.0),
+                        MouseScrollDelta::LineDelta(x, y) => Point::new(-x * 48.0, -y * 48.0),
                         MouseScrollDelta::PixelDelta(p) => {
-                            Point::new(p.x as f32 / scale, p.y as f32 / scale)
+                            Point::new(-p.x as f32 / scale, -p.y as f32 / scale)
                         }
                     };
                     Some(Event::Wheel {
@@ -220,7 +227,33 @@ fn hear<A: App + 'static>(world: &mut World) {
                         text: event.text.as_ref().map(|text| text.to_string()),
                     }))
                 }
-                WindowEvent::Focused(focused) => Some(Event::WindowFocus(focused)),
+                WindowEvent::Focused(focused) => Some(Event::WindowFocus(focused || hidden)),
+                // Finished text, from an input method or played in from outside. A line
+                // break in it is Enter.
+                WindowEvent::Ime(Ime::Commit(text)) => {
+                    let mut lines = text.split('\n');
+                    let mut line = lines.next();
+                    while let Some(typed) = line {
+                        if !typed.is_empty() {
+                            host.ui
+                                .event(host.renderer.text(), Event::Ime(typed.to_owned()));
+                        }
+                        line = lines.next();
+                        if line.is_some() {
+                            for pressed in [true, false] {
+                                let enter = Event::Key(KeyEvent {
+                                    key: Key::Enter,
+                                    pressed,
+                                    repeat: false,
+                                    modifiers: host.modifiers,
+                                    text: None,
+                                });
+                                host.ui.event(host.renderer.text(), enter);
+                            }
+                        }
+                    }
+                    None
+                }
                 _ => None,
             };
             let Some(translated) = translated else {

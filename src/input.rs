@@ -105,6 +105,8 @@ pub enum Played {
     Motion(Vec2),
     /// Where the cursor is, in physical pixels.
     Cursor(Vec2),
+    /// The wheel turned, in lines: up and to the left are positive.
+    Scroll(Vec2),
 }
 
 /// Input waiting to be played into the game. It arrives at the start of the next frame the
@@ -115,6 +117,8 @@ pub struct InjectedInput {
     now: Vec<Played>,
     /// What to play after this many more frames: the releases of taps, mostly.
     later: Vec<(u32, Played)>,
+    /// Text waiting to be typed.
+    typed: Vec<String>,
 }
 
 impl InjectedInput {
@@ -126,6 +130,13 @@ impl InjectedInput {
     /// Plays something after the next `frames` frames have run.
     pub fn play_after(&mut self, frames: u32, played: Played) {
         self.later.push((frames, played));
+    }
+
+    /// Types text, as an interface hears typing: it goes to whatever field has the keyboard
+    /// and not to the game's keys, and it arrives even while the game is paused. A line
+    /// break in it is Enter.
+    pub fn type_text(&mut self, text: impl Into<String>) {
+        self.typed.push(text.into());
     }
 
     /// Presses a key and lets it go `frames` frames later.
@@ -158,6 +169,7 @@ pub(crate) fn play_injected(world: &mut World, running: bool) {
     let Some(injected) = world.get_resource_mut::<InjectedInput>() else {
         return;
     };
+    let typed = std::mem::take(&mut injected.typed);
     let due = if running {
         injected.due()
     } else {
@@ -192,6 +204,14 @@ pub(crate) fn play_injected(world: &mut World, running: bool) {
                 });
             }
             Played::Motion(delta) => world.resource_mut::<Mouse>().delta += delta,
+            Played::Scroll(lines) => {
+                world.resource_mut::<Mouse>().scroll += lines;
+                heard.push(winit::event::WindowEvent::MouseWheel {
+                    device_id: winit::event::DeviceId::dummy(),
+                    delta: winit::event::MouseScrollDelta::LineDelta(lines.x, lines.y),
+                    phase: winit::event::TouchPhase::Moved,
+                });
+            }
             Played::Cursor(position) => {
                 world.resource_mut::<Mouse>().position = Some(position);
                 heard.push(winit::event::WindowEvent::CursorMoved {
@@ -204,6 +224,12 @@ pub(crate) fn play_injected(world: &mut World, running: bool) {
             }
         }
     }
+    // Typing reaches an interface the way an input method's does: as finished text.
+    heard.extend(
+        typed
+            .into_iter()
+            .map(|text| winit::event::WindowEvent::Ime(winit::event::Ime::Commit(text))),
+    );
     if let Some(events) = world.get_resource_mut::<crate::window::WindowEvents>() {
         events.0.extend(heard);
     }

@@ -51,6 +51,11 @@ fn style(&self, _: Scheme) -> Style {
 | `button(label, message)` | sends `message` on a click, or Enter or Space with focus |
 | `toggle(label, on, message)` | a switch |
 | `slider(range, value, message)` | dragging, clicking the track, and arrow keys |
+| `field(hint, value, message)` | a line of text to type into: caret, selection, word jumps, clipboard; `.on_submit(message)` for Enter, `.width(..)`, `.autofocus()` |
+| `tabs(labels, chosen, message)` | a row of tabs: the pages of a menu |
+| `choice(options, chosen, message)` | one option at a time between two arrows: a difficulty, a screen size |
+| `list(items, chosen, message)` | rows to pick one of; up and down arrows with focus |
+| `scroll(height, child)` | a window onto something taller, scrolled by the wheel or its bar |
 | `bar(fraction)` | health, progress, a clock |
 | `column()`, `row()`, `stack()` | Armature's own layout |
 
@@ -85,6 +90,12 @@ lit while that signal is true.
 - **Add an input:** drag from a box's output onto another box.
 - **Change a rule:** right-click a box to move it on to the next operation (and, or, not,
   count, sum).
+- **Type it:** click a box's name to give it another; what reads it follows. Click its lower
+  line, or press Enter with the pointer over the box, to type what it is: a value (`true`,
+  `42`) makes it a constant, and an operation makes it that (`and`, `or`, `not`, `count`,
+  `sum`, `select`, `timer`, `held_for 5`, and `<`, `<=`, `==`, `>=`, `>`). Enter takes what
+  was typed, Escape or a click elsewhere drops it, and something that can't be (a name
+  already taken, a word that is no operation) leaves the field open to be put right.
 - **Add and remove:** right-click the panel's background for a new constant, there; press
   Backspace with the pointer over a box to remove it. Sources belong to the game's code and
   can't be removed or changed, only forced.
@@ -114,14 +125,22 @@ interface layer:
 
 Input played from outside (`mira-debug input`, an agent's `mira_input`) reaches the interface
 too: a pointer position and a button press are put among the window's events, so a click an
-agent makes lands on a panel as a person's would.
+agent makes lands on a panel as a person's would, and the wheel (`mouse_scroll`) scrolls
+what the pointer is over. Text is typed the same way
+(`InjectedInput::type_text`, or `text` in `mira_input`): it goes to the field that has the
+keyboard, as finished text, and a line break in it is Enter. Click the field first. A hidden
+window's interface always counts as having the keyboard, since nobody else is typing.
+
+A field keeps what is typed from the game: while it has the keyboard, the keys it uses are
+taken out of `ButtonInput`, so typing a name does not also walk the player about.
 
 ## What isn't here yet
 
-- More controls: a text field, a list, a dropdown, tabs; text entry is what the signal panel
-  needs next, to name signals and type numbers.
+- A dropdown, and anything else that opens over its neighbours: Armature hands events to
+  widgets in the order they are laid out, so what pops up over an earlier one does not get
+  the click first. `choice` does that job meanwhile.
 - Interface in the world (a health bar over a unit), gamepad focus, and laying out for
   different screen sizes.
-- In the signal panel: naming a new signal, choosing timers and comparisons, and typing a
-  number. Boxes not yet placed are laid out by column only, so wires cross.
+- In the signal panel: boxes not yet placed are laid out by column only, so wires cross, and
+  an operation is typed, not picked from a list.
 - Armature's glass (backdrop blur) can't see the game behind it, so it is left off.

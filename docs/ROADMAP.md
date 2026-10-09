@@ -284,7 +284,8 @@ derived from other values, which the engine keeps true.
 - [x] In the panel: adding and removing inputs by dragging wires, changing a box's
       operation, adding constants, removing signals
 - [x] The panel's layout is kept with the rules and saved with them
-- [ ] Naming signals, timers and comparisons from the panel; typing numbers
+- [x] Naming signals, timers and comparisons from the panel; typing numbers (click a box's
+      name or its lower line; `Signals::rename`, `signal_rename`)
 - [ ] The graphical editor of the graph (Chris, October 2026): signals and connections laid
       out and edited by hand while the game runs; in the game's panel and in the editor
       (Phase 5)
@@ -313,7 +314,10 @@ dying in any order; the timer is right in every case because no code ever sets i
       (`crates/mira_ui`: input shared with the game, drawn over the frame); see [UI.md](UI.md)
 - [x] A look and a first set of controls for games (`mira_ui::kit`: theme, panel, button,
       toggle, slider, bar, anchoring)
-- [ ] Text fields, lists, dropdowns, tabs; interface in the world; gamepad focus
+- [x] A text field (`kit::field`), and typing played in from outside (`mira_input` `text`)
+- [x] Tabs, a choice between options, lists and scrolling (`kit::tabs`, `choice`, `list`,
+      `scroll`)
+- [ ] Dropdowns and other pop-ups; interface in the world; gamepad focus
 - [ ] Audio: mixing, 3D positioning, streaming music
 - [ ] Input: named actions, rebinding, gamepads
 - [ ] Animation graph: state machines, blend trees, retargeting, root motion

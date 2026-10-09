@@ -166,6 +166,8 @@ const TOOLS: &[Tool] = &[
             "frames?: integer: how long a tap is held (default 1)",
             "mouse_motion?: array: [dx, dy] of raw mouse movement, as mouselook reads it",
             "mouse_position?: array: [x, y] of the cursor in pixels",
+            "mouse_scroll?: array: [x, y] lines the wheel turns, where the cursor is; positive y scrolls up",
+            "text?: string: text to type into whichever field of the game's interface has the keyboard (click the field first); a line break in it is Enter. It arrives even while the game is paused, and the game's own keys do not see it",
         ],
     },
     Tool {
@@ -239,6 +241,14 @@ const TOOLS: &[Tool] = &[
         command: "signals_load",
         about: "Reads rules from a file written by signals_save and defines them, replacing rules of the same name. Returns how many were defined.",
         arguments: &["path: string: the file to read"],
+    },
+    Tool {
+        command: "signal_rename",
+        about: "Gives a rule another name; everything that reads it follows. Sources keep the names the game gave them.",
+        arguments: &[
+            "name: string: the signal's name now",
+            "to: string: its new name, one word",
+        ],
     },
     Tool {
         command: "signal_remove",
@@ -743,6 +753,55 @@ mod tests {
             shot.get_path("content.0.data"),
             Some(&text(base64("\u{89}PNG fake 640".as_bytes())))
         );
+    }
+
+    #[test]
+    fn an_agent_can_type_into_an_interface() {
+        use crate::{
+            input::{ButtonInput, InputPlugin, KeyCode},
+            window::WindowEvents,
+        };
+        use winit::event::{Ime, MouseScrollDelta, WindowEvent};
+
+        let mut app = App::new();
+        app.add_plugins(TimePlugin)
+            .add_plugins(InputPlugin)
+            .init_resource::<WindowEvents>();
+        let mut game = Local(app);
+
+        // Typing reaches an interface even while the game is held still, as finished text
+        // among the window's events, and is no key press as far as the game can tell.
+        tool(&mut game, "mira_pause", "{}");
+        let (_, failed) = tool(&mut game, "mira_input", r#"{"text": "45\n"}"#);
+        assert!(!failed);
+        tool(&mut game, "mira_input", r#"{"mouse_scroll": [0, -3]}"#);
+        game.0.update();
+        let heard = &game.0.world.resource::<WindowEvents>().0;
+        assert!(
+            matches!(
+                &heard[..],
+                [
+                    WindowEvent::Ime(Ime::Commit(text)),
+                    WindowEvent::MouseWheel {
+                        delta: MouseScrollDelta::LineDelta(_, lines),
+                        ..
+                    }
+                ] if text == "45\n" && *lines == -3.0
+            ),
+            "{heard:?}"
+        );
+        assert_eq!(
+            game.0
+                .world
+                .resource::<ButtonInput<KeyCode>>()
+                .get_pressed()
+                .count(),
+            0
+        );
+
+        // Nothing to play is still a refusal that says what can be played.
+        let (why, failed) = tool(&mut game, "mira_input", "{}");
+        assert!(failed && why[0].contains("or `text`"), "{why:?}");
     }
 
     #[test]

@@ -13,6 +13,9 @@
 //!   panel's background for a new constant. Backspace over a box removes it.
 //! - Click a box's lamp to force the signal true, again for false, again to let it go.
 //! - Click a constant's value to flip it; scroll over a number to change it.
+//! - Click a box's name to type a new one. Click its lower line, or press Enter over it, to
+//!   type what it is: a value (`true`, `42`) makes it a constant, and an operation (`and`,
+//!   `timer`, `held_for 5`, `>=`) makes it that. Enter takes what was typed, Escape drops it.
 //! - Drag a box by its body to move it; drag the title to move the whole panel.
 //! - F1 hides and shows the panel.
 //!
@@ -30,7 +33,7 @@ use mira::{
     signal::{NodeInfo, Op, Signal, Signals},
 };
 
-use crate::{UiHost, UiPlugin};
+use crate::{kit::field, UiHost, UiPlugin};
 
 /// A change to the graph made in the panel, waiting to be made to the game.
 #[derive(Clone, Debug, PartialEq)]
@@ -64,6 +67,11 @@ pub enum Edit {
     Remove {
         node: String,
     },
+    /// Give a rule another name; what reads it follows.
+    Rename {
+        node: String,
+        to: String,
+    },
     /// Record where a box was put, so the graph is drawn the same way next time.
     Place {
         node: String,
@@ -86,6 +94,74 @@ enum Held {
     Panel { grip: Point },
 }
 
+/// Which line of a box is being typed over.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Line {
+    /// The signal's name.
+    Name,
+    /// What it is: a constant's value, or the operation that works it out.
+    Meaning,
+}
+
+/// Text being typed over a box.
+#[derive(Clone, Debug, PartialEq)]
+struct Typing {
+    node: String,
+    line: Line,
+    text: String,
+}
+
+/// What typed text says a signal is.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Meant {
+    Value(Signal),
+    Op(Op),
+}
+
+/// Reads what was typed on a box's lower line: `true`, `false` or a number is a constant;
+/// otherwise an operation by its name or sign, with its seconds after it if it has any.
+fn meant(text: &str) -> Option<Meant> {
+    let text = text.trim().to_lowercase().replace("held for", "held_for");
+    match text.as_str() {
+        "true" => return Some(Meant::Value(Signal::Bool(true))),
+        "false" => return Some(Meant::Value(Signal::Bool(false))),
+        _ => {}
+    }
+    if let Ok(number) = text.parse::<f64>() {
+        return number
+            .is_finite()
+            .then_some(Meant::Value(Signal::Number(number)));
+    }
+    let mut words = text.split_whitespace();
+    let name = match words.next()? {
+        "<" => "less",
+        "<=" | "≤" => "less_or_equal",
+        "=" | "==" => "equal",
+        ">=" | "≥" => "greater_or_equal",
+        ">" => "greater",
+        name => name,
+    };
+    let seconds = words.next().map(str::parse::<f64>);
+    if name == "constant" || matches!(seconds, Some(Err(_))) || words.next().is_some() {
+        return None;
+    }
+    let seconds = seconds.and_then(Result::ok);
+    Op::named(name, None, seconds).ok().map(Meant::Op)
+}
+
+/// What a box's lower line says, written the way [`meant`] reads it.
+fn meaning_text(node: &NodeInfo) -> String {
+    match node.kind.as_str() {
+        "constant" => value_text(node.value),
+        "compare Less" => "<".to_owned(),
+        "compare LessOrEqual" => "<=".to_owned(),
+        "compare Equal" => "==".to_owned(),
+        "compare GreaterOrEqual" => ">=".to_owned(),
+        "compare Greater" => ">".to_owned(),
+        kind => kind.replace("held for", "held_for"),
+    }
+}
+
 /// The panel's state.
 pub struct SignalGraph {
     nodes: Vec<NodeInfo>,
@@ -95,6 +171,11 @@ pub struct SignalGraph {
     held: Held,
     pointer: Point,
     hidden: bool,
+    /// Where the pointer was when it last took hold of something, and whether it has gone
+    /// anywhere since: a box let go where it was picked up was clicked, not moved.
+    pressed: Point,
+    moved: bool,
+    typing: Option<Typing>,
     edits: Vec<Edit>,
 }
 
@@ -107,6 +188,9 @@ impl Default for SignalGraph {
             held: Held::Nothing,
             pointer: Point::new(0.0, 0.0),
             hidden: false,
+            pressed: Point::new(0.0, 0.0),
+            moved: false,
+            typing: None,
             edits: Vec::new(),
         }
     }
@@ -122,6 +206,25 @@ impl SignalGraph {
         self.hidden
     }
 
+    /// Starts typing over a line of a box, with what the line says now. A source's lines
+    /// are the game's to say.
+    fn type_over(&mut self, node: &str, line: Line) {
+        let Some(known) = self.nodes.iter().find(|known| known.name == node) else {
+            return;
+        };
+        if known.kind == "source" {
+            return;
+        }
+        self.typing = Some(Typing {
+            node: node.to_owned(),
+            line,
+            text: match line {
+                Line::Name => node.to_owned(),
+                Line::Meaning => meaning_text(known),
+            },
+        });
+    }
+
     /// The edits made since this was last called.
     pub fn take_edits(&mut self) -> Vec<Edit> {
         std::mem::take(&mut self.edits)
@@ -135,6 +238,16 @@ pub enum Message {
     Hold(HeldAt),
     Release,
     Edit(Edit),
+    /// Start typing over a box.
+    Type {
+        node: String,
+        line: Line,
+    },
+    Typed(String),
+    /// Take what was typed.
+    Enter,
+    /// Drop what was typed.
+    Leave,
 }
 
 /// What a press landed on.
@@ -156,6 +269,10 @@ impl App for SignalGraph {
                 self.pointer = at;
                 match &self.held {
                     Held::Node { name, grip } => {
+                        self.moved |= !near(at, self.pressed, 3.0);
+                        if !self.moved {
+                            return;
+                        }
                         let at = Point::new(
                             at.x - grip.x - self.origin.x,
                             at.y - grip.y - self.origin.y,
@@ -168,6 +285,9 @@ impl App for SignalGraph {
                 }
             }
             Message::Hold(at) => {
+                self.pressed = self.pointer;
+                self.moved = false;
+                self.typing = None;
                 self.held = match at {
                     HeldAt::Node { name, grip } => Held::Node { name, grip },
                     HeldAt::Wire { node, input } => Held::Wire { node, input },
@@ -176,16 +296,58 @@ impl App for SignalGraph {
                 }
             }
             Message::Release => {
-                // A box that was moved is where it is from now on.
-                if let Held::Node { name, .. } = &self.held {
-                    if let Some(at) = self.placed.get(name) {
+                // A box that was moved is where it is from now on. One let go where it was
+                // picked up was clicked: on its name or its lower line, to type there.
+                if let Held::Node { name, grip } = std::mem::take(&mut self.held) {
+                    if !self.moved {
+                        let line = if grip.y - TITLE - PAD < BOX.h * 0.5 {
+                            Line::Name
+                        } else {
+                            Line::Meaning
+                        };
+                        self.type_over(&name, line);
+                    } else if let Some(at) = self.placed.get(&name) {
                         self.edits.push(Edit::Place {
-                            node: name.clone(),
+                            node: name,
                             at: [at.x, at.y],
                         });
                     }
                 }
                 self.held = Held::Nothing
+            }
+            Message::Type { node, line } => self.type_over(&node, line),
+            Message::Typed(text) => {
+                if let Some(typing) = &mut self.typing {
+                    typing.text = text;
+                }
+            }
+            Message::Leave => self.typing = None,
+            Message::Enter => {
+                let Some(typing) = self.typing.take() else {
+                    return;
+                };
+                let node = typing.node.clone();
+                match typing.line {
+                    Line::Name => {
+                        let to = typing.text.trim().to_owned();
+                        let taken = self.nodes.iter().any(|known| known.name == to);
+                        if to == node {
+                        } else if to.is_empty() || to.contains(char::is_whitespace) || taken {
+                            // Not a name it can have: the field stays, to be put right.
+                            self.typing = Some(typing);
+                        } else {
+                            if let Some(at) = self.placed.remove(&node) {
+                                self.placed.insert(to.clone(), at);
+                            }
+                            self.edits.push(Edit::Rename { node, to });
+                        }
+                    }
+                    Line::Meaning => match meant(&typing.text) {
+                        Some(Meant::Value(value)) => self.edits.push(Edit::Set { node, value }),
+                        Some(Meant::Op(op)) => self.edits.push(Edit::Op { node, op }),
+                        None => self.typing = Some(typing),
+                    },
+                }
             }
             Message::Edit(edit) => {
                 // A constant made here appears where it was asked for.
@@ -201,6 +363,7 @@ impl App for SignalGraph {
                 if let Edit::Remove { node } = &edit {
                     self.placed.remove(node);
                 }
+                self.typing = None;
                 self.edits.push(edit)
             }
         }
@@ -210,21 +373,63 @@ impl App for SignalGraph {
         if self.hidden {
             return Element::new(Circuit::default());
         }
-        Element::new(Circuit {
-            plan: Plan::of(&self.nodes, &self.placed, self.origin),
+        let plan = Plan::of(&self.nodes, &self.placed, self.origin);
+        // The field sits over the line it replaces.
+        let mut over = None;
+        let typed = self.typing.as_ref().and_then(|typing| {
+            let index = self
+                .nodes
+                .iter()
+                .position(|node| node.name == typing.node)?;
+            over = Some((index, typing.line));
+            let b = plan.boxes[index];
+            let (at, width) = match typing.line {
+                Line::Name => (Point::new(b.x + 26.0, b.y - 2.0), b.w - 30.0),
+                Line::Meaning => (Point::new(b.x + 4.0, b.y + b.h * 0.5 - 3.0), b.w - 8.0),
+            };
+            let field = field("", &typing.text, Message::Typed as fn(String) -> Message)
+                .on_submit(Message::Enter)
+                .on_cancel(Message::Leave)
+                .width(width)
+                .autofocus();
+            Some((at, Element::from(field)))
+        });
+        let circuit = Element::new(Circuit {
+            plan,
             nodes: self.nodes.clone(),
             held: self.held.clone(),
             pointer: self.pointer,
+            typed: over,
             ..Circuit::default()
-        })
+        });
+        match typed {
+            Some((at, field)) => Element::new(Typed {
+                at,
+                size: Size::new(0.0, 0.0),
+                layers: [circuit, field],
+            }),
+            None => circuit,
+        }
     }
 
     fn on_key(&self, key: &KeyEvent) -> Option<Message> {
-        if !key.pressed || key.repeat {
+        // While something is being typed, the keys are the field's.
+        if !key.pressed || key.repeat || self.typing.is_some() {
             return None;
         }
         match key.key {
             Key::F(1) => Some(Message::Toggle),
+            // Over a box that isn't a source, Enter is for typing what it is.
+            Key::Enter if !self.hidden => {
+                let plan = Plan::of(&self.nodes, &self.placed, self.origin);
+                let over = (0..self.nodes.len())
+                    .find(|&index| plan.boxes[index].contains(self.pointer))?;
+                let node = &self.nodes[over];
+                (node.kind != "source").then(|| Message::Type {
+                    node: node.name.clone(),
+                    line: Line::Meaning,
+                })
+            }
             // Over a box that isn't a source, these take it out of the graph.
             Key::Backspace | Key::Delete if !self.hidden => {
                 let plan = Plan::of(&self.nodes, &self.placed, self.origin);
@@ -284,6 +489,10 @@ fn apply_edits(world: &mut World) {
             }
             Edit::Remove { node } => {
                 signals.remove(&node);
+            }
+            Edit::Rename { node, to } => {
+                // A name that can't be had is refused there; the box keeps its old one.
+                let _ = signals.rename(&node, &to);
             }
             Edit::Place { node, at } => signals.place(&node, at),
         }
@@ -435,7 +644,47 @@ fn kind_text(kind: &str) -> &str {
     }
 }
 
-// --- the widget ---
+// --- the widgets ---
+
+/// The circuit with a field over it, where something is being typed.
+struct Typed {
+    at: Point,
+    size: Size,
+    layers: [Element<Message>; 2],
+}
+
+impl Widget<Message> for Typed {
+    fn children_mut(&mut self) -> &mut [Element<Message>] {
+        &mut self.layers
+    }
+
+    fn layout(&mut self, cx: &mut Cx, limits: Limits) -> Size {
+        let whole = self.layers[0].layout(cx, limits);
+        self.layers[0].set_position(Point::new(0.0, 0.0));
+        self.size = self.layers[1].layout(cx, Limits::loose(limits.max));
+        self.layers[1].set_position(self.at);
+        whole
+    }
+
+    fn draw(&self, cx: &mut DrawCx) {
+        self.layers[0].draw(cx);
+        self.layers[1].draw(cx);
+    }
+
+    fn event(&mut self, cx: &mut EventCx<Message>, event: &Event) -> Status {
+        // A press anywhere else is the end of typing.
+        if let Event::PointerPressed { pos, .. } = event {
+            let field = Rect::new(self.at.x, self.at.y, self.size.w, self.size.h);
+            if !field.contains(*pos) {
+                cx.emit(Message::Leave);
+            }
+        }
+        match self.layers[1].event(cx, event) {
+            Status::Captured => Status::Captured,
+            Status::Ignored => self.layers[0].event(cx, event),
+        }
+    }
+}
 
 #[derive(Default)]
 struct Circuit {
@@ -443,6 +692,8 @@ struct Circuit {
     nodes: Vec<NodeInfo>,
     held: Held,
     pointer: Point,
+    /// The box and line a field is over, if one is.
+    typed: Option<(usize, Line)>,
     names: Vec<TextLayout>,
     details: Vec<TextLayout>,
     title: Option<TextLayout>,
@@ -633,7 +884,7 @@ impl Widget<Message> for Circuit {
                 ..name
             };
             cx.text().layout(
-                "Signals      drag ports to wire  ·  click a lamp to force  ·  right-click to change  ·  F1 hides",
+                "Signals      drag ports to wire  ·  click a lamp to force  ·  click a line to type it  ·  right-click to change  ·  F1 hides",
                 &title,
                 None,
             )
@@ -735,21 +986,27 @@ impl Widget<Message> for Circuit {
                 if on { LIT } else { DARK.with_alpha(0.5) },
                 ring,
             );
-            cx.scene.text(
-                &self.names[index],
-                Point::new(b.x + 28.0, b.y + 5.0),
-                Color::WHITE.with_alpha(if on { 1.0 } else { 0.75 }),
-            );
+            // A line being typed over is the field's to show.
+            let typed = |line| self.typed == Some((index, line));
+            if !typed(Line::Name) {
+                cx.scene.text(
+                    &self.names[index],
+                    Point::new(b.x + 28.0, b.y + 5.0),
+                    Color::WHITE.with_alpha(if on { 1.0 } else { 0.75 }),
+                );
+            }
             let detail = if node.problem.is_some() {
                 WARN
             } else {
                 Color::WHITE.with_alpha(0.5)
             };
-            cx.scene.text(
-                &self.details[index],
-                Point::new(b.x + 10.0, b.y + b.h * 0.5 + 3.0),
-                detail,
-            );
+            if !typed(Line::Meaning) {
+                cx.scene.text(
+                    &self.details[index],
+                    Point::new(b.x + 10.0, b.y + b.h * 0.5 + 3.0),
+                    detail,
+                );
+            }
 
             // Ports: inputs down the left edge, the output on the right.
             for input in 0..node.inputs.len() {
@@ -869,7 +1126,8 @@ impl Widget<Message> for Circuit {
                 match over.map(|index| &self.nodes[index]) {
                     Some(node) if node.kind == "constant" => {
                         if let Signal::Number(value) = node.value {
-                            let step = if delta.y > 0.0 { 1.0 } else { -1.0 };
+                            // The wheel turned up is a negative distance.
+                            let step = if delta.y < 0.0 { 1.0 } else { -1.0 };
                             cx.emit(Message::Edit(Edit::Set {
                                 node: node.name.clone(),
                                 value: Signal::Number(value + step),
@@ -1110,6 +1368,7 @@ mod tests {
                 Edit::Inputs { node, inputs } => assert!(signals.set_inputs(&node, inputs)),
                 Edit::Op { node, op } => assert!(signals.set_op(&node, op)),
                 Edit::Remove { node } => assert!(signals.remove(&node)),
+                Edit::Rename { node, to } => assert!(signals.rename(&node, &to).is_ok()),
                 Edit::Place { node, at } => signals.place(&node, at),
             }
         }
@@ -1121,6 +1380,132 @@ mod tests {
         );
         assert_eq!(signals.number("limit"), 61.0);
     }
+
+    #[test]
+    fn a_box_is_typed_over_to_name_it_and_say_what_it_is() {
+        assert_eq!(meant(" True "), Some(Meant::Value(Signal::Bool(true))));
+        assert_eq!(meant("42.5"), Some(Meant::Value(Signal::Number(42.5))));
+        assert_eq!(meant("timer"), Some(Meant::Op(Op::Timer)));
+        assert_eq!(meant("held for 5"), Some(Meant::Op(Op::HeldFor(5.0))));
+        assert_eq!(meant(">="), meant("greater_or_equal"));
+        assert!(matches!(meant("=="), Some(Meant::Op(Op::Compare(_)))));
+        for nonsense in [
+            "",
+            "held_for",
+            "held_for long",
+            "constant",
+            "and 1 2",
+            "nan",
+            "xor",
+        ] {
+            assert_eq!(meant(nonsense), None, "{nonsense}");
+        }
+        // What a line says is read back as what it is.
+        for node in graph() {
+            if node.kind != "source" {
+                assert!(meant(&meaning_text(&node)).is_some(), "{}", node.kind);
+            }
+        }
+
+        let mut panel = SignalGraph {
+            nodes: graph(),
+            ..Default::default()
+        };
+        let plan = Plan::of(&panel.nodes, &panel.placed, panel.origin);
+        let names: Vec<String> = panel.nodes.iter().map(|node| node.name.clone()).collect();
+        let corner = |name: &str| {
+            let b = plan.boxes[names.iter().position(|known| known == name).unwrap()];
+            Point::new(b.x, b.y)
+        };
+        let click = |panel: &mut SignalGraph, name: &str, down: f32| {
+            let at = Point::new(corner(name).x + 60.0, corner(name).y + down);
+            panel.update(Message::Pointer(at));
+            panel.update(Message::Hold(HeldAt::Node {
+                name: name.into(),
+                grip: Point::new(60.0 + PAD, down + TITLE + PAD),
+            }));
+            panel.update(Message::Release);
+        };
+
+        // A click on the name types a new one; one that is taken, or no name, is not had.
+        click(&mut panel, "calm", 12.0);
+        assert_eq!(
+            panel.typing,
+            Some(Typing {
+                node: "calm".into(),
+                line: Line::Name,
+                text: "calm".into()
+            })
+        );
+        assert!(panel.take_edits().is_empty(), "a click moves nothing");
+        for refused in ["limit", "two words", " "] {
+            panel.update(Message::Typed(refused.into()));
+            panel.update(Message::Enter);
+            assert!(
+                panel.typing.is_some() && panel.edits.is_empty(),
+                "{refused}"
+            );
+        }
+        panel.update(Message::Typed("quiet".into()));
+        panel.update(Message::Enter);
+        assert_eq!(panel.typing, None);
+        assert_eq!(
+            panel.take_edits(),
+            [Edit::Rename {
+                node: "calm".into(),
+                to: "quiet".into()
+            }]
+        );
+
+        // A click on the lower line types what the signal is.
+        click(&mut panel, "limit", 40.0);
+        assert_eq!(
+            panel.typing.as_ref().map(|typing| typing.text.as_str()),
+            Some("60")
+        );
+        panel.update(Message::Typed("ninety".into()));
+        panel.update(Message::Enter);
+        assert!(
+            panel.typing.is_some(),
+            "not a value or an operation: still typing"
+        );
+        panel.update(Message::Typed("90".into()));
+        panel.update(Message::Enter);
+        click(&mut panel, "running", 40.0);
+        panel.update(Message::Typed("or".into()));
+        panel.update(Message::Enter);
+        assert_eq!(
+            panel.take_edits(),
+            [
+                Edit::Set {
+                    node: "limit".into(),
+                    value: Signal::Number(90.0)
+                },
+                Edit::Op {
+                    node: "running".into(),
+                    op: Op::Or
+                }
+            ]
+        );
+
+        // A source is the game's to name; Escape drops what was typed; a drag is no click.
+        click(&mut panel, "held", 12.0);
+        assert_eq!(panel.typing, None);
+        click(&mut panel, "limit", 12.0);
+        panel.update(Message::Leave);
+        assert_eq!(panel.typing, None);
+        let at = Point::new(corner("limit").x + 60.0, corner("limit").y + 12.0);
+        panel.update(Message::Pointer(at));
+        panel.update(Message::Hold(HeldAt::Node {
+            name: "limit".into(),
+            grip: Point::new(60.0 + PAD, 12.0 + TITLE + PAD),
+        }));
+        panel.update(Message::Pointer(Point::new(at.x + 40.0, at.y)));
+        panel.update(Message::Release);
+        assert_eq!(panel.typing, None);
+        assert!(matches!(&panel.take_edits()[..], [Edit::Place { node, .. }] if node == "limit"));
+    }
+
     #[test]
     fn the_graph_itself_can_be_changed_from_the_panel() {
         let circuit = circuit(graph(), Held::Nothing);

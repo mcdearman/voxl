@@ -58,11 +58,18 @@ fn clear_window_events(mut events: crate::ecs::ResMut<WindowEvents>) {
 pub struct Window {
     handle: Arc<winit::window::Window>,
     cursor_grabbed: AtomicBool,
+    hidden: bool,
 }
 
 impl Window {
     pub fn handle(&self) -> &Arc<winit::window::Window> {
         &self.handle
+    }
+
+    /// Whether the window is hidden, with the game rendering off screen. Nobody sits at a
+    /// hidden window: it never has the keyboard, and what input it gets is played in.
+    pub fn is_hidden(&self) -> bool {
+        self.hidden
     }
 
     pub fn size(&self) -> UVec2 {
@@ -185,6 +192,7 @@ impl ApplicationHandler for Runner {
         self.app.world.insert_resource(Window {
             handle: handle.clone(),
             cursor_grabbed: AtomicBool::new(false),
+            hidden,
         });
         // The operating system wants its windows handled from the thread that made them.
         self.app.world.pin_to_main_thread::<Window>();

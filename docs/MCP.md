@@ -37,9 +37,9 @@ Each tool is one command of the [debug connection](LIVE.md#the-debug-connection)
 | `mira_systems`, `mira_failures`, `mira_profile` | what runs, what it touches, what broke and where, and where the time goes |
 | `mira_pause`, `mira_resume`, `mira_step`, `mira_time_scale` | time; `mira_step` waits for its frames and answers with the status after them |
 | `mira_run_until` | runs until a [signal](SIGNALS.md) is true, then pauses: getting the game to a moment worth looking at |
-| `mira_input` | **playing the game**: keys, mouse buttons, mouse motion and position, as if at the keyboard |
+| `mira_input` | **playing the game**: keys, mouse buttons, mouse motion, position and wheel, and text typed into the interface, as if at the keyboard |
 | `mira_record`, `mira_history`, `mira_rewind` | going back |
-| `mira_signals`, `mira_signal_set`, `mira_signal_force`, `mira_signal_connect`, `mira_signal_define`, `mira_signal_remove` | the [signal graph](SIGNALS.md): the game's rules, drawn and listed, and changed live |
+| `mira_signals`, `mira_signal_set`, `mira_signal_force`, `mira_signal_connect`, `mira_signal_define`, `mira_signal_rename`, `mira_signal_remove` | the [signal graph](SIGNALS.md): the game's rules, drawn and listed, and changed live |
 | `mira_reload_plugins`, `mira_save_scene` | code and data |
 
 A command the game refuses comes back as a tool result marked as an error, with the reason in
@@ -70,7 +70,7 @@ An agent that has changed something wants to see what happens, and what happens 
 input and time. `mira_input` plays keys and the mouse into the game (a tap, or a press held
 until released); keys arrive at the start of the next simulated frame, so a key played into a
 paused game is there, pressed that very frame, when the game is stepped; the pointer arrives
-at once, paused or not, as a real mouse does, so an agent can work a paused game's interface. `mira_run_until`
+at once, paused or not, as a real mouse does, so an agent can work a paused game's interface, and so does `text`, which is typed into whichever field was clicked (a line break in it is Enter). `mira_run_until`
 then runs the simulation until a signal is true, or a number of frames have passed, and
 pauses:
 

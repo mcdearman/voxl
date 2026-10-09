@@ -670,9 +670,18 @@ fn handle(app: &mut App, request: &Value) -> Answer {
                 injected.play(Played::Motion(motion));
                 played += 1;
             }
+            if let Some(lines) = pair("mouse_scroll")? {
+                injected.play(Played::Scroll(lines));
+                played += 1;
+            }
+            if let Some(Value::Text(text)) = request.field("text") {
+                injected.type_text(text.clone());
+                played += 1;
+            }
             if played == 0 {
                 return Err(
-                    "give a `key`, a `mouse_button`, `mouse_motion` or `mouse_position`".to_owned(),
+                    "give a `key`, a `mouse_button`, `mouse_motion`, `mouse_position`, `mouse_scroll` or `text`"
+                        .to_owned(),
                 );
             }
             Ok(Value::Int(played))
@@ -1131,6 +1140,11 @@ fn handle(app: &mut App, request: &Value) -> Answer {
             let path = text(request, "path")?;
             let defined = app.world.resource_mut::<Signals>().load_rules(path)?;
             Ok(Value::Int(defined as i64))
+        }
+        "signal_rename" => {
+            let (name, to) = (text(request, "name")?, text(request, "to")?);
+            app.world.resource_mut::<Signals>().rename(name, to)?;
+            done
         }
         "signal_remove" => {
             let name = text(request, "name")?;
@@ -1594,6 +1608,22 @@ mod tests {
         );
         app.update();
         assert!(!signals(&app).0);
+        // A rule can be renamed; what reads it follows, and a source can't be.
+        ask(
+            &mut app,
+            "{'cmd': 'signal_rename', 'name': 'cold', 'to': 'chilly'}",
+        );
+        assert_eq!(
+            refused(
+                &mut app,
+                "{'cmd': 'signal_rename', 'name': 'warm', 'to': 'hot'}"
+            ),
+            "`warm` is a source: the game names it, and reads it by that name"
+        );
+        ask(
+            &mut app,
+            "{'cmd': 'signal_rename', 'name': 'chilly', 'to': 'cold'}",
+        );
         ask(&mut app, "{'cmd': 'signal_remove', 'name': 'long'}");
         assert_eq!(
             refused(
