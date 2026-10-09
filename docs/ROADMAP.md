@@ -145,8 +145,9 @@ game's state, change it, and control time and code. The means is the Model Conte
       chosen size
 - [ ] Screenshots from a chosen camera or a free viewpoint, with debug overlays (entity ids,
       bounds, colliders, the signal graph); loading a scene
-- [ ] The scene in words: a compact description (what is where, what is on screen, what
-      changed since last asked) for when an image is more than is needed
+- [x] The scene in words: where the camera is and what there is, on screen first and nearest
+      first (`describe`), for when an image is more than is needed
+- [ ] What changed since last asked; sizes and what hides what
 - [x] The schema of every registered type, so an agent knows what it may read and write and
       in what shape
 - [ ] Total knowledge: a check that reports engine state that is not reflected, and so

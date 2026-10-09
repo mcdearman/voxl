@@ -373,6 +373,165 @@ pub fn schema_value(schema: &Schema) -> Value {
     }
 }
 
+/// The scene in words: where the camera is, and what there is, nearest first, with where on
+/// the screen each thing appears. For when a picture is more than is needed, or there is no
+/// window to take one of.
+fn describe(app: &mut App, limit: usize) -> String {
+    use crate::{
+        render::{Camera, Mesh, Mesh3d},
+        transform::GlobalTransform,
+        window::Window,
+    };
+    use std::fmt::Write;
+
+    let mut out = String::new();
+    let time = app.world.get_resource::<Time>();
+    let frame = time.map_or(0, Time::frame_count);
+    let paused = app.world.resource::<Live>().is_paused();
+    let _ = writeln!(
+        out,
+        "frame {frame}, {}, {} entities",
+        if paused { "paused" } else { "running" },
+        app.world.entity_count()
+    );
+
+    let aspect = app
+        .world
+        .get_resource::<Window>()
+        .map(|window| window.size())
+        .filter(|size| size.y > 0)
+        .map_or(16.0 / 9.0, |size| size.x as f32 / size.y as f32);
+    let camera = app
+        .world
+        .query::<(Entity, &Camera, &GlobalTransform)>()
+        .iter()
+        .find(|(_, camera, _)| camera.active)
+        .map(|(entity, camera, at)| (entity, camera.projection(aspect) * at.0.inverse(), *at));
+    let eye = match &camera {
+        Some((entity, _, at)) => {
+            let (p, f) = (at.translation(), at.forward());
+            let _ = writeln!(
+                out,
+                "camera #{} at ({:.1}, {:.1}, {:.1}) looking along ({:.2}, {:.2}, {:.2})",
+                entity.to_bits(),
+                p.x,
+                p.y,
+                p.z,
+                f.x,
+                f.y,
+                f.z
+            );
+            Some(p)
+        }
+        None => {
+            let _ = writeln!(out, "no active camera; distances are from the origin");
+            None
+        }
+    };
+
+    // Each placed entity: where it is, where it shows, and what it is made of.
+    let placed: Vec<(Entity, glam::Vec3)> = app
+        .world
+        .query::<(Entity, &GlobalTransform)>()
+        .iter()
+        .map(|(entity, at)| (entity, at.translation()))
+        .collect();
+    let mut lines: Vec<(bool, f32, String)> = Vec::new();
+    let registry = app.world.resource::<TypeRegistry>();
+    let server = app.world.get_resource::<crate::asset_server::AssetServer>();
+    for (entity, position) in placed {
+        if camera
+            .as_ref()
+            .is_some_and(|(camera, ..)| *camera == entity)
+        {
+            continue;
+        }
+        let distance = position.distance(eye.unwrap_or(glam::Vec3::ZERO));
+        let (seen, place) = match &camera {
+            Some((_, view_projection, _)) => {
+                let clip = *view_projection * position.extend(1.0);
+                let (x, y) = (clip.x / clip.w, clip.y / clip.w);
+                if clip.w <= 0.0 {
+                    (false, "behind the camera".to_owned())
+                } else if x.abs() > 1.0 || y.abs() > 1.0 {
+                    let side = if x < -1.0 {
+                        "to the left"
+                    } else if x > 1.0 {
+                        "to the right"
+                    } else if y > 1.0 {
+                        "above"
+                    } else {
+                        "below"
+                    };
+                    (false, format!("out of view {side}"))
+                } else {
+                    let across = if x < -0.33 {
+                        "left"
+                    } else if x > 0.33 {
+                        "right"
+                    } else {
+                        "centre"
+                    };
+                    let up = if y > 0.33 {
+                        "top"
+                    } else if y < -0.33 {
+                        "bottom"
+                    } else {
+                        "middle"
+                    };
+                    (true, format!("on screen, {up} {across}"))
+                }
+            }
+            None => (false, "not drawn".to_owned()),
+        };
+        let mut made_of: Vec<String> = registry
+            .iter()
+            .filter(|component| (component.get)(&app.world, entity).is_some())
+            .map(|component| component.name.trim_start_matches("mira.").to_owned())
+            .filter(|name| name != "Transform")
+            .collect();
+        let mesh = app
+            .world
+            .get::<Mesh3d>(entity)
+            .and_then(|mesh| server?.name_of::<Mesh>(mesh.0));
+        if let (Some(mesh), Some(slot)) = (mesh, made_of.iter_mut().find(|name| *name == "Mesh3d"))
+        {
+            *slot = format!("Mesh3d {mesh}");
+        }
+        lines.push((
+            seen,
+            distance,
+            format!(
+                "#{} at ({:.1}, {:.1}, {:.1}), {distance:.1} away, {place}: {}",
+                entity.to_bits(),
+                position.x,
+                position.y,
+                position.z,
+                if made_of.is_empty() {
+                    "nothing registered".to_owned()
+                } else {
+                    made_of.join(", ")
+                }
+            ),
+        ));
+    }
+    // What can be seen first, then nearest first.
+    lines.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.total_cmp(&b.1)));
+    let (total, on_screen) = (lines.len(), lines.iter().filter(|line| line.0).count());
+    let _ = writeln!(out, "{total} placed entities, {on_screen} on screen");
+    for (_, _, line) in lines.iter().take(limit) {
+        let _ = writeln!(out, "{line}");
+    }
+    if total > limit {
+        let _ = writeln!(
+            out,
+            "… and {} more (raise `limit` to list them)",
+            total - limit
+        );
+    }
+    out
+}
+
 /// Plays a key or button going down, coming up, or both a few frames apart.
 fn play_button(
     injected: &mut InjectedInput,
@@ -667,6 +826,13 @@ fn handle(app: &mut App, request: &Value) -> Answer {
                 (None, None) => return Err(format!("there is no type `{name}`")),
             };
             Ok(schema_value(&schema))
+        }
+        "describe" => {
+            let limit = request
+                .field("limit")
+                .and_then(Value::as_f64)
+                .unwrap_or(40.0) as usize;
+            Ok(Value::Text(describe(app, limit)))
         }
         "screenshot" => {
             let path = text(request, "path")?;
@@ -1505,5 +1671,84 @@ mod tests {
             "the next line is the answer"
         );
         assert!(refused(&mut app, "{'cmd': 'watch'}").contains("stays open"));
+    }
+    #[test]
+    fn the_scene_is_described_in_words() {
+        use crate::render::{Camera, Material};
+
+        let mut app = app();
+        app.register_type::<Camera>().register_type::<Material>();
+        let camera = app
+            .world
+            .spawn((Transform::from_xyz(0.0, 1.0, 0.0), Camera::default()));
+        let ahead = app
+            .world
+            .spawn((Transform::from_xyz(0.0, 1.0, -5.0), Material::default()));
+        let far = app.world.spawn(Transform::from_xyz(0.2, 1.0, -40.0));
+        let aside = app.world.spawn(Transform::from_xyz(-300.0, 1.0, -5.0));
+        let behind = app.world.spawn(Transform::from_xyz(0.0, 1.0, 8.0));
+        let low = app.world.spawn(Transform::from_xyz(3.0, -1.0, -6.0));
+        app.update();
+
+        let Value::Text(words) = ask(&mut app, "{'cmd': 'describe'}") else {
+            panic!("text");
+        };
+        let lines: Vec<&str> = words.lines().collect();
+        assert_eq!(lines[0], "frame 1, running, 6 entities");
+        assert!(
+            lines[1].starts_with(&format!(
+                "camera #{} at (0.0, 1.0, 0.0) looking along (0.00, 0.00, -1.00)",
+                camera.to_bits()
+            )),
+            "{}",
+            lines[1]
+        );
+        assert_eq!(lines[2], "5 placed entities, 3 on screen");
+        // On screen first, nearest first; then the rest, nearest first.
+        let line = |entity: Entity| {
+            let tag = format!("#{} ", entity.to_bits());
+            lines
+                .iter()
+                .position(|line| line.starts_with(&tag))
+                .unwrap_or_else(|| panic!("{tag} in {words}"))
+        };
+        assert_eq!(
+            [line(ahead), line(low), line(far), line(behind), line(aside)],
+            [3, 4, 5, 6, 7],
+            "{words}"
+        );
+        assert_eq!(
+            lines[3],
+            format!(
+                "#{} at (0.0, 1.0, -5.0), 5.0 away, on screen, middle centre: Material",
+                ahead.to_bits()
+            )
+        );
+        assert!(
+            lines[4].contains("on screen, bottom right: nothing registered"),
+            "{}",
+            lines[4]
+        );
+        assert!(
+            lines[6].contains("behind the camera") && lines[7].contains("out of view to the left"),
+            "{words}"
+        );
+
+        // A long scene is cut short, and says so; with no camera, it still says what is where.
+        let Value::Text(short) = ask(&mut app, "{'cmd': 'describe', 'limit': 2}") else {
+            panic!("text");
+        };
+        assert!(
+            short.ends_with("… and 3 more (raise `limit` to list them)\n"),
+            "{short}"
+        );
+        app.world.despawn(camera);
+        let Value::Text(blind) = ask(&mut app, "{'cmd': 'describe'}") else {
+            panic!("text");
+        };
+        assert!(
+            blind.contains("no active camera") && blind.contains("not drawn"),
+            "{blind}"
+        );
     }
 }

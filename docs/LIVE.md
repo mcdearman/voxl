@@ -142,6 +142,7 @@ answered at the start of a frame, whether or not the game is paused.
 | `watch` | `on` (true) | from then on, events are sent to this connection as they happen |
 | `systems` | `stage` (all) | each stage's systems in order, with constraints and timings |
 | `types` | | the names of registered components and resources |
+| `describe` | `limit` (40) | the scene in words: the camera, then each placed entity with where it is and where on screen it shows |
 | `entities` | `with` (a component), `limit` (200) | entities and what each has |
 | `get` | `entity`, `component` (all) | the component's value, or every component's |
 | `set` | `entity`, `component`, `value`, `path` (the whole component) | |

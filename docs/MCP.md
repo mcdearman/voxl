@@ -29,6 +29,7 @@ Each tool is one command of the [debug connection](LIVE.md#the-debug-connection)
 | --- | --- |
 | `mira_status` | where the game is: frame, time, paused, failures, entity count |
 | `mira_screenshot` | **seeing the scene**: the next rendered frame as an image, scaled to `width` (1024) |
+| `mira_describe` | the scene in words: the camera, and what there is, things on screen first and nearest first, with where on the screen each appears |
 | `mira_entities`, `mira_get`, `mira_set`, `mira_remove`, `mira_spawn`, `mira_despawn` | entities and their components, by name |
 | `mira_resource` | game-wide settings, read or set |
 | `mira_types`, `mira_schema` | what can be read and written, and the shape of each type |
@@ -73,8 +74,9 @@ resources. A plugin's components appear once the plugin
 ## What isn't here yet
 
 - The screenshot is the game's own view. A chosen camera or free viewpoint, and overlays
-  (entity ids, colliders, the signal graph), are to come; so is a description of the scene in
-  words.
+  (entity ids, colliders, the signal graph), are to come.
+- `mira_describe` places things by their origin; it doesn't know their size, or what hides
+  what.
 - Nothing is pushed through MCP: an agent finds out about a failure or a signal changing by
   asking. (The debug connection itself can push; see [LIVE.md](LIVE.md).)
 - The server doesn't launch games or run them without a window. Stepped frames are each

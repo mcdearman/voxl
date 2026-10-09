@@ -34,6 +34,11 @@ const TOOLS: &[Tool] = &[
         arguments: &["width?: integer: how many pixels wide the image should be (default 1024; the frame is scaled down to it, never up)"],
     },
     Tool {
+        command: "describe",
+        about: "The scene in words: where the camera is and what there is, things on screen first and nearest first, each with its position, where on the screen it appears, and what it is made of. Cheaper than a screenshot, and works for a game with no window.",
+        arguments: &["limit?: integer: how many entities to list (default 40)"],
+    },
+    Tool {
         command: "entities",
         about: "Lists entities with the names of the components each has. Entities are numbers; pass them to the other tools.",
         arguments: &[
