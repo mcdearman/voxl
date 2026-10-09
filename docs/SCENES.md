@@ -72,6 +72,9 @@ for problem in &spawned.skipped {
 - **One bad value doesn't lose a level.** A component of an unknown type, with a value that
   no longer fits, or pointing at an entity outside the scene, is skipped and reported in
   `Spawned::skipped`; everything else loads.
+- **Assets come back.** A mesh or texture loaded through the [`AssetServer`](ASSETS.md) is
+  saved by name (`{"$asset": "image", "name": "textures/bricks.png"}`) and loaded again when
+  the scene is, so a scene file works in a later run.
 - **Files are plain JSON**, indented, with fields in a stable order, so they diff cleanly and
   any tool can read them.
 
@@ -88,9 +91,9 @@ value.set_path("translation.1", Value::Float(4.0));
 
 ## What isn't here yet
 
-- **Asset handles are saved as ids**, which only mean something while the same assets are
-  loaded in the same order. Until assets are loaded by path, a scene containing meshes or
-  textures can be restored within a run but not from a file in a later one.
+- Asset handles are saved by name when the [`AssetServer`](ASSETS.md) knows the asset, and a
+  scene loaded later asks for those names again. An asset without a name is saved as its id,
+  which only holds within a run.
 - Registered so far: `Transform`, `Parent`, `Camera`, `DirectionalLight`, `Mesh3d` and
   `Material`. Physics, animation and voxel components are not.
 - Resources and plugin-defined components are not captured.

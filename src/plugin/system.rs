@@ -5,6 +5,7 @@ use voxl_plugin::sys::{self, VoxlSystemFn};
 use super::events::PluginEvents;
 
 use crate::{
+    asset_server::AssetServer,
     assets::Assets,
     ecs::{
         Access, CommandQueue, ComponentKey, Entity, ErasedStorage, FilteredAccess, System, Tick,
@@ -122,6 +123,7 @@ impl System for DynamicSystem {
         access.read_resource::<ButtonInput<MouseButton>>();
         access.read_resource::<Mouse>();
         access.write_resource::<Assets<Mesh>>();
+        access.write_resource::<AssetServer>();
         access.read_resource::<PluginEvents>();
     }
 
@@ -280,6 +282,29 @@ impl Context<'_> {
 
     pub(crate) fn world(&self) -> &World {
         self.world
+    }
+
+    /// A named shape (`shape:cube:1`) from the asset server, made once however often it is
+    /// asked for, so a reloaded plugin gets the mesh it had and scenes can save it by name.
+    pub(crate) fn shape_mesh(&mut self, name: &str) -> Option<u32> {
+        let meshes = self.world.resource_cell::<Assets<Mesh>>()?;
+        let server = self.world.resource_cell::<AssetServer>()?;
+        // SAFETY: the running system has exclusive use of the world, declared write access to
+        // both resources, and holds no other reference to them.
+        let ((meshes, ticks), (server, _)) = unsafe {
+            (
+                meshes.get_mut::<Assets<Mesh>>(),
+                server.get_mut::<AssetServer>(),
+            )
+        };
+        ticks.changed = self.tick;
+        match server.shape(meshes, name) {
+            Ok(handle) => Some(handle.id()),
+            Err(err) => {
+                log::error!(target: "plugin", "{err:#}");
+                None
+            }
+        }
     }
 
     /// Adds a mesh to the app's assets.

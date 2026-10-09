@@ -5,7 +5,10 @@ use super::{
     registry::TypeRegistry,
     value::{ReflectError, Value},
 };
-use crate::ecs::{Entity, World};
+use crate::{
+    asset_server::{self, AssetServer},
+    ecs::{Entity, World},
+};
 
 /// The format of scene files. Raised when a change would make old readers misread new files.
 const VERSION: i64 = 1;
@@ -40,8 +43,18 @@ pub struct Spawned {
 }
 
 impl Scene {
-    /// Captures every entity that has at least one registered component.
+    /// Captures every entity that has at least one registered component. Handles to assets
+    /// the world's `AssetServer` knows by name are saved as those names.
     pub fn capture(world: &World, registry: &TypeRegistry) -> Self {
+        match world.get_resource::<AssetServer>() {
+            Some(server) => {
+                asset_server::with_names(server, || Self::capture_plain(world, registry))
+            }
+            None => Self::capture_plain(world, registry),
+        }
+    }
+
+    fn capture_plain(world: &World, registry: &TypeRegistry) -> Self {
         // Ordered by entity, so the same world always gives the same file.
         let mut entities: BTreeMap<Entity, Vec<(String, Value)>> = BTreeMap::new();
         for component in registry.iter() {
@@ -94,6 +107,24 @@ impl Scene {
                 if dangling {
                     skipped.push(format!(
                         "entity {}: `{name}` refers to an entity outside the scene",
+                        saved.id
+                    ));
+                    continue;
+                }
+                // Load the assets it names, and put their handles in place of the names.
+                let mut unloaded = None;
+                value.for_each_asset(&mut |asset| {
+                    let Value::Asset { kind, name } = &*asset else {
+                        return;
+                    };
+                    match AssetServer::resolve(world, kind, name) {
+                        Ok(id) => *asset = Value::Int(id as i64),
+                        Err(err) => unloaded = Some(format!("{name}: {err:#}")),
+                    }
+                });
+                if let Some(why) = unloaded {
+                    skipped.push(format!(
+                        "entity {}: `{name}` needs an asset: {why}",
                         saved.id
                     ));
                     continue;

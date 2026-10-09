@@ -82,7 +82,8 @@ Where the engine is headed: [docs/ROADMAP.md](docs/ROADMAP.md).
 | `plugin` | Loads native plugins over the C interface and hot-reloads them |
 | `reflect` | Describes, saves and loads values by name: derive macros, the type registry, JSON scenes |
 | `tasks` | Worker thread pool |
-| `input`, `window`, `time`, `assets` | The usual |
+| `asset_server`, `assets` | Assets by name: images, model files and shapes, loaded once, reloaded when saved |
+| `input`, `window`, `time` | The usual |
 
 ## Checks
 

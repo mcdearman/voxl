@@ -1,13 +1,15 @@
 //! Reading and writing [`Value`]s as JSON, the text form of scenes.
 //!
 //! JSON because everything can read it: an editor, a script, a plugin in another language.
-//! An entity reference is written as `{"$entity": n}` so it can be told from a number.
+//! An entity reference is written as `{"$entity": n}` so it can be told from a number, and an
+//! asset reference as `{"$asset": "image", "name": "textures/brick.png"}`.
 
 use std::fmt::Write;
 
 use super::value::Value;
 
 const ENTITY_KEY: &str = "$entity";
+const ASSET_KEY: &str = "$asset";
 
 /// Writes a value as JSON, indented for reading and for clean diffs.
 pub fn to_string(value: &Value) -> String {
@@ -47,6 +49,13 @@ fn write_value(out: &mut String, value: &Value, depth: usize) {
         Value::Float(f) => write!(out, "{f:?}").unwrap(),
         Value::Text(text) => write_text(out, text),
         Value::Entity(bits) => write!(out, "{{\"{ENTITY_KEY}\": {bits}}}").unwrap(),
+        Value::Asset { kind, name } => {
+            write!(out, "{{\"{ASSET_KEY}\": ").unwrap();
+            write_text(out, kind);
+            out.push_str(", \"name\": ");
+            write_text(out, name);
+            out.push('}');
+        }
         Value::List(items) if items.is_empty() => out.push_str("[]"),
         Value::List(items) if is_short(items) => {
             out.push('[');
@@ -258,6 +267,14 @@ impl Parser<'_> {
         if let [(key, Value::Int(bits))] = fields.as_slice() {
             if key == ENTITY_KEY && *bits >= 0 {
                 return Ok(Value::Entity(*bits as u64));
+            }
+        }
+        if let [(key, Value::Text(kind)), (name_key, Value::Text(name))] = fields.as_slice() {
+            if key == ASSET_KEY && name_key == "name" {
+                return Ok(Value::Asset {
+                    kind: kind.clone(),
+                    name: name.clone(),
+                });
             }
         }
         Ok(Value::Map(fields))

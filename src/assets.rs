@@ -85,6 +85,29 @@ impl<T> Assets<T> {
         }
     }
 
+    /// Hands out a handle for an asset that isn't there yet (one still loading, say). `get`
+    /// returns `None` for it until `set` fills it in.
+    pub fn reserve(&mut self) -> Handle<T> {
+        let id = self.next_id;
+        self.next_id += 1;
+        Handle {
+            id,
+            _marker: PhantomData,
+        }
+    }
+
+    /// Puts an asset under a handle, replacing what was there if anything was.
+    pub fn set(&mut self, handle: Handle<T>, asset: T) {
+        self.items.insert(handle.id, asset);
+        self.modified.insert(handle.id);
+    }
+
+    /// The next id that will be handed out. Everything added between two readings of this
+    /// has an id in between.
+    pub(crate) fn next_id(&self) -> u32 {
+        self.next_id
+    }
+
     pub fn get(&self, handle: Handle<T>) -> Option<&T> {
         self.items.get(&handle.id)
     }
@@ -127,19 +150,31 @@ impl<T> Assets<T> {
     }
 }
 
-/// A handle is saved as its id. That only means something while the same assets are loaded
-/// in the same order; until assets are loaded by path, a scene with handles in it can be
-/// restored within a run but not from a file in a later one.
+/// A handle to an asset the `AssetServer` knows by name is saved as that name, so it means
+/// the same thing in a later run. Any other handle (a mesh built in code, say) is saved as
+/// its id, which only holds while the same assets are made in the same order.
 impl<T: 'static> crate::reflect::Reflect for Handle<T> {
     fn type_name() -> &'static str {
         "Handle"
     }
 
     fn to_value(&self) -> crate::reflect::Value {
-        crate::reflect::Value::Int(self.id as i64)
+        match crate::asset_server::name_in_scope(std::any::TypeId::of::<T>(), self.id) {
+            Some((kind, name)) => crate::reflect::Value::Asset {
+                kind: kind.to_owned(),
+                name,
+            },
+            None => crate::reflect::Value::Int(self.id as i64),
+        }
     }
 
     fn from_value(value: &crate::reflect::Value) -> Result<Self, crate::reflect::ReflectError> {
+        if let crate::reflect::Value::Asset { name, .. } = value {
+            // Scenes resolve these to ids before building components.
+            return Err(crate::reflect::ReflectError::new(format!(
+                "the asset `{name}` hasn't been loaded"
+            )));
+        }
         u32::from_value(value).map(Self::from_id)
     }
 

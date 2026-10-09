@@ -17,6 +17,13 @@ pub enum Value {
     /// A reference to an entity. Kept apart from plain numbers so that loading a scene can
     /// point it at the entity's new id.
     Entity(u64),
+    /// A reference to an asset by name: what kind it is (`"image"`, `"mesh"`) and the name
+    /// the `AssetServer` knows it by. Loading a scene loads the asset and puts its handle
+    /// here.
+    Asset {
+        kind: String,
+        name: String,
+    },
 }
 
 impl Value {
@@ -102,6 +109,17 @@ impl Value {
         }
     }
 
+    /// Calls `f` on every asset reference in this value, however deeply nested. `f` may
+    /// replace it (with the loaded asset's id).
+    pub fn for_each_asset(&mut self, f: &mut impl FnMut(&mut Value)) {
+        match self {
+            Value::Asset { .. } => f(self),
+            Value::List(items) => items.iter_mut().for_each(|item| item.for_each_asset(f)),
+            Value::Map(fields) => fields.iter_mut().for_each(|(_, v)| v.for_each_asset(f)),
+            _ => {}
+        }
+    }
+
     fn kind(&self) -> &'static str {
         match self {
             Value::Null => "null",
@@ -111,6 +129,7 @@ impl Value {
             Value::List(_) => "a list",
             Value::Map(_) => "a map",
             Value::Entity(_) => "an entity",
+            Value::Asset { .. } => "an asset",
         }
     }
 }

@@ -104,8 +104,12 @@ The layer Unreal's editor, saves, networking and Blueprints all stand on.
 - [ ] Prefabs with overrides; reflecting the physics, animation and voxel components;
       capturing resources and plugin-defined components
 - [ ] Hierarchy as a real feature: `Children`, recursive despawn, cached propagation
-- [ ] Asset server: load by path on worker threads, reference-counted handles, dependencies,
-      hot reload when a file changes
+- [x] Asset server: assets by name (files, parts of model files, shapes), images decoded on
+      worker threads and reloaded when the file changes, scenes saving assets by name; see
+      [ASSETS.md](ASSETS.md)
+- [ ] Unloading assets nothing refers to (by tracing reflected components, since handles stay
+      plain ids), model files loaded off the main thread and watched, dependencies between
+      assets
 - [ ] Asset processing: textures to BC7/ASTC with mips, meshes to a binary format, cached by
       content hash
 - [ ] Load skins and animations from glTF
@@ -240,11 +244,10 @@ project grows.
 
 ## Next three steps
 
-1. Image-diff tests around the demos, and the rest of the crate split (Phase 0). Two things
+1. Reflect the physics, animation and voxel components; capture plugin-defined components;
+   prefabs (Phase 1).
+2. Image-diff tests around the demos, and the rest of the crate split (Phase 0). Two things
    seen in screenshots to fix alongside: the built-in sky is dull next to the sun it comes
    with; and objects that move every frame smear under temporal anti-aliasing (it has no
    motion vectors).
-2. Start the data layer: a proc-macro crate with `#[derive(Component)]` and
-   `#[derive(Reflect)]` (Phase 1).
-3. Assets from files for plugins (models and textures by path), which needs the asset server
-   from Phase 1.
+3. Loading files from plugins (images and models by name), now that the asset server exists.
