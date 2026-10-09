@@ -1,21 +1,14 @@
 # In-game user interface for mira, on Armature.
-#
-# This crate is not a member of the workspace: Armature is a private repository, found here
-# beside mira's (../../../armature), so a checkout of mira alone cannot build it. Build and
-# run it on its own:
-#
-#   cargo run --manifest-path crates/mira_ui/Cargo.toml --example sacred_sites_graph
 [package]
 name = "mira_ui"
 version = "0.1.0"
 edition = "2021"
 
-[workspace]
-
 [dependencies]
 mira = { path = "../.." }
-armature = { path = "../../../armature/crates/armature" }
-armature-render = { path = "../../../armature/crates/armature-render" }
+# Pinned to the revision that can draw over a host's frame and say which events it took.
+armature = { git = "https://github.com/mcdearman/armature", rev = "bbc8af0b0539" }
+armature-render = { git = "https://github.com/mcdearman/armature", rev = "bbc8af0b0539" }
 wgpu = "30.0.1"
 winit = "0.30.12"
 anyhow = "1"

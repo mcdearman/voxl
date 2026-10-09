@@ -632,6 +632,21 @@ fn handle(app: &mut App, request: &Value) -> Answer {
                 Some(_) => return Err("`action` is press, release or tap".to_owned()),
             };
             let mut played = 0;
+            let pair = |key: &str| match request.field(key) {
+                Some(Value::List(pair)) if pair.len() == 2 => {
+                    match (pair[0].as_f64(), pair[1].as_f64()) {
+                        (Some(x), Some(y)) => Ok(Some(glam::Vec2::new(x as f32, y as f32))),
+                        _ => Err(format!("`{key}` is two numbers")),
+                    }
+                }
+                Some(_) => Err(format!("`{key}` is two numbers")),
+                None => Ok(None),
+            };
+            // Where the pointer is comes before what its buttons do there.
+            if let Some(position) = pair("mouse_position")? {
+                injected.play(Played::Cursor(position));
+                played += 1;
+            }
             if let Some(Value::Text(name)) = request.field("key") {
                 let key = key_named(name).ok_or_else(|| {
                     format!("there is no key `{name}`; keys are named like KeyW, Space, ArrowLeft, Digit1, ShiftLeft")
@@ -655,22 +670,8 @@ fn handle(app: &mut App, request: &Value) -> Answer {
                 })?;
                 played += 1;
             }
-            let pair = |key: &str| match request.field(key) {
-                Some(Value::List(pair)) if pair.len() == 2 => {
-                    match (pair[0].as_f64(), pair[1].as_f64()) {
-                        (Some(x), Some(y)) => Ok(Some(glam::Vec2::new(x as f32, y as f32))),
-                        _ => Err(format!("`{key}` is two numbers")),
-                    }
-                }
-                Some(_) => Err(format!("`{key}` is two numbers")),
-                None => Ok(None),
-            };
             if let Some(motion) = pair("mouse_motion")? {
                 injected.play(Played::Motion(motion));
-                played += 1;
-            }
-            if let Some(position) = pair("mouse_position")? {
-                injected.play(Played::Cursor(position));
                 played += 1;
             }
             if played == 0 {

@@ -7,4 +7,3 @@ __pycache__/
 # Raw downloads the Blender tools build the models from (see each CREDITS.md).
 res/*/sources/
 dist/
-crates/mira_ui/target/

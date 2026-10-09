@@ -269,7 +269,9 @@ derived from other values, which the engine keeps true.
       signals (the graph is watched from a terminal)
 - [x] The signal graph shown live inside that game (`crates/mira_ui`, example
       `sacred_sites_graph`); see [UI.md](UI.md)
-- [ ] Editing the graph from the in-game panel
+- [x] The in-game view as a circuit: boxes, ports and wires lit when true; rewiring by
+      dragging, forcing, and changing constants, on the running game
+- [ ] Adding and removing signals and changing operations in the panel; keeping the layout
 - [ ] The graphical editor of the graph (Chris, October 2026): signals and connections laid
       out and edited by hand while the game runs; in the game's panel and in the editor
       (Phase 5)
@@ -296,8 +298,7 @@ dying in any order; the timer is right in every case because no code ever sets i
 
 - [x] Text and panels in the game: Armature underneath, a thin mira layer on top
       (`crates/mira_ui`: input shared with the game, drawn over the frame); see [UI.md](UI.md)
-- [ ] A look and a set of controls for games; interface in the world; gamepad focus;
-      `mira_ui` in the workspace and CI (Armature is private)
+- [ ] A look and a set of controls for games; interface in the world; gamepad focus
 - [ ] Audio: mixing, 3D positioning, streaming music
 - [ ] Input: named actions, rebinding, gamepads
 - [ ] Animation graph: state machines, blend trees, retargeting, root motion
