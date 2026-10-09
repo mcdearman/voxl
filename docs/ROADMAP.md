@@ -49,7 +49,10 @@ Make the project safe to change quickly.
 - [x] CI on macOS and Linux: build, test, clippy, Miri on the ECS (written; not yet seen to
       pass on GitHub)
 - [ ] Image-diff tests: render fixed scenes with `MIRA_SCREENSHOT` and compare to stored frames
-- [ ] CPU and GPU frame profiler (spans per system, timestamp queries per pass), on screen
+- [x] CPU frame timings: per frame, per stage and per system, from the running game
+      (`FrameStats`, `mira-debug profile`)
+- [ ] A timeline of a frame across threads; GPU timings (timestamp queries per pass); shown
+      on screen
 - [ ] Benchmarks for ECS iteration, chunk meshing and a standard frame
 
 **Exit test:** a change that breaks rendering or halves ECS speed fails CI.

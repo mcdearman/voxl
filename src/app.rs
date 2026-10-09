@@ -89,6 +89,7 @@ impl App {
         app.init_resource::<PluginEvents>();
         app.init_resource::<TypeRegistry>();
         app.init_resource::<Live>();
+        app.init_resource::<crate::live::FrameStats>();
         app.init_resource::<crate::live::History>();
         app.add_systems(Stage::Last, crate::live::record_history);
         app.add_plugins(crate::signal::SignalPlugin);
@@ -184,6 +185,17 @@ impl App {
         self.startup();
         self.check_native_plugins();
         self.serve_debuggers();
+        let started = std::time::Instant::now();
+        self.world
+            .resource_mut::<crate::live::FrameStats>()
+            .begin_frame();
+        self.run_frame();
+        self.world
+            .resource_mut::<crate::live::FrameStats>()
+            .end_frame(started.elapsed());
+    }
+
+    fn run_frame(&mut self) {
         let frame = self.begin_live_frame();
         let mut fixed_steps = 0;
         if let Some(time) = self.world.get_resource_mut::<Time>() {
@@ -276,7 +288,11 @@ impl App {
             .get_resource::<Live>()
             .is_some_and(|live| live.catch_failures);
         schedule.set_guarded(guarded);
+        let started = std::time::Instant::now();
         schedule.run(&mut self.world);
+        if let Some(stats) = self.world.get_resource_mut::<crate::live::FrameStats>() {
+            stats.stage(stage, started.elapsed());
+        }
         let failures = schedule.take_failures();
         if !failures.is_empty() {
             let frame = self

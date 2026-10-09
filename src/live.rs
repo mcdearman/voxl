@@ -218,6 +218,63 @@ impl Live {
     }
 }
 
+/// Where the time of recent frames went. A resource every app has; the engine fills it in.
+#[derive(Debug, Default)]
+pub struct FrameStats {
+    /// How long each of the last frames took, oldest first: the engine's own work in
+    /// `App::update`, not the wait for the display.
+    frames: VecDeque<Duration>,
+    /// How long each stage took in the last frame it ran, in the order they run.
+    stages: Vec<(Stage, Duration)>,
+}
+
+impl FrameStats {
+    /// How many frames are remembered.
+    pub const KEPT: usize = 240;
+
+    pub(crate) fn begin_frame(&mut self) {
+        self.stages.clear();
+    }
+
+    pub(crate) fn stage(&mut self, stage: Stage, took: Duration) {
+        // The fixed stages may run several times in a frame.
+        match self.stages.iter_mut().find(|(known, _)| *known == stage) {
+            Some((_, total)) => *total += took,
+            None => self.stages.push((stage, took)),
+        }
+    }
+
+    pub(crate) fn end_frame(&mut self, took: Duration) {
+        if self.frames.len() == Self::KEPT {
+            self.frames.pop_front();
+        }
+        self.frames.push_back(took);
+    }
+
+    /// The remembered frame times, oldest first.
+    pub fn frames(&self) -> impl Iterator<Item = Duration> + '_ {
+        self.frames.iter().copied()
+    }
+
+    /// What each stage took in the last frame.
+    pub fn stages(&self) -> &[(Stage, Duration)] {
+        &self.stages
+    }
+
+    /// The mean of the remembered frame times.
+    pub fn mean(&self) -> Duration {
+        match self.frames.len() {
+            0 => Duration::ZERO,
+            count => self.frames.iter().sum::<Duration>() / count as u32,
+        }
+    }
+
+    /// The longest remembered frame.
+    pub fn worst(&self) -> Duration {
+        self.frames.iter().copied().max().unwrap_or_default()
+    }
+}
+
 /// What a frame does about the simulation.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum Frame {
