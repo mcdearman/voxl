@@ -224,14 +224,23 @@ pub struct NotShadowCaster;
 
 impl Component for NotShadowCaster {}
 
-/// A perspective camera. The first active camera found is used. The projection has no far
-/// plane: everything in front of `near` is drawn.
+/// A camera. The first active camera found is used.
+///
+/// By default it is a perspective camera with no far plane: everything in front of `near` is
+/// drawn. Give it an `orthographic_height` and it is an orthographic one instead, as for a
+/// strategy game or a map: things don't shrink with distance, and the view is that many
+/// metres tall whatever the window's shape.
 #[derive(Clone, Copy, Debug, Reflect)]
 #[reflect(name = "mira.Camera", default)]
 pub struct Camera {
+    /// The vertical field of view, in radians, of a perspective camera.
     pub fov_y: f32,
     pub near: f32,
     pub active: bool,
+    /// For an orthographic camera, how many metres of the world the view is tall.
+    pub orthographic_height: Option<f32>,
+    /// How far an orthographic camera sees. A perspective camera sees without limit.
+    pub far: f32,
 }
 
 impl Component for Camera {}
@@ -242,14 +251,49 @@ impl Default for Camera {
             fov_y: 60f32.to_radians(),
             near: 0.1,
             active: true,
+            orthographic_height: None,
+            far: 2000.0,
         }
     }
 }
 
 impl Camera {
-    /// Reversed-Z, infinitely far: depth runs from 1 at `near` to 0 at the horizon.
+    /// An orthographic camera whose view is `height` metres tall.
+    pub fn orthographic(height: f32) -> Self {
+        Self {
+            orthographic_height: Some(height),
+            ..Self::default()
+        }
+    }
+
+    /// Reversed-Z: depth runs from 1 at `near` to 0 at the horizon (perspective, infinitely
+    /// far) or at `far` (orthographic).
     pub fn projection(&self, aspect_ratio: f32) -> Mat4 {
-        Mat4::perspective_infinite_reverse_rh(self.fov_y, aspect_ratio, self.near)
+        match self.orthographic_height {
+            Some(height) => {
+                let (half_height, half_width) = (height * 0.5, height * 0.5 * aspect_ratio);
+                // Near and far swapped, which is what reverses the depth.
+                Mat4::orthographic_rh(
+                    -half_width,
+                    half_width,
+                    -half_height,
+                    half_height,
+                    self.far,
+                    self.near,
+                )
+            }
+            None => Mat4::perspective_infinite_reverse_rh(self.fov_y, aspect_ratio, self.near),
+        }
+    }
+
+    /// How the view widens with depth, and how wide it is to begin with: the tangent of half
+    /// the vertical field of view and zero for a perspective camera, zero and half the
+    /// view's height for an orthographic one.
+    pub fn spread(&self) -> (f32, f32) {
+        match self.orthographic_height {
+            Some(height) => (0.0, height * 0.5),
+            None => ((self.fov_y * 0.5).tan(), 0.0),
+        }
     }
 }
 
@@ -552,7 +596,7 @@ fn extract(
         frame.cascades = CascadeData::compute(
             &shadow_settings,
             transform.0,
-            (camera.fov_y * 0.5).tan(),
+            camera.spread(),
             gpu.aspect_ratio(),
             camera.near,
             frame.sun_direction,

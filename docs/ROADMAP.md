@@ -263,9 +263,10 @@ derived from other values, which the engine keeps true.
       constants, connect inputs, force outputs, define and remove nodes, while the game runs
 - [x] A signal graph viewer in the terminal (`mira-debug watch`): which signals are active as
       you play, what feeds what, what just changed; edited live from a second terminal
+- [x] An orthographic camera (`Camera::orthographic(height)`), with shadows, sky and fog
+      working under it
 - [ ] When there is a GUI (Chris, October 2026): `examples/sacred_sites` as a 3D game under an
-      orthographic camera, with the signal graph shown live inside it. Needs an orthographic
-      projection for `Camera`, and the GUI
+      orthographic camera, with the signal graph shown live inside it. Needs the GUI
 - [ ] The graphical viewer (Chris, October 2026): the graph laid out, signals and connections
       edited by hand while the game runs; a panel of the editor (Phase 5)
 

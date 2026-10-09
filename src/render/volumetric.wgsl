@@ -46,7 +46,10 @@ fn fs_shafts(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     let depth = textureLoad(scene_depth, p, 0);
     let uv = position.xy * view.viewport.zw;
     let ndc = vec2<f32>(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
-    let camera = view.camera_position.xyz;
+    // Where this pixel's ray starts: on the near plane, which for an orthographic camera is
+    // not where the camera is.
+    let start = view.inverse_view_proj * vec4<f32>(ndc, 1.0, 1.0);
+    let camera = start.xyz / start.w;
     // A far point along the ray when it sees only sky (depth 0 is infinitely far).
     let far = view.inverse_view_proj * vec4<f32>(ndc, max(depth, 1e-7), 1.0);
     let end = far.xyz / far.w;

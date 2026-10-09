@@ -19,9 +19,11 @@ fn vs_main(@builtin(vertex_index) index: u32) -> VertexOutput {
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    // Any point along the pixel's ray will do; reversed-Z puts depth 1 on the near plane.
-    let p = view.inverse_view_proj * vec4<f32>(in.ndc, 1.0, 1.0);
-    let dir = normalize(p.xyz / p.w - view.camera_position.xyz);
+    // Two points along the pixel's ray (reversed-Z puts depth 1 on the near plane) give its
+    // direction whether the rays spread from the eye or run side by side.
+    let near = view.inverse_view_proj * vec4<f32>(in.ndc, 1.0, 1.0);
+    let beyond = view.inverse_view_proj * vec4<f32>(in.ndc, 0.5, 1.0);
+    let dir = normalize(beyond.xyz / beyond.w - near.xyz / near.w);
     var color = sample_sky(dir, 0.0);
     // The sun was cut out of the sky picture to light the scene; paint its disk back.
     let sun_cos = dot(dir, view.sun_direction.xyz);
