@@ -1,9 +1,13 @@
-use std::time::{Duration, Instant};
+use std::{
+    sync::Mutex,
+    time::{Duration, Instant},
+};
 
 use super::{
     access::{Access, AccessSummary},
     condition::{BoxedCondition, IntoCondition},
     guard,
+    pool::Pool,
     system::{BoxedSystem, IntoSystem},
     world::World,
 };
@@ -100,6 +104,10 @@ pub struct Schedule {
     batches: Vec<usize>,
     /// For each place in `order`, whether that system has to run on the main thread.
     pinned: Vec<bool>,
+    /// For each system (by its place in `systems`), whether it can run beside others.
+    shareable: Vec<bool>,
+    /// Whether batches run on several threads. On unless told otherwise.
+    sequential: bool,
     sorted: bool,
     /// Whether a panicking system is caught and suspended instead of unwinding out of `run`.
     guarded: bool,
@@ -231,11 +239,30 @@ impl Schedule {
         }
     }
 
+    /// Whether systems after this one have to wait for it to finish entirely: it changes
+    /// the world when it is done (commands), or isn't a system that can run beside others.
+    fn ends_its_batch(&self, index: usize) -> bool {
+        let system = &self.systems[index].1.system;
+        !self.shareable[index] || system.access().is_none_or(Access::defers)
+    }
+
     /// Groups the systems, in running order, into batches of systems that could run at the
     /// same moment: a system joins the batch before it unless it clashes with, or was told to
     /// run after, something in it. Systems still run one at a time; this is the plan a
     /// parallel executor will follow, and it is what `systems()` reports.
-    fn plan(&mut self, world: &World) {
+    fn plan(&mut self, world: &mut World) {
+        for (_, config) in &mut self.systems {
+            config.system.initialize(world);
+            for condition in &mut config.conditions {
+                condition.initialize(world);
+            }
+        }
+        self.shareable = self
+            .systems
+            .iter_mut()
+            .map(|(_, config)| config.system.shared().is_some())
+            .collect();
+        let world = &*world;
         self.batches.clear();
         self.pinned = self
             .order
@@ -266,9 +293,13 @@ impl Schedule {
                 config.after.iter().any(|label| earlier.answers_to(label))
                     || earlier.before.iter().any(|label| config.answers_to(label))
             };
-            let fits = current
-                .iter()
-                .all(|&other| self.independent(index, other) && !waits_for(other));
+            let fits = self.shareable[index]
+                && current.iter().all(|&other| {
+                    // What an earlier system queues, a later one is meant to see.
+                    !self.ends_its_batch(other)
+                        && self.independent(index, other)
+                        && !waits_for(other)
+                });
             if !fits && !current.is_empty() {
                 batch += 1;
                 current.clear();
@@ -285,47 +316,179 @@ impl Schedule {
         if self.batches.len() != self.order.len() {
             self.plan(world);
         }
-        for &index in &self.order {
-            let config = &mut self.systems[index].1;
-            if config.suspended {
-                continue;
-            }
-            let started = Instant::now();
-            let mut step = || {
-                // Every condition is asked, so each one sees every frame.
-                let mut wanted = true;
-                for condition in &mut config.conditions {
-                    wanted &= condition.check(world);
-                }
-                if wanted {
-                    config.system.run(world);
-                }
-                wanted
-            };
-            let ran = if self.guarded {
-                match guard::catch(&mut step) {
-                    Ok(ran) => ran,
-                    Err(caught) => {
-                        config.suspended = true;
-                        self.failures.push(SystemFailure {
-                            system: config.system.name().to_owned(),
-                            message: caught.message,
-                            location: caught.location,
-                            stack: caught.stack,
-                        });
-                        false
-                    }
-                }
+        let mut start = 0;
+        while start < self.order.len() {
+            let batch = self.batches[start];
+            let end = (start..self.order.len())
+                .find(|&place| self.batches[place] != batch)
+                .unwrap_or(self.order.len());
+            if end - start > 1 && !self.sequential && Pool::global().workers() > 0 {
+                self.run_together(world, start, end);
             } else {
-                step()
-            };
-            if ran {
-                let took = started.elapsed();
+                for place in start..end {
+                    self.run_alone(world, place);
+                }
+            }
+            start = end;
+        }
+    }
+
+    /// Asks the conditions of the system at `place`, catching a panic if guarded. Returns
+    /// whether the system should run.
+    fn wanted(&mut self, world: &mut World, place: usize) -> bool {
+        let config = &mut self.systems[self.order[place]].1;
+        if config.suspended {
+            return false;
+        }
+        let mut ask = || {
+            // Every condition is asked, so each one sees every frame.
+            let mut wanted = true;
+            for condition in &mut config.conditions {
+                wanted &= condition.check(world);
+            }
+            wanted
+        };
+        if !self.guarded {
+            return ask();
+        }
+        match guard::catch(&mut ask) {
+            Ok(wanted) => wanted,
+            Err(caught) => {
+                config.suspended = true;
+                self.failures.push(failure(config.system.name(), caught));
+                false
+            }
+        }
+    }
+
+    /// Records how a run of the system at `place` went.
+    fn record(&mut self, place: usize, outcome: Result<Duration, guard::Caught>) {
+        let config = &mut self.systems[self.order[place]].1;
+        match outcome {
+            Ok(took) => {
                 config.stats.runs += 1;
                 config.stats.last = took;
                 config.stats.total += took;
             }
+            Err(caught) => {
+                config.suspended = true;
+                self.failures.push(failure(config.system.name(), caught));
+            }
         }
+    }
+
+    /// Runs one system by itself, with the whole world.
+    fn run_alone(&mut self, world: &mut World, place: usize) {
+        let started = Instant::now();
+        if !self.wanted(world, place) {
+            return;
+        }
+        let system = &mut self.systems[self.order[place]].1.system;
+        let outcome = if self.guarded {
+            guard::catch(|| system.run(world)).map(|()| started.elapsed())
+        } else {
+            system.run(world);
+            Ok(started.elapsed())
+        };
+        self.record(place, outcome);
+    }
+
+    /// Runs the systems at places `start..end`, one batch, at the same moment: those that
+    /// must stay on this thread here, the rest on the worker threads.
+    fn run_together(&mut self, world: &mut World, start: usize, end: usize) {
+        // Conditions first, here, one at a time: none of them reads what a system of the
+        // batch writes, so asking early changes no answer.
+        let wanted: Vec<usize> = (start..end)
+            .filter(|&place| self.wanted(world, place))
+            .collect();
+        let guarded = self.guarded;
+        let mut outcomes: Vec<(usize, Result<Duration, guard::Caught>)> = Vec::new();
+        {
+            /// A pointer to the world that may cross to another thread.
+            struct Shared(*const World);
+            // SAFETY: only used to run systems of one batch, which the plan has checked
+            // touch nothing in common except to read; the world's own bookkeeping that a
+            // shared run reaches (the change tick, the entity allocator) is atomic or locked.
+            unsafe impl Send for Shared {}
+            unsafe impl Sync for Shared {}
+            let shared = Shared(world);
+            let shared = &shared;
+
+            // Each system of the batch, taken apart from the others: they are different
+            // elements of `systems`, so the borrows don't overlap.
+            let mut systems: Vec<Option<&mut SystemConfig>> = self
+                .systems
+                .iter_mut()
+                .map(|(_, config)| Some(config))
+                .collect();
+            let results: Mutex<Vec<(usize, Result<Duration, guard::Caught>)>> = Mutex::default();
+            let results = &results;
+            let (mut here, mut there): (Vec<_>, Vec<_>) = (Vec::new(), Vec::new());
+            for &place in &wanted {
+                let config = systems[self.order[place]]
+                    .take()
+                    .expect("each system is in one place");
+                let system = config
+                    .system
+                    .shared()
+                    .expect("only shareable systems share a batch");
+                let job = move || {
+                    let started = Instant::now();
+                    // SAFETY: see `Shared`; the system was initialized when the batch was
+                    // planned.
+                    let mut run = || unsafe { system.run_shared(&*shared.0) };
+                    let outcome = if guarded {
+                        guard::catch(&mut run).map(|()| started.elapsed())
+                    } else {
+                        run();
+                        Ok(started.elapsed())
+                    };
+                    results
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner())
+                        .push((place, outcome));
+                };
+                if self.pinned[place] {
+                    here.push(job);
+                } else {
+                    there.push(job);
+                }
+            }
+            // This thread works too: with nothing pinned to it, it takes one of the others.
+            if here.is_empty() {
+                here.extend(there.pop());
+            }
+            let there: Vec<Box<dyn FnOnce() + Send + '_>> = there
+                .into_iter()
+                .map(|job| Box::new(job) as Box<dyn FnOnce() + Send + '_>)
+                .collect();
+            Pool::global().run(there, || here.into_iter().for_each(|mut job| job()));
+            outcomes.extend(
+                results
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .drain(..),
+            );
+        }
+        // Back to one thread: what the systems deferred is applied in the order they are
+        // written, and the bookkeeping done.
+        outcomes.sort_by_key(|(place, _)| *place);
+        for (place, outcome) in outcomes {
+            if outcome.is_ok() {
+                let system = &mut self.systems[self.order[place]].1.system;
+                if let Some(system) = system.shared() {
+                    system.apply_deferred(world);
+                }
+            }
+            self.record(place, outcome);
+        }
+    }
+
+    /// Sets whether batches of systems run on several threads (the default) or every system
+    /// runs by itself on the calling thread. The results are the same either way; this is
+    /// for measuring, and for finding out whether a bug is about threads.
+    pub fn set_parallel(&mut self, parallel: bool) {
+        self.sequential = !parallel;
     }
 
     /// Sets whether a system that panics is caught: it is then suspended (left out of later
@@ -393,6 +556,15 @@ impl Schedule {
 
     pub fn is_empty(&self) -> bool {
         self.systems.is_empty()
+    }
+}
+
+fn failure(system: &str, caught: guard::Caught) -> SystemFailure {
+    SystemFailure {
+        system: system.to_owned(),
+        message: caught.message,
+        location: caught.location,
+        stack: caught.stack,
     }
 }
 

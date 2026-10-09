@@ -310,7 +310,7 @@ impl Context<'_> {
     }
 
     pub(crate) fn spawn(&mut self) -> Entity {
-        let entity = self.world.entities().borrow_mut().alloc();
+        let entity = self.world.entities().alloc();
         self.spawned.push(entity);
         entity
     }

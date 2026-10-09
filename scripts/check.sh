@@ -14,7 +14,9 @@ step() { printf '\n== %s\n' "$1"; }
 
 miri() {
     step "miri"
-    cargo +nightly miri test --lib -- ecs::
+    # The systems' worker threads live as long as the process, which Miri counts as a leak;
+    # the flag turns that check off (and with it the check for leaked memory).
+    MIRIFLAGS="${MIRIFLAGS:-} -Zmiri-ignore-leaks" cargo +nightly miri test --lib -- ecs::
 }
 
 if [ "${1:-}" = "--miri-only" ]; then

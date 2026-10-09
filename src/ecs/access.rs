@@ -118,6 +118,8 @@ pub struct Access {
     resource_reads: HashSet<TypeId>,
     resource_writes: HashSet<TypeId>,
     resource_names: HashMap<TypeId, &'static str>,
+    /// Whether the system queues work for after it has run (commands).
+    deferred: bool,
 }
 
 /// What a system touches, by name: for a debugger or a profiler to show.
@@ -138,6 +140,7 @@ impl Access {
             resource_reads: HashSet::new(),
             resource_writes: HashSet::new(),
             resource_names: HashMap::new(),
+            deferred: false,
         }
     }
 
@@ -213,6 +216,17 @@ impl Access {
                     .iter()
                     .any(|theirs| !mine.is_disjoint(theirs) && mine.conflict_with(theirs).is_some())
             })
+    }
+
+    /// Records that the system queues changes to the world for after it has run.
+    pub fn defer(&mut self) {
+        self.deferred = true;
+    }
+
+    /// Whether the system queues changes to the world for after it has run. Systems after
+    /// it are meant to see those changes, so it can't share a moment with them.
+    pub fn defers(&self) -> bool {
+        self.deferred
     }
 
     /// The resources this system reads or writes.

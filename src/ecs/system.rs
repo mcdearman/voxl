@@ -88,6 +88,24 @@ pub trait System: 'static {
     fn main_thread_only(&self) -> bool {
         false
     }
+    /// The system as something that can run beside others, if it can: one that takes its
+    /// parameters from a shared world and keeps its changes to the world for afterwards.
+    fn shared(&mut self) -> Option<&mut dyn SharedSystem> {
+        None
+    }
+}
+
+/// A system that can run at the same moment as others that touch nothing it touches.
+pub trait SharedSystem: Send {
+    /// Runs the system without applying what it deferred (its commands).
+    ///
+    /// # Safety
+    /// The system must be initialized, and for as long as this runs nothing else may touch
+    /// what its access says it touches, except to read what it only reads.
+    unsafe fn run_shared(&mut self, world: &World);
+
+    /// Applies what the last `run_shared` deferred.
+    fn apply_deferred(&mut self, world: &mut World);
 }
 
 pub type BoxedSystem = Box<dyn System>;
@@ -100,7 +118,7 @@ pub trait IntoSystem<Marker>: Sized {
 
 /// Implemented for functions whose arguments are all `SystemParam`s. `Marker` is the function's
 /// signature, which keeps the impls for different arities from overlapping.
-pub trait SystemParamFunction<Marker>: 'static {
+pub trait SystemParamFunction<Marker>: Send + 'static {
     type Param: SystemParam;
 
     fn run(&mut self, param: SystemParamItem<'_, '_, Self::Param>);
@@ -111,7 +129,7 @@ macro_rules! impl_system_function {
         #[allow(non_snake_case)]
         impl<Func, $($P: SystemParam),*> SystemParamFunction<fn($($P,)*)> for Func
         where
-            Func: 'static,
+            Func: Send + 'static,
             for<'a> &'a mut Func: FnMut($($P),*) + FnMut($(SystemParamItem<$P>),*),
         {
             type Param = ($($P,)*);
@@ -172,6 +190,18 @@ impl<Marker: 'static, F: SystemParamFunction<Marker>> System for FunctionSystem<
 
     fn run(&mut self, world: &mut World) {
         self.initialize(world);
+        // SAFETY: we hold `&mut World`, so nothing else is touching anything.
+        unsafe { self.run_shared(world) };
+        self.apply_deferred(world);
+    }
+
+    fn shared(&mut self) -> Option<&mut dyn SharedSystem> {
+        Some(self)
+    }
+}
+
+impl<Marker: 'static, F: SystemParamFunction<Marker>> SharedSystem for FunctionSystem<Marker, F> {
+    unsafe fn run_shared(&mut self, world: &World) {
         let meta = SystemMeta {
             name: self.name,
             ticks: SystemTicks {
@@ -179,12 +209,18 @@ impl<Marker: 'static, F: SystemParamFunction<Marker>> System for FunctionSystem<
                 this_run: world.increment_change_tick(),
             },
         };
-        let state = self.state.as_mut().unwrap();
-        // SAFETY: we hold `&mut World`, and the parameters' access was validated in `initialize`.
+        let state = self.state.as_mut().expect("initialized before it is run");
+        // SAFETY: the parameters' access was checked against each other in `initialize`, and
+        // the caller keeps everyone else away from what they reach.
         let params = unsafe { F::Param::fetch(state, world, &meta) };
         self.func.run(params);
-        F::Param::apply(state, world);
         self.last_run = meta.ticks.this_run;
+    }
+
+    fn apply_deferred(&mut self, world: &mut World) {
+        if let Some(state) = self.state.as_mut() {
+            F::Param::apply(state, world);
+        }
     }
 }
 

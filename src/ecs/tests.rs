@@ -619,3 +619,222 @@ mod batches {
         assert_eq!(pinned, [false, true, true, false, true]);
     }
 }
+
+mod together {
+    use std::{
+        sync::atomic::{AtomicUsize, Ordering},
+        thread::ThreadId,
+        time::{Duration, Instant},
+    };
+
+    use super::super::{guard, pool::Pool, IntoSystems};
+    use super::*;
+
+    /// How many systems are inside `meet` right now, and the most there have been at once.
+    #[derive(Default)]
+    struct Meeting {
+        inside: AtomicUsize,
+        most: AtomicUsize,
+    }
+
+    /// Waits a while for another system to be running at the same moment.
+    fn meet(meeting: &Meeting) {
+        let inside = meeting.inside.fetch_add(1, Ordering::SeqCst) + 1;
+        meeting.most.fetch_max(inside, Ordering::SeqCst);
+        let started = Instant::now();
+        while meeting.most.load(Ordering::SeqCst) < 2 && started.elapsed() < Duration::from_secs(5)
+        {
+            std::thread::yield_now();
+        }
+        meeting.inside.fetch_sub(1, Ordering::SeqCst);
+    }
+
+    fn first(meeting: Res<Meeting>, _: Query<&Pos>) {
+        meet(&meeting);
+    }
+    fn second(meeting: Res<Meeting>, _: Query<&mut Vel>) {
+        meet(&meeting);
+    }
+
+    #[test]
+    fn a_batch_really_runs_at_the_same_moment() {
+        let mut world = World::new();
+        world.init_resource::<Meeting>();
+        let mut schedule = Schedule::default();
+        schedule.add_systems((first, second));
+        schedule.run(&mut world);
+        let expected = if Pool::global().workers() > 0 { 2 } else { 1 };
+        assert_eq!(
+            world.resource::<Meeting>().most.load(Ordering::SeqCst),
+            expected
+        );
+
+        // Told to take turns, they never meet. (Each then waits out its five seconds, so
+        // this half only checks the plan.)
+        let mut schedule = Schedule::default();
+        schedule.add_systems((first, second).chain());
+        schedule.initialize(&mut world);
+        let batches: Vec<_> = schedule
+            .systems()
+            .iter()
+            .map(|s| s.batch.unwrap())
+            .collect();
+        assert_eq!(batches, [0, 1]);
+    }
+
+    #[derive(Default)]
+    struct Threads(std::sync::Mutex<Vec<(&'static str, ThreadId)>>);
+
+    #[test]
+    fn pinned_systems_stay_on_the_calling_thread() {
+        struct Screen;
+        fn draws(_: Res<Screen>, threads: Res<Threads>) {
+            threads
+                .0
+                .lock()
+                .unwrap()
+                .push(("draws", std::thread::current().id()));
+        }
+        fn thinks(threads: Res<Threads>, _: Query<&Pos>) {
+            threads
+                .0
+                .lock()
+                .unwrap()
+                .push(("thinks", std::thread::current().id()));
+        }
+        fn dreams(threads: Res<Threads>, _: Query<&Vel>) {
+            threads
+                .0
+                .lock()
+                .unwrap()
+                .push(("dreams", std::thread::current().id()));
+        }
+        let mut world = World::new();
+        world.insert_resource(Screen);
+        world.pin_to_main_thread::<Screen>();
+        world.init_resource::<Threads>();
+        let mut schedule = Schedule::default();
+        schedule.add_systems((thinks, draws, dreams));
+        for _ in 0..20 {
+            schedule.run(&mut world);
+        }
+        let here = std::thread::current().id();
+        let seen = world.resource::<Threads>().0.lock().unwrap();
+        assert_eq!(seen.len(), 60);
+        assert!(seen
+            .iter()
+            .filter(|(name, _)| *name == "draws")
+            .all(|(_, id)| *id == here));
+        if Pool::global().workers() > 0 {
+            assert!(
+                seen.iter().any(|(_, id)| *id != here),
+                "something ran elsewhere"
+            );
+        }
+    }
+
+    // A small world that exercises what could go wrong: writers of different components,
+    // writers of one component on disjoint entities, readers, change detection, commands.
+
+    fn fall(mut q: Query<(&mut Pos, &Vel)>) {
+        for (mut pos, vel) in &mut q {
+            pos.0 += vel.0;
+        }
+    }
+    fn tire(mut q: Query<&mut Vel, With<Marker>>) {
+        for mut vel in &mut q {
+            vel.0 -= 1;
+        }
+    }
+    fn hurry(mut q: Query<&mut Vel, Without<Marker>>) {
+        for mut vel in &mut q {
+            vel.0 += 2;
+        }
+    }
+    fn tally(q: Query<&Pos, Changed<Pos>>, mut counter: ResMut<Counter>) {
+        counter.0 += q.iter().count();
+    }
+    fn breed(mut commands: Commands, q: Query<&Pos>) {
+        if q.iter().count() < 40 {
+            commands.spawn((Pos(1), Vel(1)));
+            commands.spawn((Pos(2), Vel(0), Marker));
+        }
+    }
+    fn census(q: Query<Entity>, mut seen: ResMut<Seen>) {
+        seen.0.push(q.iter().count());
+    }
+    #[derive(Default)]
+    struct Seen(Vec<usize>);
+
+    fn play(parallel: bool) -> (Vec<i32>, Vec<i32>, usize, Vec<usize>) {
+        let mut world = World::new();
+        world.insert_resource(Counter(0));
+        world.init_resource::<Seen>();
+        for i in 0..6 {
+            world.spawn((Pos(i), Vel(i % 3)));
+            world.spawn((Pos(-i), Vel(1), Marker));
+        }
+        let mut schedule = Schedule::default();
+        schedule.add_systems((tire, hurry, fall, tally, breed, census, tire, hurry));
+        schedule.set_parallel(parallel);
+        for _ in 0..25 {
+            schedule.run(&mut world);
+        }
+        let mut pos: Vec<i32> = world.query::<&Pos>().iter().map(|p| p.0).collect();
+        let mut vel: Vec<i32> = world.query::<&Vel>().iter().map(|v| v.0).collect();
+        pos.sort_unstable();
+        vel.sort_unstable();
+        let seen = std::mem::take(&mut world.resource_mut::<Seen>().0);
+        (pos, vel, world.resource::<Counter>().0, seen)
+    }
+
+    #[test]
+    fn running_together_gives_what_taking_turns_gives() {
+        let turns = play(false);
+        for _ in 0..5 {
+            assert_eq!(play(true), turns);
+        }
+        // `census` comes after `breed`, and so sees what it spawned that very frame.
+        assert_eq!(turns.3[0], 14);
+    }
+
+    #[test]
+    fn a_failure_beside_other_systems_is_caught_alone() {
+        fn fragile(_: Query<&Pos>) {
+            panic!("fell over beside the others");
+        }
+        let mut world = World::new();
+        world.insert_resource(Counter(0));
+        world.init_resource::<Meeting>();
+        let mut schedule = Schedule::default();
+        schedule.add_systems((fragile, counts_up, reads_vel_only));
+        schedule.set_guarded(true);
+        schedule.run(&mut world);
+        schedule.run(&mut world);
+        let failures = schedule.take_failures();
+        assert_eq!(failures.len(), 1, "once, then it is left out");
+        assert_eq!(failures[0].message, "fell over beside the others");
+        assert!(failures[0].system.ends_with("fragile"));
+        if !cfg!(miri) {
+            assert!(
+                failures[0].stack.contains("fragile"),
+                "{}",
+                failures[0].stack
+            );
+        }
+        assert_eq!(world.resource::<Counter>().0, 2, "the others carried on");
+        assert!(!guard::active());
+
+        // Unguarded, the panic comes out of `run`, after the rest of the batch has finished.
+        let mut schedule = Schedule::default();
+        schedule.add_systems((fragile, counts_up, reads_vel_only));
+        let result =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| schedule.run(&mut world)));
+        assert!(result.is_err());
+    }
+
+    fn counts_up(mut counter: ResMut<Counter>) {
+        counter.0 += 1;
+    }
+    fn reads_vel_only(_: Query<&Vel>) {}
+}

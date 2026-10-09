@@ -7,6 +7,7 @@ mod commands;
 mod condition;
 mod entity;
 mod event;
+mod pool;
 pub mod guard;
 mod query;
 mod resource;
