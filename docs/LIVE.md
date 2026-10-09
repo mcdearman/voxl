@@ -130,6 +130,7 @@ answered at the start of a frame, whether or not the game is paused.
 | Command | Arguments | Answer |
 | --- | --- | --- |
 | `status` | | frame, seconds, time scale, paused, frames of stepping left, failures, entities |
+| `quit` | | asks the game to stop, as closing its window would |
 | `pause`, `resume` | | |
 | `step` | `frames` (1) | runs that many frames, then pauses |
 | `run_until` | `signal`, `max_frames` (600) | steps until the signal is true or the frames run out; `status` then says `reached` |

@@ -27,8 +27,10 @@ fn main() -> anyhow::Result<()> {
     if !headless {
         return app.run();
     }
-    loop {
+    // Until told to stop (`mira-debug quit`), since there is no window to close.
+    while !app.should_exit() {
         app.update();
         std::thread::sleep(Duration::from_millis(16));
     }
+    Ok(())
 }
