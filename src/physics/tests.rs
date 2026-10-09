@@ -302,3 +302,113 @@ fn surface_tension_keeps_a_jet_together() {
     let (loose, held) = (spread(0.0), spread(0.35));
     assert!(held < loose * 0.8, "with cohesion {held} m wide, without {loose} m");
 }
+
+#[test]
+fn a_saved_scene_simulates_the_same_after_loading() {
+    use crate::reflect::{Scene, TypeRegistry};
+
+    let mut registry = TypeRegistry::default();
+    registry.register::<Transform>();
+    registry.register::<RigidBody>();
+    registry.register::<Collider>();
+    registry.register::<Joint>();
+    registry.register::<CharacterController>();
+
+    let mut sim = Sim::new();
+    // A floor of two triangles, a pendulum, a lopsided compound body and a walker: every
+    // kind of shape, a joint that names another entity, and a body already moving.
+    let floor = super::TriMesh::new(
+        vec![
+            Vec3::new(-20.0, 0.0, -20.0),
+            Vec3::new(20.0, 0.0, -20.0),
+            Vec3::new(20.0, 0.0, 20.0),
+            Vec3::new(-20.0, 0.0, 20.0),
+        ],
+        vec![[0, 2, 1], [0, 3, 2]],
+    );
+    sim.world.spawn((
+        Transform::IDENTITY,
+        GlobalTransform::default(),
+        Collider::trimesh(floor).with_friction(0.7),
+    ));
+    let bob = sim.body(
+        Vec3::new(2.0, 5.0, 0.0),
+        Collider::sphere(0.1),
+        RigidBody::dynamic().with_mass(3.0),
+    );
+    sim.world.spawn(Joint {
+        a: bob,
+        b: None,
+        anchor_a: Vec3::ZERO,
+        anchor_b: Vec3::new(0.0, 5.0, 0.0),
+        kind: JointKind::Distance { min: 2.0, max: 2.0 },
+    });
+    let lump = sim.body(
+        Vec3::new(-3.0, 2.0, 1.0),
+        Collider::compound(vec![
+            (super::Iso::IDENTITY, super::Shape::cuboid(Vec3::splat(0.3))),
+            (
+                super::Iso::new(Vec3::new(0.5, 0.2, 0.0), Quat::from_rotation_z(0.4)),
+                super::Shape::Capsule {
+                    half_height: 0.3,
+                    radius: 0.1,
+                },
+            ),
+        ])
+        .with_restitution(0.4),
+        RigidBody::dynamic().with_velocity(Vec3::new(1.0, 0.0, -0.5)),
+    );
+    let door = sim.body(
+        Vec3::new(6.0, 1.2, 0.0),
+        Collider::cuboid(Vec3::new(0.5, 1.0, 0.05)),
+        RigidBody::dynamic(),
+    );
+    sim.world.spawn(Joint {
+        a: door,
+        b: Some(lump),
+        anchor_a: Vec3::new(-0.5, 0.0, 0.0),
+        anchor_b: Vec3::new(0.0, 1.0, 0.0),
+        kind: JointKind::Hinge {
+            axis_a: Vec3::Y,
+            axis_b: Vec3::Y,
+            limits: Some((-1.0, 1.0)),
+        },
+    });
+    let mut walker = CharacterController::new(1.8, 0.3);
+    walker.desired_velocity = Vec3::new(0.0, 0.0, 1.5);
+    let walker = sim.world.spawn((
+        Transform::from_xyz(8.0, 1.0, 0.0),
+        GlobalTransform::default(),
+        walker,
+    ));
+    sim.run(0.25);
+
+    let scene = Scene::from_json(&Scene::capture(&sim.world, &registry).to_json()).unwrap();
+    let mut loaded = Sim::new();
+    loaded.world.spawn_empty(); // so the ids differ, and the joints must be pointed at the new ones
+    let spawned = scene.spawn(&mut loaded.world, &registry);
+    assert!(spawned.skipped.is_empty(), "{:?}", spawned.skipped);
+    for &entity in &spawned.entities {
+        loaded.world.insert(entity, GlobalTransform::default());
+    }
+
+    // The scene lists entities in the order they were made, so pair them up by position.
+    let saved = [bob, lump, door, walker];
+    let ids: Vec<u64> = scene.entities.iter().map(|e| e.id).collect();
+    let new =
+        saved.map(|e| spawned.entities[ids.iter().position(|&id| id == e.to_bits()).unwrap()]);
+    sim.run(2.0);
+    loaded.run(2.0);
+    for (old, new) in saved.into_iter().zip(new) {
+        let (a, b) = (sim.at(old), loaded.at(new));
+        assert!(
+            a.distance(b) < 1e-3,
+            "{old:?} ended at {a}, its copy at {b}"
+        );
+    }
+    assert!(
+        sim.at(walker).z > 2.0,
+        "the walker should have walked, is at {}",
+        sim.at(walker)
+    );
+}

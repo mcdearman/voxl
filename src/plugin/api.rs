@@ -120,6 +120,7 @@ pub(crate) static API: VoxlApi = VoxlApi {
     spawn_model,
     set_parent,
     despawn_tree,
+    spawn_prefab,
 };
 
 /// Runs `body`, turning a panic into `fallback` so it never unwinds into the plugin.
@@ -1238,5 +1239,31 @@ unsafe extern "C" fn despawn_tree(system: *mut VoxlSystem, entity: VoxlEntity) {
                 crate::transform::despawn_recursive(world, entity);
             });
         }
+    })
+}
+
+unsafe extern "C" fn spawn_prefab(
+    system: *mut VoxlSystem,
+    name: *const u8,
+    len: usize,
+    transform: *const sys::VoxlTransform,
+) -> VoxlEntity {
+    guard("spawn_prefab", sys::VOXL_ENTITY_NONE, || {
+        let (Some(context), Some(name), Some(at)) =
+            (context(system), text(name, len), transform.as_ref())
+        else {
+            return sys::VOXL_ENTITY_NONE;
+        };
+        let transform = Transform {
+            translation: at.translation.into(),
+            rotation: glam::Quat::from_array(at.rotation.0),
+            scale: at.scale.into(),
+        };
+        let root = context.spawn();
+        let instance = crate::prefab::PrefabInstance::new(name);
+        context.queue.push(move |world| {
+            world.insert(root, (transform, instance));
+        });
+        root.to_bits()
     })
 }

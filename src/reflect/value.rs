@@ -185,6 +185,8 @@ impl std::error::Error for ReflectError {}
 /// binding generator needs to describe it to another language.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Schema {
+    /// Any value at all: a field that holds a value of some other type (an override, say).
+    Any,
     Unit,
     Bool,
     Int,
@@ -217,6 +219,25 @@ pub trait Reflect: Sized + 'static {
     fn to_value(&self) -> Value;
     fn from_value(value: &Value) -> Result<Self, ReflectError>;
     fn schema() -> Schema;
+}
+
+/// A value held as it is: for fields that carry a value of some other type.
+impl Reflect for Value {
+    fn type_name() -> &'static str {
+        "Value"
+    }
+
+    fn to_value(&self) -> Value {
+        self.clone()
+    }
+
+    fn from_value(value: &Value) -> Result<Self, ReflectError> {
+        Ok(value.clone())
+    }
+
+    fn schema() -> Schema {
+        Schema::Any
+    }
 }
 
 impl Reflect for bool {
@@ -402,6 +423,44 @@ impl<T: Reflect, const N: usize> Reflect for [T; N] {
     fn schema() -> Schema {
         Schema::Array(Box::new(T::schema()), N)
     }
+}
+
+/// Tuples are saved as lists, one item per part.
+macro_rules! reflect_tuple {
+    ($(($($t:ident $i:tt),+);)*) => {$(
+        impl<$($t: Reflect),+> Reflect for ($($t,)+) {
+            fn type_name() -> &'static str {
+                "tuple"
+            }
+
+            fn to_value(&self) -> Value {
+                Value::List(vec![$(self.$i.to_value()),+])
+            }
+
+            fn from_value(value: &Value) -> Result<Self, ReflectError> {
+                const COUNT: usize = [$($i),+].len();
+                match value {
+                    Value::List(items) if items.len() == COUNT => Ok(($(
+                        $t::from_value(&items[$i]).map_err(|err| err.inside_index($i))?,
+                    )+)),
+                    Value::List(items) => Err(ReflectError::new(format!(
+                        "expected {COUNT} items, found {}",
+                        items.len()
+                    ))),
+                    other => Err(ReflectError::expected("a list", other)),
+                }
+            }
+
+            fn schema() -> Schema {
+                Schema::Tuple(vec![$($t::schema()),+])
+            }
+        }
+    )*};
+}
+reflect_tuple! {
+    (A 0, B 1);
+    (A 0, B 1, C 2);
+    (A 0, B 1, C 2, D 3);
 }
 
 /// Reflects a type as a fixed list of floats, through conversions to and from an array.

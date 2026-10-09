@@ -106,6 +106,7 @@ impl Plugin for VoxelPlugin {
         };
 
         let view_distance = (self.settings.view_radius * CHUNK_SIZE) as f32;
+        app.register_type::<ChunkViewer>();
         app.insert_resource(textures)
             .insert_resource(registry)
             .insert_resource(ChunkGenerator::new(move |chunk| terrain.generate(chunk)))

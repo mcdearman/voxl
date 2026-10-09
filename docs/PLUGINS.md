@@ -114,6 +114,9 @@ undescribed component works as before and is simply invisible to scenes and tool
 - `image_load` loads a PNG or JPEG by [name](ASSETS.md), and `set_textures` puts images on an
   entity's material.
 - `spawn_model` spawns a glTF model: one entity where you asked, with a child for each part.
+- `spawn_prefab` spawns an instance of a [prefab](SCENES.md#prefabs): one entity where you
+  asked, with the prefab's entities below it from the next frame on. Save the prefab's file
+  again and the instance is rebuilt.
 
 Names are relative to the app's asset folder. The same name always gives the same asset.
 
@@ -225,7 +228,7 @@ scene, physics and events have typed wrappers too: `setCamera`, `setLight`, `set
 with `colliderOf (Box half)`, `setBody` with `bodyOf Dynamic`, `raycast`, and
 `registerEvent` / `sendEvent` / `readEvents`. `describeComponent` takes the fields as
 `Field name type count offset`, matching the component's `Storable` instance, and `loadImage`,
-`setTextures` and `spawnModel` load files.
+`setTextures`, `spawnModel` and `spawnPrefab` load files.
 
 Build with the script, which links the module with the bindings
 ([`bindings/haskell/Voxl.hs`](../bindings/haskell/Voxl.hs)) and a small piece of C that starts

@@ -384,7 +384,10 @@ fn engine_plugins_register_their_components() {
     app.add_plugins(TransformPlugin).register_type::<Health>();
     let registry = app.world.resource::<TypeRegistry>();
     let names: Vec<_> = registry.iter().map(|t| t.name).collect();
-    assert_eq!(names, ["voxl.Transform", "voxl.Parent", "test.Health"]);
+    assert_eq!(
+        names,
+        ["voxl.Transform", "voxl.Parent", "voxl.Interpolate", "test.Health"]
+    );
 }
 
 #[test]

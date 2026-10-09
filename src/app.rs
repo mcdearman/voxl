@@ -2,9 +2,9 @@ use std::collections::HashMap;
 
 use crate::{
     ecs::{event_update_system, Component, Events, IntoSystems, Schedule, World},
-    reflect::{Reflect, TypeRegistry},
     input::InputPlugin,
     plugin::{NativePlugins, PluginEvents},
+    reflect::{Reflect, TypeRegistry},
     render::RenderPlugin,
     time::{FixedTime, Time, TimePlugin},
     transform::TransformPlugin,
@@ -227,6 +227,7 @@ impl Plugin for DefaultPlugins {
             .add_plugins(WindowPlugin)
             .add_plugins(InputPlugin)
             .add_plugins(TransformPlugin)
+            .add_plugins(crate::prefab::PrefabPlugin)
             .add_plugins(RenderPlugin);
     }
 }

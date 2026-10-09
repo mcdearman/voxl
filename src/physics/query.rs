@@ -124,7 +124,8 @@ impl PhysicsWorld {
 /// A walking body: a kinematic capsule the game steers by setting `desired_velocity` (the
 /// horizontal part is used). It falls, stands on the ground, walks up steps and gentle slopes,
 /// and slides along walls. Its entity's translation is the capsule's centre.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, crate::reflect::Reflect)]
+#[reflect(name = "voxl.CharacterController")]
 pub struct CharacterController {
     pub height: f32,
     pub radius: f32,

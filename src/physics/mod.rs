@@ -29,11 +29,13 @@ pub use shape::{ray_triangle, Aabb, Iso, Shape, TriMesh};
 use crate::{
     app::{App, Plugin, Stage},
     ecs::{Component, Entity, Query, Res, ResMut, Without},
+    reflect::Reflect,
     time::FixedTime,
     transform::{GlobalTransform, Parent, Transform},
 };
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Reflect)]
+#[reflect(name = "voxl.BodyKind")]
 pub enum BodyKind {
     /// Moved by gravity, forces and collisions.
     Dynamic,
@@ -43,7 +45,8 @@ pub enum BodyKind {
 
 /// Makes a collider's entity move. The entity's `Transform` is the body's position and
 /// orientation; its centre of mass is at the entity's origin.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Reflect)]
+#[reflect(name = "voxl.RigidBody", default)]
 pub struct RigidBody {
     pub kind: BodyKind,
     pub linear_velocity: Vec3,
@@ -62,15 +65,27 @@ pub struct RigidBody {
     /// its own code): its velocity is measured from how far it moved each step, so what it
     /// bumps into is pushed as hard as it was hit.
     pub follows_transform: bool,
+    #[reflect(skip)]
     last_position: Option<Vec3>,
+    #[reflect(skip)]
     force: Vec3,
+    #[reflect(skip)]
     torque: Vec3,
+    #[reflect(skip)]
     impulse: Vec3,
+    #[reflect(skip)]
     idle: f32,
+    #[reflect(skip)]
     sleeping: bool,
 }
 
 impl Component for RigidBody {}
+
+impl Default for RigidBody {
+    fn default() -> Self {
+        Self::dynamic()
+    }
+}
 
 impl RigidBody {
     pub fn dynamic() -> Self {
@@ -146,7 +161,8 @@ impl RigidBody {
 }
 
 /// What an entity collides as: one or more shapes, placed relative to the entity.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Reflect)]
+#[reflect(name = "voxl.Collider")]
 pub struct Collider {
     pub shapes: Vec<(Iso, Shape)>,
     pub friction: f32,
@@ -243,7 +259,8 @@ impl Collider {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Reflect)]
+#[reflect(name = "voxl.JointKind")]
 pub enum JointKind {
     /// The anchors held together; free to turn any way.
     Ball,
@@ -258,7 +275,8 @@ pub enum JointKind {
 
 /// Joins two bodies (or a body to the world, with `b` none). Anchors are in each body's own
 /// space; with no `b`, `anchor_b` is a point in the world.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Reflect)]
+#[reflect(name = "voxl.Joint")]
 pub struct Joint {
     pub a: Entity,
     pub b: Option<Entity>,
@@ -384,6 +402,10 @@ impl Plugin for PhysicsPlugin {
         {
             log::error!("{err}");
         }
+        app.register_type::<RigidBody>()
+            .register_type::<Collider>()
+            .register_type::<Joint>()
+            .register_type::<CharacterController>();
         app.init_resource::<PhysicsWorld>()
             .add_systems(
                 Stage::FixedUpdate,

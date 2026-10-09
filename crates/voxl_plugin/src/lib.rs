@@ -875,6 +875,14 @@ impl System {
         Entity(unsafe { (api().spawn_model)(self.raw, name.as_ptr(), name.len(), transform) })
     }
 
+    /// Spawns an instance of a prefab by name: a new entity at `transform` with the prefab's
+    /// entities below it. They appear on the next frame, and are rebuilt whenever the
+    /// prefab's file is saved again.
+    pub fn spawn_prefab(&mut self, name: &str, transform: &Transform) -> Entity {
+        // SAFETY: called inside the system; the engine copies the name and the transform.
+        Entity(unsafe { (api().spawn_prefab)(self.raw, name.as_ptr(), name.len(), transform) })
+    }
+
     /// Makes `child` a child of `parent` (its transform becomes relative to the parent's),
     /// or a root again with `None`, when this system returns.
     pub fn set_parent(&mut self, child: Entity, parent: Option<Entity>) {

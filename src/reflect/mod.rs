@@ -26,6 +26,6 @@ mod tests;
 
 pub use blob::{blob_component_type, BlobField, FieldKind};
 pub use registry::{intern, ComponentType, TypeRegistry};
-pub use scene::{Scene, SceneEntity, Spawned};
+pub use scene::{NotSaved, Scene, SceneEntity, Spawned};
 pub use value::{Reflect, ReflectError, Schema, Value};
 pub use voxl_derive::Reflect;

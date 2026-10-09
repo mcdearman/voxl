@@ -288,3 +288,8 @@ void voxl_hs_set_parent(VoxlSystem *system, VoxlEntity child, VoxlEntity parent)
 void voxl_hs_despawn_tree(VoxlSystem *system, VoxlEntity entity) {
     api->despawn_tree(system, entity);
 }
+
+VoxlEntity voxl_hs_spawn_prefab(VoxlSystem *system, const char *name, size_t len,
+                                const VoxlTransform *transform) {
+    return api->spawn_prefab(system, name, len, transform);
+}

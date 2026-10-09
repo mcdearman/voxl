@@ -315,7 +315,7 @@ const INVENTORY: &str = r#"
 #include <stddef.h>
 typedef struct { float weight; int32_t count; uint8_t rare; VoxlEntity owner; float tint[3]; } Item;
 static VoxlComponent transform_c, item_c;
-static VoxlEntity *hen;
+static VoxlEntity *hen, *camp;
 
 static VoxlTransform at(float x, float y, float z) {
     VoxlTransform t = {{x, y, z}, 0, {0, 0, 0, 1}, {1, 1, 1}, 0};
@@ -338,6 +338,7 @@ static void setup(VoxlSystem *s, void *user) {
 
     *hen = api->spawn_model(s, VOXL_STR("hen.glb"), &there);
     api->spawn_model(s, VOXL_STR("no-such-model.glb"), &there); /* logged, not fatal */
+    *camp = api->spawn_prefab(s, VOXL_STR("camp.json"), &there);
 
     /* A lantern carried by the owner: its place is relative to the owner's. */
     VoxlTransform beside = at(0, 2, 0);
@@ -383,6 +384,7 @@ VOXL_EXPORT int32_t voxl_plugin_load(const VoxlApi *a, VoxlApp *app) {
 
     VoxlTerm items[] = {{transform_c, VOXL_WRITE}, {item_c, VOXL_READ}};
     hen = api->state(app, VOXL_STR("inv.hen"), sizeof(VoxlEntity), _Alignof(VoxlEntity));
+    camp = api->state(app, VOXL_STR("inv.camp"), sizeof(VoxlEntity), _Alignof(VoxlEntity));
     VoxlSystemDesc systems[] = {
         {VOXL_STR("setup"), VOXL_STAGE_STARTUP, 0, setup, NULL, NULL, 0},
         {VOXL_STR("weigh"), VOXL_STAGE_UPDATE, 0, weigh, NULL, items, 2},
@@ -779,8 +781,18 @@ fn app_with_assets(workspace: &Workspace) -> App {
         workspace.dir.join("hen.glb"),
     )
     .unwrap();
+    // A prefab: a camp of two tents.
+    let mut camp = World::new();
+    camp.spawn(Transform::from_xyz(-1.0, 0.0, 0.0));
+    camp.spawn(Transform::from_xyz(1.0, 0.0, 0.0));
+    let mut transforms = crate::reflect::TypeRegistry::default();
+    transforms.register::<Transform>();
+    crate::reflect::Scene::capture(&camp, &transforms)
+        .save(workspace.dir.join("camp.json"))
+        .unwrap();
     let mut app = app();
-    app.add_plugins(crate::input::InputPlugin);
+    app.add_plugins(crate::input::InputPlugin)
+        .add_plugins(crate::prefab::PrefabPlugin);
     app.insert_resource(AssetServer::new(&workspace.dir))
         .init_resource::<Assets<Mesh>>()
         .init_resource::<Assets<Image>>()
@@ -885,6 +897,20 @@ fn a_described_plugin_component_can_be_inspected_saved_and_loaded() {
     );
     let root = app.world.get::<Parent>(parts[0]).unwrap().0;
     assert_eq!(position(&app, root).x, 5.0);
+
+    // A prefab: the instance the plugin asked for, with the file's two entities below it.
+    let (camp, tents) = app
+        .world
+        .query::<(Entity, &crate::prefab::PrefabInstance)>()
+        .iter()
+        .map(|(entity, instance)| (entity, instance.entities().to_vec()))
+        .next()
+        .expect("the plugin spawned a prefab instance");
+    assert_eq!(position(&app, camp).x, 5.0);
+    assert_eq!(tents.len(), 2);
+    assert!(tents
+        .iter()
+        .all(|&tent| app.world.get::<Parent>(tent) == Some(&Parent(camp))));
 
     // Hierarchy: the lantern the plugin hung on the owner is placed relative to it.
     let owner_entity = Entity::from_bits(owner);

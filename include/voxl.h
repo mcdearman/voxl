@@ -414,6 +414,15 @@ typedef struct VoxlApi {
     void (*set_parent)(VoxlSystem *system, VoxlEntity child, VoxlEntity parent);
     /* Despawns an entity and everything below it (a model and its parts, say). */
     void (*despawn_tree)(VoxlSystem *system, VoxlEntity entity);
+
+    /* ---- prefabs (inside a system) ---- */
+
+    /* Spawns an instance of a prefab by name (a scene file relative to the app's asset
+     * folder, or a name the app gave a scene): one new entity at `transform`, with the
+     * prefab's entities below it. Returns the new entity at once; its contents appear on
+     * the next frame, and are rebuilt whenever the prefab's file is saved again. */
+    VoxlEntity (*spawn_prefab)(VoxlSystem *system, const char *name, size_t len,
+                               const VoxlTransform *transform);
 } VoxlApi;
 
 /* ---- conveniences for C and C++ ---- */

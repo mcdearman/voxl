@@ -132,9 +132,11 @@ impl Component for Parent {}
 ///
 /// Only move such entities from the fixed stages, or call `Interpolate::reset` after teleporting
 /// them; writes from `Update` are overwritten.
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, Reflect)]
+#[reflect(name = "voxl.Interpolate")]
 pub struct Interpolate {
     /// `(previous, current)` simulated transforms. `None` until the first fixed step.
+    #[reflect(skip)]
     steps: Option<(Transform, Transform)>,
 }
 
@@ -352,7 +354,9 @@ pub struct TransformPlugin;
 
 impl Plugin for TransformPlugin {
     fn build(&self, app: &mut App) {
-        app.register_type::<Transform>().register_type::<Parent>();
+        app.register_type::<Transform>()
+            .register_type::<Parent>()
+            .register_type::<Interpolate>();
         if TRANSFORM_MATCHES_HEADER {
             app.world.export_component::<Transform>("voxl.Transform");
         } else {

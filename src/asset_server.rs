@@ -32,9 +32,9 @@ use crate::{
 };
 
 /// A file's modification time and size: enough to tell that it was saved again.
-type Stamp = (SystemTime, u64);
+pub(crate) type Stamp = (SystemTime, u64);
 
-fn stamp(path: &Path) -> Option<Stamp> {
+pub(crate) fn stamp(path: &Path) -> Option<Stamp> {
     let meta = std::fs::metadata(path).ok()?;
     Some((meta.modified().ok()?, meta.len()))
 }
