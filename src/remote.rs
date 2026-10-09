@@ -22,6 +22,7 @@ use std::{
 use crate::{
     app::{App, Stage},
     ecs::Entity,
+    input::{key_named, InjectedInput, Played},
     live::{History, Live},
     reflect::{json, Scene, Schema, TypeRegistry, Value},
     signal::{Compare, Op, Signal, Signals},
@@ -285,6 +286,29 @@ pub fn schema_value(schema: &Schema) -> Value {
     }
 }
 
+/// Plays a key or button going down, coming up, or both a few frames apart.
+fn play_button(
+    injected: &mut InjectedInput,
+    action: &str,
+    frames: u32,
+    played: impl Fn(bool) -> Played,
+) -> Result<(), String> {
+    match action {
+        "press" => injected.play(played(true)),
+        "release" => injected.play(played(false)),
+        "tap" => {
+            injected.play(played(true));
+            injected.play_after(frames, played(false));
+        }
+        other => {
+            return Err(format!(
+                "there is no action `{other}`; use press, release or tap"
+            ))
+        }
+    }
+    Ok(())
+}
+
 /// Carries out one request.
 fn handle(app: &mut App, request: &Value) -> Answer {
     let done = Ok(Value::Bool(true));
@@ -292,6 +316,7 @@ fn handle(app: &mut App, request: &Value) -> Answer {
         "status" => {
             let live = app.world.resource::<Live>();
             let (paused, failures) = (live.is_paused(), live.failures().len());
+            let (stepping, reached) = (live.steps_left(), live.reached());
             let time = app.world.get_resource::<Time>();
             Ok(map([
                 (
@@ -307,6 +332,8 @@ fn handle(app: &mut App, request: &Value) -> Answer {
                     Value::Float(time.map_or(1.0, |t| t.scale() as f64)),
                 ),
                 ("paused", Value::Bool(paused)),
+                ("stepping", Value::Int(stepping as i64)),
+                ("reached", Value::Bool(reached)),
                 ("failures", Value::Int(failures as i64)),
                 ("entities", Value::Int(app.world.entity_count() as i64)),
             ]))
@@ -328,6 +355,84 @@ fn handle(app: &mut App, request: &Value) -> Answer {
                 .resource_mut::<Live>()
                 .step_frames(frames.max(1.0) as u32);
             done
+        }
+        "run_until" => {
+            let signal = text(request, "signal")?;
+            if app.world.resource::<Signals>().get(signal).is_none() {
+                return Err(format!("there is no signal `{signal}`"));
+            }
+            let frames = request
+                .field("max_frames")
+                .and_then(Value::as_f64)
+                .unwrap_or(600.0);
+            app.world
+                .resource_mut::<Live>()
+                .step_until(signal, frames.max(1.0) as u32);
+            done
+        }
+        "input" => {
+            let injected = app
+                .world
+                .get_resource_mut::<InjectedInput>()
+                .ok_or("this game takes no input")?;
+            let frames = request
+                .field("frames")
+                .and_then(Value::as_f64)
+                .unwrap_or(1.0)
+                .max(1.0) as u32;
+            let action = match request.field("action") {
+                Some(Value::Text(action)) => action.as_str(),
+                None => "tap",
+                Some(_) => return Err("`action` is press, release or tap".to_owned()),
+            };
+            let mut played = 0;
+            if let Some(Value::Text(name)) = request.field("key") {
+                let key = key_named(name).ok_or_else(|| {
+                    format!("there is no key `{name}`; keys are named like KeyW, Space, ArrowLeft, Digit1, ShiftLeft")
+                })?;
+                play_button(injected, action, frames, |down| Played::Key(key, down))?;
+                played += 1;
+            }
+            if let Some(Value::Text(name)) = request.field("mouse_button") {
+                let button = match name.to_ascii_lowercase().as_str() {
+                    "left" => crate::input::MouseButton::Left,
+                    "right" => crate::input::MouseButton::Right,
+                    "middle" => crate::input::MouseButton::Middle,
+                    _ => {
+                        return Err(format!(
+                            "there is no mouse button `{name}`; use left, right or middle"
+                        ))
+                    }
+                };
+                play_button(injected, action, frames, |down| {
+                    Played::Button(button, down)
+                })?;
+                played += 1;
+            }
+            let pair = |key: &str| match request.field(key) {
+                Some(Value::List(pair)) if pair.len() == 2 => {
+                    match (pair[0].as_f64(), pair[1].as_f64()) {
+                        (Some(x), Some(y)) => Ok(Some(glam::Vec2::new(x as f32, y as f32))),
+                        _ => Err(format!("`{key}` is two numbers")),
+                    }
+                }
+                Some(_) => Err(format!("`{key}` is two numbers")),
+                None => Ok(None),
+            };
+            if let Some(motion) = pair("mouse_motion")? {
+                injected.play(Played::Motion(motion));
+                played += 1;
+            }
+            if let Some(position) = pair("mouse_position")? {
+                injected.play(Played::Cursor(position));
+                played += 1;
+            }
+            if played == 0 {
+                return Err(
+                    "give a `key`, a `mouse_button`, `mouse_motion` or `mouse_position`".to_owned(),
+                );
+            }
+            Ok(Value::Int(played))
         }
         "time_scale" => {
             let scale = number(request, "scale")? as f32;

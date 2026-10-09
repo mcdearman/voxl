@@ -153,10 +153,11 @@ game's state, change it, and control time and code. The means is the Model Conte
 - [ ] Total knowledge: a check that reports engine state that is not reflected, and so
       invisible
 - [ ] Events pushed, not polled: failures, signal changes, log lines, a plugin reloading
-- [ ] Launching and owning a game: start it headless or windowed, step it deterministically
-      (fixed timestep, seeded), run to a condition ("until this signal is true"), shut it down
-- [ ] Input from the agent: keys, mouse and gamepad injected as if played, so an agent can
-      play-test what it built
+- [x] Running to a condition: step frames and wait for them, or run until a signal is true
+- [x] Input from the agent: keys and mouse injected as if played, so an agent can play-test
+      what it built
+- [ ] Launching and owning a game: start it headless or windowed, seeded, and shut it down;
+      gamepad and text input
 - [ ] Editing through the same door: write a prefab or a scene, define signals, build and
       reload a plugin, and see the result, without leaving the conversation
 - [ ] The same tools from inside the editor (Phase 5), so a person and an agent can work on
@@ -383,5 +384,5 @@ project grows.
    seen in screenshots to fix alongside: the built-in sky is dull next to the sun it comes
    with; and objects that move every frame smear under temporal anti-aliasing (it has no
    motion vectors).
-3. The rest of Phase 1C (headless stepping, input from an agent, pushed events); then table
-   storage, observers and relations (Phase 2).
+3. The rest of Phase 1C (pushed events, launching a game, screenshot viewpoints and
+   overlays); then table storage, observers and relations (Phase 2).

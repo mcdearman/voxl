@@ -129,9 +129,11 @@ answered at the start of a frame, whether or not the game is paused.
 
 | Command | Arguments | Answer |
 | --- | --- | --- |
-| `status` | | frame, seconds, time scale, paused, failures, entities |
+| `status` | | frame, seconds, time scale, paused, frames of stepping left, failures, entities |
 | `pause`, `resume` | | |
 | `step` | `frames` (1) | runs that many frames, then pauses |
+| `run_until` | `signal`, `max_frames` (600) | steps until the signal is true or the frames run out; `status` then says `reached` |
+| `input` | `key` or `mouse_button` with `action` (tap, press, release) and `frames`; `mouse_motion`, `mouse_position` | plays input at the start of the next simulated frame |
 | `time_scale` | `scale` | |
 | `record` | `on`, `every` (frames), `keep` | what recording is set to |
 | `history` | | the moments that can be gone back to |

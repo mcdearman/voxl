@@ -111,8 +111,28 @@ const TOOLS: &[Tool] = &[
     },
     Tool {
         command: "step",
-        about: "Runs a number of frames of the simulation and pauses again. The frames run as the game's loop comes round, so read `status` afterwards to see where it has got to.",
+        about: "Runs a number of frames of the simulation and pauses again. Waits for them to have run; the answer is the game's status afterwards.",
         arguments: &["frames?: integer: how many frames (default 1)"],
+    },
+    Tool {
+        command: "run_until",
+        about: "Runs the simulation until a signal is true, then pauses: the way to get the game to a moment worth looking at. Waits for it; the answer is the game's status, where `reached` says whether the signal came true or the frames ran out.",
+        arguments: &[
+            "signal: string: the signal to wait for",
+            "max_frames?: integer: give up after this many frames (default 600)",
+        ],
+    },
+    Tool {
+        command: "input",
+        about: "Plays input into the game as if at the keyboard and mouse, so the game can be played, not only inspected. It arrives at the start of the next simulated frame, so with a paused game follow it with `step`. Keys are named as winit names them: KeyW, Space, ArrowLeft, Digit1, ShiftLeft, Enter, Escape, F5.",
+        arguments: &[
+            "key?: string: a key name",
+            "mouse_button?: string: left, right or middle",
+            "action?: string: tap (the default: down, then up `frames` later), press (down and held) or release",
+            "frames?: integer: how long a tap is held (default 1)",
+            "mouse_motion?: array: [dx, dy] of raw mouse movement, as mouselook reads it",
+            "mouse_position?: array: [x, y] of the cursor in pixels",
+        ],
     },
     Tool {
         command: "time_scale",
@@ -326,7 +346,15 @@ fn call(game: &mut dyn Game, name: &str, arguments: Option<&Value>) -> Value {
     if let Some(Value::Map(arguments)) = arguments {
         request.extend(arguments.iter().filter(|(key, _)| key != "cmd").cloned());
     }
-    match game.ask(&Value::Map(request)) {
+    let waits = matches!(tool.command, "step" | "run_until");
+    let asked = game.ask(&Value::Map(request)).and_then(|answer| {
+        if waits {
+            wait_for_steps(game)
+        } else {
+            Ok(answer)
+        }
+    });
+    match asked {
         Ok(answer) => {
             let mut parts = Vec::new();
             // A graph is easier to take in drawn than listed.
@@ -337,6 +365,24 @@ fn call(game: &mut dyn Game, name: &str, arguments: Option<&Value>) -> Value {
             content(parts, false)
         }
         Err(why) => content(vec![words(why)], true),
+    }
+}
+
+/// Waits until the game has run the frames it was asked to step, and returns its status.
+/// Gives up after a while and returns the status as it is, with `stepping` still above zero.
+fn wait_for_steps(game: &mut dyn Game) -> Result<Value, String> {
+    let status = map(vec![("cmd", text("status"))]);
+    let started = std::time::Instant::now();
+    loop {
+        let answer = game.ask(&status)?;
+        let left = answer
+            .field("stepping")
+            .and_then(Value::as_f64)
+            .unwrap_or(0.0);
+        if left <= 0.0 || started.elapsed() > std::time::Duration::from_secs(60) {
+            return Ok(answer);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
     }
 }
 
@@ -418,6 +464,8 @@ mod tests {
     impl Game for Local {
         fn ask(&mut self, request: &Value) -> Result<Value, String> {
             let answer = json::parse(&respond(&mut self.0, &json::to_line(request))).unwrap();
+            // The game's loop comes round between requests.
+            self.0.update();
             match (answer.field("ok"), answer.field("error")) {
                 (Some(value), _) => Ok(value.clone()),
                 (None, Some(Value::Text(why))) => Err(why.clone()),
@@ -602,6 +650,114 @@ mod tests {
             shot.get_path("content.0.data"),
             Some(&text(base64("\u{89}PNG fake 640".as_bytes())))
         );
+    }
+
+    #[test]
+    fn an_agent_can_play_the_game_to_a_moment() {
+        use crate::{
+            app::Stage,
+            ecs::{Query, Res, ResMut},
+            input::{ButtonInput, InputPlugin, KeyCode},
+        };
+
+        #[derive(Default)]
+        struct Jumps(u32);
+
+        let mut app = App::new();
+        app.add_plugins(TimePlugin)
+            .add_plugins(TransformPlugin)
+            .add_plugins(InputPlugin)
+            .init_resource::<Jumps>();
+        let walker = app.world.spawn(Transform::IDENTITY);
+        app.add_systems(
+            Stage::Update,
+            |keys: Res<ButtonInput<KeyCode>>,
+             mut jumps: ResMut<Jumps>,
+             mut walkers: Query<&mut Transform>| {
+                for mut at in &mut walkers {
+                    if keys.pressed(KeyCode::KeyD) {
+                        at.translation.x += 1.0;
+                    }
+                }
+                if keys.just_pressed(KeyCode::Space) {
+                    jumps.0 += 1;
+                }
+            },
+        );
+        app.add_signal("arrived", |walkers: Query<&Transform>| {
+            walkers.iter().any(|at| at.translation.x >= 5.0)
+        });
+        let mut game = Local(app);
+        let x = |game: &Local| game.0.world.get::<Transform>(walker).unwrap().translation.x;
+
+        // Hold a key down and run until the walker has arrived. Played into a paused game,
+        // the key is down from the first frame stepped.
+        tool(&mut game, "mira_pause", "{}");
+        let (_, failed) = tool(
+            &mut game,
+            "mira_input",
+            r#"{"key": "KeyD", "action": "press"}"#,
+        );
+        assert!(!failed);
+        assert_eq!(x(&game), 0.0, "nothing moves while paused");
+        let (status, failed) = tool(&mut game, "mira_run_until", r#"{"signal": "arrived"}"#);
+        assert!(!failed, "{status:?}");
+        let status = json::parse(&status[0]).unwrap();
+        assert_eq!(status.field("reached"), Some(&Value::Bool(true)));
+        assert_eq!(status.field("stepping"), Some(&Value::Int(0)));
+        assert_eq!(status.field("paused"), Some(&Value::Bool(true)));
+        // The signal is as of the frame before, so the walker is a step past the line.
+        assert_eq!(x(&game), 6.0);
+
+        // Let go, tap another key for two frames, and step: it is "just pressed" once.
+        tool(
+            &mut game,
+            "mira_input",
+            r#"{"key": "keyd", "action": "release"}"#,
+        );
+        tool(&mut game, "mira_input", r#"{"key": "Space", "frames": 2}"#);
+        let (status, _) = tool(&mut game, "mira_step", r#"{"frames": 4}"#);
+        assert_eq!(
+            json::parse(&status[0]).unwrap().field("stepping"),
+            Some(&Value::Int(0))
+        );
+        assert_eq!(x(&game), 6.0);
+        assert_eq!(game.0.world.resource::<Jumps>().0, 1);
+        assert!(!game
+            .0
+            .world
+            .resource::<ButtonInput<KeyCode>>()
+            .pressed(KeyCode::Space));
+
+        // A signal that never comes true: the frames run out, and it says so.
+        game.0.world.resource_mut::<Signals>().set("never", false);
+        let (status, _) = tool(
+            &mut game,
+            "mira_run_until",
+            r#"{"signal": "never", "max_frames": 3}"#,
+        );
+        assert_eq!(
+            json::parse(&status[0]).unwrap().field("reached"),
+            Some(&Value::Bool(false))
+        );
+        // Mouse, and what is refused.
+        let (_, failed) = tool(
+            &mut game,
+            "mira_input",
+            r#"{"mouse_button": "left", "mouse_motion": [3, -2]}"#,
+        );
+        assert!(!failed);
+        for (arguments, why) in [
+            (r#"{"key": "Hyper"}"#, "no key"),
+            (r#"{}"#, "give a"),
+            (r#"{"key": "KeyD", "action": "mash"}"#, "no action"),
+            (r#"{"mouse_motion": [1]}"#, "two numbers"),
+        ] {
+            let (said, failed) = tool(&mut game, "mira_input", arguments);
+            assert!(failed && said[0].contains(why), "{arguments}: {said:?}");
+        }
+        let (said, failed) = tool(&mut game, "mira_run_until", r#"{"signal": "nothing"}"#);
+        assert!(failed && said[0].contains("no signal"));
     }
 
     #[test]
