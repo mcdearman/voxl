@@ -51,6 +51,14 @@ impl Time {
         self.frame += 1;
     }
 
+    /// Puts the clock back: for stepping back to an earlier moment of the game.
+    pub(crate) fn rewind_to(&mut self, elapsed: Duration, frame: u64) {
+        self.elapsed = elapsed;
+        self.frame = frame;
+        self.delta = Duration::ZERO;
+        self.last = None;
+    }
+
     /// A frame in which no game time passes: the game is paused.
     pub(crate) fn hold(&mut self) {
         self.delta = Duration::ZERO;

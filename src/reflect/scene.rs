@@ -142,6 +142,55 @@ impl Scene {
     /// value doesn't lose the rest of a level.
     pub fn spawn(&self, world: &mut World, registry: &TypeRegistry) -> Spawned {
         let entities: Vec<Entity> = self.entities.iter().map(|_| world.spawn_empty()).collect();
+        self.fill(world, registry, entities)
+    }
+
+    /// Puts the world back the way it was when this scene was captured from it: a step back
+    /// in time, not a new copy. Entities that are still alive keep their ids and get their
+    /// saved components back (and lose registered components they didn't have); entities
+    /// made since are despawned, with everything below them; entities despawned since come
+    /// back under new ids, with references to them following. Components that aren't
+    /// registered, and entities marked [`NotSaved`], are left as they are.
+    pub fn restore(&self, world: &mut World, registry: &TypeRegistry) -> Spawned {
+        let saved: std::collections::HashSet<u64> = self.entities.iter().map(|e| e.id).collect();
+        let mut made_since = Vec::new();
+        for component in registry.iter() {
+            for entity in (component.entities)(world) {
+                if !saved.contains(&entity.to_bits()) && !world.has::<NotSaved>(entity) {
+                    made_since.push(entity);
+                }
+            }
+        }
+        for entity in made_since {
+            crate::transform::despawn_recursive(world, entity);
+        }
+        let entities: Vec<Entity> = self
+            .entities
+            .iter()
+            .map(|saved| {
+                let entity = Entity::from_bits(saved.id);
+                if world.contains_entity(entity) {
+                    for component in registry.iter() {
+                        let kept = saved
+                            .components
+                            .iter()
+                            .any(|(name, _)| name == component.name);
+                        if !kept && (component.get)(world, entity).is_some() {
+                            (component.remove)(world, entity);
+                        }
+                    }
+                    entity
+                } else {
+                    world.spawn_empty()
+                }
+            })
+            .collect();
+        self.fill(world, registry, entities)
+    }
+
+    /// Gives `entities`, one for each entity of the scene, the scene's components, and the
+    /// world its resources.
+    fn fill(&self, world: &mut World, registry: &TypeRegistry, entities: Vec<Entity>) -> Spawned {
         let new_ids: HashMap<u64, u64> = self
             .entities
             .iter()

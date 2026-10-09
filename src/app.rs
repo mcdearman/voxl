@@ -89,6 +89,8 @@ impl App {
         app.init_resource::<PluginEvents>();
         app.init_resource::<TypeRegistry>();
         app.init_resource::<Live>();
+        app.init_resource::<crate::live::History>();
+        app.add_systems(Stage::Last, crate::live::record_history);
         app.add_plugins(crate::signal::SignalPlugin);
         app.add_systems(Stage::First, |world: &mut World| {
             world.resource_mut::<PluginEvents>().update();

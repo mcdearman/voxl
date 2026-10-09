@@ -30,7 +30,7 @@ pub mod prelude {
         assets::{Assets, Handle},
         ecs::prelude::*,
         input::{ButtonInput, KeyCode, Mouse, MouseButton},
-        live::{Failure, Live},
+        live::{Failure, History, Live},
         physics::{
             fluid::{Emitter, ParticleFluid, WaterSurface},
             BodyKind, CharacterController, Collider, Joint, JointKind, PhysicsPlugin, PhysicsWorld,

@@ -6,9 +6,14 @@
 //! transforms, rendering. So a paused game still draws, still reloads a plugin you fix, and
 //! still shows a change made to its world from outside.
 
-use std::time::Duration;
+use std::{collections::VecDeque, time::Duration};
 
-use crate::{app::Stage, ecs::SystemFailure};
+use crate::{
+    app::Stage,
+    ecs::{SystemFailure, World},
+    reflect::{Scene, TypeRegistry},
+    time::Time,
+};
 
 /// A system that failed, and when.
 #[derive(Clone, Debug, PartialEq)]
@@ -54,6 +59,8 @@ pub struct Live {
     paused_by_failure: bool,
     steps: u32,
     resume: bool,
+    /// Whether the frame now running is one in which the simulation is held still.
+    pub(crate) holding: bool,
     failures: Vec<Failure>,
 }
 
@@ -72,6 +79,7 @@ impl Default for Live {
             paused_by_failure: false,
             steps: 0,
             resume: false,
+            holding: false,
             failures: Vec::new(),
         }
     }
@@ -135,14 +143,16 @@ impl Live {
 
     /// Whether the simulation runs this frame, and for how long if that is fixed.
     pub(crate) fn begin_frame(&mut self) -> Frame {
-        if !self.paused {
+        let frame = if !self.paused {
             Frame::Run
         } else if self.steps > 0 {
             self.steps -= 1;
             Frame::Step(self.step)
         } else {
             Frame::Hold
-        }
+        };
+        self.holding = frame == Frame::Hold;
+        frame
     }
 
     pub(crate) fn take_resume(&mut self) -> bool {
@@ -169,6 +179,152 @@ pub(crate) enum Frame {
     Run,
     Step(Duration),
     Hold,
+}
+
+/// A moment of the game that can be gone back to.
+struct Snapshot {
+    frame: u64,
+    elapsed: Duration,
+    scene: Scene,
+}
+
+/// When a snapshot was taken.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Moment {
+    pub frame: u64,
+    pub seconds: f64,
+}
+
+/// Snapshots of the world taken as the game runs, to step back to. A resource every app has;
+/// off until `recording` is set, because a snapshot is a whole scene.
+///
+/// A snapshot holds what a scene does: the registered components of every entity, and the
+/// registered resources. Going back to one puts those back, and the clock; what isn't
+/// registered (a plugin's undescribed components, the insides of the physics solver, what
+/// signals have timed) stays as it is now.
+pub struct History {
+    /// Whether snapshots are being taken.
+    pub recording: bool,
+    /// Frames between snapshots.
+    pub every: u64,
+    /// How many snapshots are kept; the oldest go first.
+    pub keep: usize,
+    snapshots: VecDeque<Snapshot>,
+}
+
+impl Default for History {
+    fn default() -> Self {
+        Self {
+            recording: false,
+            every: 30,
+            keep: 240,
+            snapshots: VecDeque::new(),
+        }
+    }
+}
+
+impl History {
+    /// The moments that can be gone back to, oldest first.
+    pub fn moments(&self) -> Vec<Moment> {
+        self.snapshots
+            .iter()
+            .map(|snapshot| Moment {
+                frame: snapshot.frame,
+                seconds: snapshot.elapsed.as_secs_f64(),
+            })
+            .collect()
+    }
+
+    pub fn clear(&mut self) {
+        self.snapshots.clear();
+    }
+
+    /// Takes a snapshot now, whatever `recording` and `every` say.
+    pub fn snapshot(world: &mut World) {
+        if !world.contains_resource::<TypeRegistry>() {
+            return;
+        }
+        let (frame, elapsed) = world
+            .get_resource::<Time>()
+            .map_or((0, Duration::ZERO), |time| {
+                (time.frame_count(), time.elapsed())
+            });
+        let scene = world
+            .resource_scope(|world, registry: &mut TypeRegistry| Scene::capture(world, registry));
+        let history = world.resource_mut::<History>();
+        // One moment, one snapshot: a second one of the same frame replaces the first.
+        history.snapshots.retain(|snapshot| snapshot.frame != frame);
+        history.snapshots.push_back(Snapshot {
+            frame,
+            elapsed,
+            scene,
+        });
+        while history.snapshots.len() > history.keep.max(1) {
+            history.snapshots.pop_front();
+        }
+    }
+
+    /// Steps the game back to the last snapshot taken at or before `frame`, pauses it there,
+    /// and forgets the snapshots after it: from here the game is played again, perhaps by
+    /// different code. Returns the moment gone back to, or `None` if no snapshot is that old.
+    pub fn rewind_to(world: &mut World, frame: u64) -> Option<Moment> {
+        let history = world.get_resource_mut::<History>()?;
+        let index = history
+            .snapshots
+            .iter()
+            .rposition(|snapshot| snapshot.frame <= frame)?;
+        history.snapshots.truncate(index + 1);
+        let (frame, elapsed) = (
+            history.snapshots[index].frame,
+            history.snapshots[index].elapsed,
+        );
+        let scene = history.snapshots[index].scene.clone();
+        let restored = world
+            .resource_scope(|world, registry: &mut TypeRegistry| scene.restore(world, registry));
+        for problem in &restored.skipped {
+            log::warn!("stepping back: {problem}");
+        }
+        if let Some(time) = world.get_resource_mut::<Time>() {
+            time.rewind_to(elapsed, frame);
+        }
+        if let Some(live) = world.get_resource_mut::<Live>() {
+            live.pause();
+        }
+        log::info!("stepped back to frame {frame}");
+        Some(Moment {
+            frame,
+            seconds: elapsed.as_secs_f64(),
+        })
+    }
+
+    /// Steps back by about this many frames. See [`History::rewind_to`].
+    pub fn rewind(world: &mut World, frames: u64) -> Option<Moment> {
+        let now = world.get_resource::<Time>().map_or(0, Time::frame_count);
+        Self::rewind_to(world, now.saturating_sub(frames))
+    }
+}
+
+/// Takes a snapshot every so often while recording. Runs last in a frame, so a snapshot is
+/// the world as that frame left it.
+pub(crate) fn record_history(world: &mut World) {
+    let Some(history) = world.get_resource::<History>() else {
+        return;
+    };
+    if !history.recording {
+        return;
+    }
+    let frame = world.get_resource::<Time>().map_or(0, Time::frame_count);
+    let due = history
+        .snapshots
+        .back()
+        .is_none_or(|last| frame >= last.frame + history.every.max(1));
+    // A paused game is not a new moment.
+    let held = world
+        .get_resource::<Live>()
+        .is_some_and(|live| live.holding);
+    if due && !held {
+        History::snapshot(world);
+    }
 }
 
 #[cfg(test)]
@@ -332,5 +488,118 @@ mod tests {
             "{delta:?}"
         );
         assert_eq!(time.elapsed(), delta);
+    }
+    #[test]
+    fn the_game_can_be_stepped_back_and_played_again() {
+        use crate::{
+            ecs::{Component, Entity, Query},
+            reflect::Reflect,
+            transform::{Parent, Transform, TransformPlugin},
+        };
+
+        #[derive(Component, Reflect, Clone, Copy, Debug, PartialEq)]
+        #[reflect(name = "test.Speed")]
+        struct Speed(f32);
+        #[derive(Component, Reflect, Clone, Copy, Debug, PartialEq, Default)]
+        #[reflect(name = "test.Tired")]
+        struct Tired;
+
+        let mut app = App::new();
+        app.add_plugins(TimePlugin).add_plugins(TransformPlugin);
+        app.register_type::<Speed>().register_type::<Tired>();
+        app.world
+            .resource_mut::<Time>()
+            .set_fixed_step(Some(Duration::from_millis(100)));
+        app.add_systems(
+            Stage::Update,
+            |mut movers: Query<(&Speed, &mut Transform)>| {
+                for (speed, mut at) in &mut movers {
+                    at.translation.x += speed.0;
+                }
+            },
+        );
+        let history = app.world.resource_mut::<History>();
+        history.recording = true;
+        history.every = 2;
+
+        let runner = app.world.spawn((Transform::IDENTITY, Speed(1.0)));
+        let rider = app
+            .world
+            .spawn((Transform::from_xyz(0.0, 1.0, 0.0), Parent(runner)));
+        let doomed = app
+            .world
+            .spawn((Transform::from_xyz(0.0, 0.0, 9.0), Speed(2.0)));
+        let follower = app.world.spawn((Transform::IDENTITY, Parent(doomed)));
+        for _ in 0..4 {
+            app.update();
+        }
+        let x =
+            |app: &App, entity: Entity| app.world.get::<Transform>(entity).unwrap().translation.x;
+        assert_eq!((x(&app, runner), x(&app, doomed)), (4.0, 8.0));
+
+        // Then things happen: something is made, something dies, something changes shape.
+        let late = app.world.spawn((Transform::IDENTITY, Speed(100.0)));
+        app.world.spawn((Transform::IDENTITY, Parent(late)));
+        app.world.despawn(doomed);
+        app.world.insert(runner, Tired);
+        app.world.remove::<Parent>(rider);
+        app.world.get_mut::<Speed>(runner).unwrap().0 = 50.0;
+        for _ in 0..5 {
+            app.update();
+        }
+        assert_eq!(x(&app, runner), 254.0);
+        let moments = app.world.resource::<History>().moments();
+        assert_eq!(
+            moments.iter().map(|m| m.frame).collect::<Vec<_>>(),
+            [1, 3, 5, 7, 9]
+        );
+
+        // Step back to before any of it. The nearest snapshot at or before frame 4 is 3.
+        let moment = History::rewind_to(&mut app.world, 4).unwrap();
+        assert_eq!((moment.frame, moment.seconds), (3, 0.3));
+        assert!(app.world.resource::<Live>().is_paused());
+        assert_eq!(app.world.resource::<Time>().frame_count(), 3);
+        // Who was alive is where they were, under the same ids.
+        assert_eq!(x(&app, runner), 3.0);
+        assert_eq!(app.world.get::<Speed>(runner), Some(&Speed(1.0)));
+        assert!(
+            !app.world.has::<Tired>(runner),
+            "what it has gained since is gone"
+        );
+        assert_eq!(app.world.get::<Parent>(rider), Some(&Parent(runner)));
+        // Who was made since is gone, with what hung off it.
+        assert!(!app.world.contains_entity(late));
+        // Who had died is back, under a new id, and what pointed at it points at it again.
+        assert!(!app.world.contains_entity(doomed));
+        let Parent(risen) = *app.world.get::<Parent>(follower).unwrap();
+        assert_ne!(risen, doomed);
+        assert_eq!(x(&app, risen), 6.0);
+        assert_eq!(app.world.entity_count(), 4);
+        assert_eq!(
+            app.world.resource::<History>().moments().len(),
+            2,
+            "the future is forgotten"
+        );
+
+        // Held still until told otherwise; then it plays forward again, differently.
+        app.update();
+        assert_eq!(x(&app, runner), 3.0);
+        app.world.resource_mut::<Live>().resume();
+        for _ in 0..2 {
+            app.update();
+        }
+        assert_eq!((x(&app, runner), x(&app, risen)), (5.0, 10.0));
+        assert_eq!(app.world.resource::<Time>().frame_count(), 5);
+        assert!(
+            History::rewind_to(&mut app.world, 0).is_none(),
+            "nothing is that old"
+        );
+        assert_eq!(History::rewind(&mut app.world, 1).unwrap().frame, 3);
+
+        // Not recording, nothing is kept.
+        let mut quiet = App::new();
+        quiet.add_plugins(TimePlugin);
+        quiet.update();
+        assert!(quiet.world.resource::<History>().moments().is_empty());
     }
 }

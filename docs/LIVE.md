@@ -64,6 +64,29 @@ While paused, the fixed stages and `Stage::Update` don't run and no game time pa
 (`Time::delta` is zero). Every other stage runs, so the window stays alive, a plugin you fix
 reloads, a prefab you edit rebuilds, and transforms changed from outside are drawn.
 
+## Stepping back
+
+```rust
+app.world.resource_mut::<History>().recording = true;   // a snapshot every 30 frames
+// … later, when something has gone wrong …
+History::rewind(&mut app.world, 300);                   // about 300 frames back; pauses there
+```
+
+While `History` is recording it keeps snapshots of the world (`every` frames apart, the last
+`keep` of them). Going back to one puts the world as it was and pauses the game there, so you
+can look, change the code or the world, and play forward again from that moment.
+
+- Entities that are still alive keep their ids and get their components back. Entities made
+  since are despawned. Entities that had died come back under new ids, and references to them
+  follow.
+- A snapshot is what a [scene](SCENES.md) is: registered components and registered resources.
+  What isn't registered stays as it is now: a plugin's components it hasn't described, the
+  physics solver's own memory of contacts, what signals have timed.
+- Snapshots after the one gone back to are forgotten: that future didn't happen.
+- Recording is off by default, because each snapshot is the whole scene.
+
+From outside: `voxl-debug record on=true`, `voxl-debug history`, `voxl-debug rewind frames=300`.
+
 ## Looking at the systems
 
 ```rust
@@ -107,6 +130,9 @@ answered at the start of a frame, whether or not the game is paused.
 | `pause`, `resume` | | |
 | `step` | `frames` (1) | runs that many frames, then pauses |
 | `time_scale` | `scale` | |
+| `record` | `on`, `every` (frames), `keep` | what recording is set to |
+| `history` | | the moments that can be gone back to |
+| `rewind` | `frames` (60) or `to_frame` | steps back, pauses, and says where it landed |
 | `failures` | | every caught failure, with its stack |
 | `systems` | `stage` (all) | each stage's systems in order, with constraints and timings |
 | `types` | | the names of registered components and resources |
@@ -136,4 +162,5 @@ Entities are their numbers as `entities` lists them. Values have the shape they 
 - Tools on top of the connection: the signal graph viewer, an inspector, the editor.
 - A crash in a plugin's native code (a null pointer in C) is still a crash. Failures a plugin
   can report are caught: see below.
-- Stepping back: snapshots of the world to rewind to.
+- Snapshots that hold only what changed, so recording can stay on in a big world; scrubbing
+  back and forth instead of only back.

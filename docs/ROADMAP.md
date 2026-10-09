@@ -118,8 +118,9 @@ being able to see inside.
       watching, instead of being asked
 - [ ] Hot reload of the host's own Rust systems, not only plugins (the engine as a library the
       game reloads)
-- [ ] Rewind: snapshots of the world every few frames (reflection makes them), scrub back,
-      change code, play forward again
+- [x] Rewind: snapshots of the world every few frames (reflection makes them); step back to
+      one, change code or state, play forward again
+- [ ] Snapshots of only what changed; scrubbing both ways; restoring what signals have timed
 - [x] Failures across the plugin boundary: a plugin system that throws (Haskell), panics
       (Rust) or calls `system_fail` (C) pauses the game with its message, and reloading the
       fixed plugin resumes it

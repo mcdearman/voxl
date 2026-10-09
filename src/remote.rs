@@ -22,7 +22,7 @@ use std::{
 use crate::{
     app::{App, Stage},
     ecs::Entity,
-    live::Live,
+    live::{History, Live},
     reflect::{json, Scene, TypeRegistry, Value},
     signal::{Compare, Op, Signal, Signals},
     time::Time,
@@ -281,6 +281,54 @@ fn handle(app: &mut App, request: &Value) -> Answer {
                 .ok_or("this app keeps no time")?
                 .set_scale(scale);
             done
+        }
+        "record" => {
+            let history = app.world.resource_mut::<History>();
+            if let Some(Value::Bool(on)) = request.field("on") {
+                history.recording = *on;
+            }
+            if let Some(every) = request.field("every").and_then(Value::as_f64) {
+                history.every = every.max(1.0) as u64;
+            }
+            if let Some(keep) = request.field("keep").and_then(Value::as_f64) {
+                history.keep = keep.max(1.0) as usize;
+            }
+            Ok(map([
+                ("recording", Value::Bool(history.recording)),
+                ("every", Value::Int(history.every as i64)),
+                ("keep", Value::Int(history.keep as i64)),
+                ("snapshots", Value::Int(history.moments().len() as i64)),
+            ]))
+        }
+        "history" => Ok(Value::List(
+            app.world
+                .resource::<History>()
+                .moments()
+                .into_iter()
+                .map(|moment| {
+                    map([
+                        ("frame", Value::Int(moment.frame as i64)),
+                        ("seconds", Value::Float(moment.seconds)),
+                    ])
+                })
+                .collect(),
+        )),
+        "rewind" => {
+            let moment = match request.field("to_frame").and_then(Value::as_f64) {
+                Some(frame) => History::rewind_to(&mut app.world, frame.max(0.0) as u64),
+                None => {
+                    let frames = request
+                        .field("frames")
+                        .and_then(Value::as_f64)
+                        .unwrap_or(60.0);
+                    History::rewind(&mut app.world, frames.max(0.0) as u64)
+                }
+            };
+            let moment = moment.ok_or("there is no snapshot that far back (is recording on?)")?;
+            Ok(map([
+                ("frame", Value::Int(moment.frame as i64)),
+                ("seconds", Value::Float(moment.seconds)),
+            ]))
         }
         "failures" => Ok(Value::List(
             app.world
@@ -896,6 +944,31 @@ mod tests {
             ask(&mut app, "{'cmd': 'failures'}"),
             Value::List(Vec::new())
         );
+
+        // Stepping back: record, look at what there is, go back.
+        assert!(refused(&mut app, "{'cmd': 'rewind', 'frames': 1}").contains("recording"));
+        let recording = ask(
+            &mut app,
+            "{'cmd': 'record', 'on': true, 'every': 1, 'keep': 3}",
+        );
+        assert_eq!(recording.field("recording"), Some(&Value::Bool(true)));
+        for _ in 0..5 {
+            app.update();
+        }
+        let Value::List(moments) = ask(&mut app, "{'cmd': 'history'}") else {
+            panic!("a list of moments");
+        };
+        assert_eq!(moments.len(), 3, "only the last three are kept");
+        let frame = app.world.resource::<Time>().frame_count();
+        let back = ask(&mut app, "{'cmd': 'rewind', 'frames': 2}");
+        assert_eq!(back.field("frame"), Some(&Value::Int(frame as i64 - 2)));
+        assert_eq!(
+            ask(&mut app, "{'cmd': 'status'}").field("paused"),
+            Some(&Value::Bool(true))
+        );
+        ask(&mut app, "{'cmd': 'record', 'on': false}");
+        ask(&mut app, "{'cmd': 'resume'}");
+        app.update();
 
         // The signal graph: read it, add to it, rewire it, force it.
         let graph = ask(&mut app, "{'cmd': 'signals'}");
