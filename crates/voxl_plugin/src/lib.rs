@@ -566,9 +566,103 @@ unsafe extern "C" fn trampoline(system: *mut sys::VoxlSystem, user: *mut c_void)
         raw: system,
         pointers: callback.pointers,
     };
-    // A panic must not unwind into the engine.
-    if catch_unwind(AssertUnwindSafe(|| (callback.run)(&mut system))).is_err() {
-        log(sys::VOXL_LOG_ERROR, "a plugin system panicked");
+    // A panic must not unwind into the engine: it is caught here, and the engine told.
+    let raw = system.raw;
+    failure::watch(true);
+    let result = catch_unwind(AssertUnwindSafe(|| (callback.run)(&mut system)));
+    failure::watch(false);
+    if let Err(payload) = result {
+        let message = if let Some(text) = payload.downcast_ref::<&str>() {
+            (*text).to_owned()
+        } else if let Some(text) = payload.downcast_ref::<String>() {
+            text.clone()
+        } else {
+            "a panic with a value that isn't text".to_owned()
+        };
+        let trace = failure::take();
+        // SAFETY: still inside the system; the engine copies both strings.
+        (api().system_fail)(raw, message.as_ptr(), message.len(), trace.as_ptr(), trace.len());
+    }
+}
+
+/// Remembers where a system panicked, for the engine to show.
+mod failure {
+    use std::{
+        backtrace::Backtrace,
+        cell::{Cell, RefCell},
+        sync::Once,
+    };
+
+    thread_local! {
+        static WATCHING: Cell<bool> = const { Cell::new(false) };
+        static TRACE: RefCell<String> = const { RefCell::new(String::new()) };
+    }
+
+    /// Turns recording on or off for this thread. While it is on, a panic is recorded
+    /// instead of printed.
+    pub fn watch(on: bool) {
+        static HOOK: Once = Once::new();
+        HOOK.call_once(|| {
+            let previous = std::panic::take_hook();
+            std::panic::set_hook(Box::new(move |info| {
+                if !WATCHING.with(Cell::get) {
+                    return previous(info);
+                }
+                let at = info.location().map_or(String::new(), |l| format!("at {l}\n"));
+                let stack = Backtrace::force_capture().to_string();
+                TRACE.with(|trace| *trace.borrow_mut() = format!("{at}{stack}"));
+            }));
+        });
+        if on {
+            TRACE.with(|trace| trace.borrow_mut().clear());
+        }
+        WATCHING.with(|watching| watching.set(on));
+    }
+
+    pub fn take() -> String {
+        TRACE.with(|trace| std::mem::take(&mut *trace.borrow_mut()))
+    }
+}
+
+/// How a signal is worked out from its inputs.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum SignalOp {
+    And,
+    Or,
+    Not,
+    /// How many inputs are true.
+    Count,
+    Sum,
+    /// The second input if the first is true, otherwise the third.
+    Select,
+    /// Seconds the first input has been true; a true second input resets it.
+    Timer,
+    /// True once the input has been true this many seconds without a break.
+    HeldFor(f64),
+    Less,
+    LessOrEqual,
+    Equal,
+    GreaterOrEqual,
+    Greater,
+}
+
+impl SignalOp {
+    fn code(self) -> (u32, f64) {
+        match self {
+            SignalOp::And => (sys::VOXL_SIGNAL_AND, 0.0),
+            SignalOp::Or => (sys::VOXL_SIGNAL_OR, 0.0),
+            SignalOp::Not => (sys::VOXL_SIGNAL_NOT, 0.0),
+            SignalOp::Count => (sys::VOXL_SIGNAL_COUNT, 0.0),
+            SignalOp::Sum => (sys::VOXL_SIGNAL_SUM, 0.0),
+            SignalOp::Select => (sys::VOXL_SIGNAL_SELECT, 0.0),
+            SignalOp::Timer => (sys::VOXL_SIGNAL_TIMER, 0.0),
+            SignalOp::HeldFor(seconds) => (sys::VOXL_SIGNAL_HELD_FOR, seconds),
+            SignalOp::Less => (sys::VOXL_SIGNAL_LESS, 0.0),
+            SignalOp::LessOrEqual => (sys::VOXL_SIGNAL_LESS_OR_EQUAL, 0.0),
+            SignalOp::Equal => (sys::VOXL_SIGNAL_EQUAL, 0.0),
+            SignalOp::GreaterOrEqual => (sys::VOXL_SIGNAL_GREATER_OR_EQUAL, 0.0),
+            SignalOp::Greater => (sys::VOXL_SIGNAL_GREATER, 0.0),
+        }
     }
 }
 
@@ -873,6 +967,59 @@ impl System {
     pub fn spawn_model(&mut self, name: &str, transform: &Transform) -> Entity {
         // SAFETY: called inside the system; the engine copies the name and the transform.
         Entity(unsafe { (api().spawn_model)(self.raw, name.as_ptr(), name.len(), transform) })
+    }
+
+    /// Sets a true-or-false signal, defining it if need be, when this system returns: how a
+    /// plugin tells the signal graph a fact of its own.
+    pub fn set_signal(&mut self, name: &str, value: bool) {
+        // SAFETY: called inside the system; the engine copies the name.
+        unsafe { (api().signal_set)(self.raw, name.as_ptr(), name.len(), value as u8 as f64, 0) }
+    }
+
+    /// Sets a numeric signal, defining it if need be, when this system returns.
+    pub fn set_signal_number(&mut self, name: &str, value: f64) {
+        // SAFETY: as above.
+        unsafe { (api().signal_set)(self.raw, name.as_ptr(), name.len(), value, 1) }
+    }
+
+    /// A signal's value as of its last update, a truth being 1 or 0; `None` if there is no
+    /// such signal.
+    pub fn signal(&self, name: &str) -> Option<f64> {
+        let mut value = 0.0;
+        // SAFETY: called inside the system; `value` is writable.
+        let found = unsafe { (api().signal_get)(self.raw, name.as_ptr(), name.len(), &mut value) };
+        (found != 0).then_some(value)
+    }
+
+    /// Whether a signal is true. One that doesn't exist is not.
+    pub fn signal_is_true(&self, name: &str) -> bool {
+        self.signal(name).is_some_and(|value| value != 0.0)
+    }
+
+    /// Defines a signal worked out from others (a rule), or replaces its definition, when
+    /// this system returns.
+    pub fn define_signal(&mut self, name: &str, op: SignalOp, inputs: &[&str]) {
+        let (code, param) = op.code();
+        let inputs = inputs.join(" ");
+        // SAFETY: called inside the system; the engine copies the strings.
+        unsafe {
+            (api().signal_define)(
+                self.raw,
+                name.as_ptr(),
+                name.len(),
+                code,
+                param,
+                inputs.as_ptr(),
+                inputs.len(),
+            )
+        }
+    }
+
+    /// Says this run of the system has failed, as a panic in it would: in a debug build the
+    /// engine pauses the game with the message on show. Return after calling it.
+    pub fn fail(&mut self, message: &str) {
+        // SAFETY: called inside the system; the engine copies the message.
+        unsafe { (api().system_fail)(self.raw, message.as_ptr(), message.len(), std::ptr::null(), 0) }
     }
 
     /// Spawns an instance of a prefab by name: a new entity at `transform` with the prefab's

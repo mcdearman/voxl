@@ -48,6 +48,13 @@ static void step(VoxlSystem *s, void *user) {
     while (api->query_next(s, &e, found)) {
         VoxlTransform *t = found[0];
         Counter *c = found[1];
+#ifdef LIMIT
+        if (t->translation[0] >= LIMIT) {
+            api->system_fail(s, VOXL_STR("ran off the edge"), VOXL_STR("counter.c: step"));
+            api->spawn(s); /* dropped with the rest of this run */
+            return;
+        }
+#endif
         t->translation[0] += STEP;
         t->translation[2] = (float)*loads;
         c->frames += 1;
@@ -518,6 +525,137 @@ fn a_c_plugin_runs_reloads_and_keeps_its_data() {
         app.native_plugins().loaded().collect::<Vec<_>>(),
         [("counter", 2)]
     );
+}
+
+#[test]
+fn a_plugin_system_that_fails_pauses_the_game_until_it_is_fixed() {
+    use crate::live::Live;
+
+    let workspace = Workspace::new("fragile");
+    let defines = ["ABI=VOXL_ABI_VERSION", "STEP=1.0f", "LIMIT=3.0f"];
+    let library = workspace.compile("counter", COUNTER, &defines);
+    let mut app = app();
+    app.world.resource_mut::<Live>().catch_failures = true;
+    let entity = app.world.spawn(Transform::IDENTITY);
+    app.load_native_plugin(&library).unwrap();
+    for _ in 0..3 {
+        app.update();
+    }
+    assert_eq!(position(&app, entity).x, 3.0);
+    assert!(!app.world.resource::<Live>().is_paused());
+    let entities = app.world.entity_count();
+
+    // The frame it fails on, and some more: the game holds still and stays alive.
+    for _ in 0..4 {
+        app.update();
+    }
+    let live = app.world.resource::<Live>();
+    assert!(live.is_paused());
+    let [failure] = live.failures() else {
+        panic!("one failure, not {:?}", live.failures());
+    };
+    assert_eq!(failure.system, "counter::step");
+    assert_eq!(failure.message, "ran off the edge");
+    assert_eq!(failure.stack, "counter.c: step");
+    assert_eq!(position(&app, entity).x, 3.0);
+    assert_eq!(app.world.entity_count(), entities, "what the failed run queued was dropped");
+
+    // Fix the code and save. The plugin reloads, and the game carries on by itself.
+    workspace.compile("counter", COUNTER, &["ABI=VOXL_ABI_VERSION", "STEP=10.0f"]);
+    assert_eq!(app.reload_native_plugins(), 1);
+    app.update();
+    assert!(!app.world.resource::<Live>().is_paused());
+    assert_eq!(position(&app, entity).x, 13.0);
+
+    // Where failures aren't caught (a release build), it is logged and the game goes on.
+    app.world.resource_mut::<Live>().catch_failures = false;
+    workspace.compile("counter", COUNTER, &defines);
+    assert_eq!(app.reload_native_plugins(), 1);
+    app.update();
+    app.update();
+    assert_eq!(position(&app, entity).x, 13.0);
+    assert!(!app.world.resource::<Live>().is_paused());
+}
+
+/// A plugin that tells the signal graph facts, builds a rule on them and on the host's
+/// signals, and acts on a signal.
+const RULES: &str = r#"
+static VoxlComponent transform_c;
+static int32_t *frames;
+
+static void facts(VoxlSystem *s, void *user) {
+    *frames += 1;
+    api->signal_set(s, VOXL_STR("c.frames"), (double)*frames, 1);
+    api->signal_set(s, VOXL_STR("c.even"), *frames % 2 == 0, 0);
+    api->signal_define(s, VOXL_STR("c.odd"), VOXL_SIGNAL_NOT, 0, VOXL_STR("c.even"));
+    api->signal_define(s, VOXL_STR("c.late"), VOXL_SIGNAL_GREATER_OR_EQUAL, 0,
+                       VOXL_STR("c.frames host.limit"));
+    api->signal_define(s, VOXL_STR("c.go"), VOXL_SIGNAL_AND, 0, VOXL_STR("c.late  host.allowed"));
+    api->signal_define(s, VOXL_STR("c.bad"), 99, 0, VOXL_STR("c.even")); /* logged, not fatal */
+}
+
+static void act(VoxlSystem *s, void *user) {
+    double go = 0, nothing = 5;
+    if (api->signal_get(s, VOXL_STR("c.nothing"), &nothing) != 0 || nothing != 5) return;
+    if (!api->signal_get(s, VOXL_STR("c.go"), &go) || go == 0) return;
+    VoxlEntity e;
+    void *found[1];
+    while (api->query_next(s, &e, found)) ((VoxlTransform *)found[0])->translation[0] += 1;
+}
+
+VOXL_EXPORT int32_t voxl_plugin_load(const VoxlApi *a, VoxlApp *app) {
+    api = a;
+    transform_c = api->component_lookup(app, VOXL_STR("voxl.Transform"), NULL, NULL);
+    frames = api->state(app, VOXL_STR("rules.frames"), sizeof(int32_t), _Alignof(int32_t));
+    VoxlTerm moved[] = {{transform_c, VOXL_WRITE}};
+    VoxlSystemDesc systems[] = {
+        {VOXL_STR("facts"), VOXL_STAGE_UPDATE, 0, facts, NULL, NULL, 0},
+        {VOXL_STR("act"), VOXL_STAGE_UPDATE, 0, act, NULL, moved, 1},
+    };
+    for (int i = 0; i < 2; i++)
+        if (api->system_add(app, &systems[i]) != 0) return -3;
+    return transform_c ? 0 : -2;
+}
+"#;
+
+#[test]
+fn a_plugin_can_set_define_and_read_signals() {
+    use crate::signal::{Signal, Signals};
+
+    let workspace = Workspace::new("rules");
+    let library = workspace.compile("rules", RULES, &["ABI=VOXL_ABI_VERSION"]);
+    let mut app = app();
+    app.world.resource_mut::<Signals>().set("host.limit", 4.0);
+    app.world.resource_mut::<Signals>().set("host.allowed", true);
+    let entity = app.world.spawn(Transform::IDENTITY);
+    app.load_native_plugin(&library).unwrap();
+
+    // Frame n: the plugin sets its facts; frame n + 1: the graph has them; so the rule
+    // `c.go` (frames >= 4, and allowed) is first true on frame 5, and `act` moves from then.
+    for _ in 0..4 {
+        app.update();
+    }
+    let signals = app.world.resource::<Signals>();
+    assert_eq!(signals.get("c.frames"), Some(Signal::Number(3.0)), "as of the last update");
+    assert!(signals.is_true("c.odd") && !signals.is_true("c.late"));
+    assert!(signals.get("c.bad").is_none());
+    assert_eq!(position(&app, entity).x, 0.0);
+    for _ in 0..3 {
+        app.update();
+    }
+    assert!(app.world.resource::<Signals>().is_true("c.go"));
+    assert_eq!(position(&app, entity).x, 3.0);
+
+    // The host changes its mind, and the plugin's rule follows at once.
+    app.world.resource_mut::<Signals>().set("host.allowed", false);
+    app.update();
+    app.update();
+    assert_eq!(position(&app, entity).x, 3.0);
+    // The plugin's rules are data like any other: seen in the graph, and rewirable.
+    let graph = app.world.resource::<Signals>().graph();
+    let go = graph.iter().find(|node| node.name == "c.go").unwrap();
+    assert_eq!((go.kind.as_str(), go.inputs.len()), ("and", 2));
+    assert!(graph.iter().all(|node| node.problem.is_none()));
 }
 
 #[test]
@@ -1022,6 +1160,21 @@ pluginMain = plugin $ \app -> do
   addSystem app "step" Update ((,) <$> write transform <*> write frames) $ \_ _ (place, count) -> do
     modifyRef place $ \t -> t {translation = translation t + V3 STEP 0 0}
     modifyRef count (+ 1)
+  addSystem_ app "rules" Update $ \sys -> do
+    setSignal sys "hs.ready" True
+    defineSignal sys "hs.idle" SignalNot ["hs.ready"]
+    defineSignal sys "hs.settled" (SignalHeldFor 0) ["hs.ready"]
+    ready <- signalIsTrue sys "hs.ready"
+    missing <- signal sys "hs.nothing"
+    setSignalNumber sys "hs.seen" (if ready && missing == Nothing then 7 else 0)
+    -- A rule as an expression; its parts become signals of their own.
+    defineRule sys "hs.go" $
+      (sig "hs.ready" .&&. notS (sig "hs.idle") .&&. truth True)
+        .||. (sig "hs.seen" + 1 .>. number 100)
+    defineRule sys "hs.clock" (timer (sig "hs.go"))
+    defineRule sys "hs.alias" (sig "hs.go")
+    defineRule sys "hs.pick" (selectS (heldFor 0 (sig "hs.go")) (sig "hs.seen" + 3) 0)
+    defineRule sys "hs.two" (countS [sig "hs.ready", sig "hs.idle", sig "hs.go"] .==. 2)
   addSystem_ app "churn" Update $ \_ -> do
     let total = sum (map fromIntegral [1 .. 20000 :: Int]) :: Double
     total `seq` performMajorGC
@@ -1074,6 +1227,20 @@ fn a_haskell_plugin_runs_and_reloads_repeatedly() {
         app.update();
     }
     assert_eq!(position(&app, entity).x, 5.0);
+    // Signals: facts the plugin sets, a rule it defines, and its reading them back.
+    let signals = app.world.resource::<crate::signal::Signals>();
+    assert!(signals.is_true("hs.ready") && !signals.is_true("hs.idle"));
+    assert!(signals.is_true("hs.settled"));
+    assert_eq!(signals.number("hs.seen"), 7.0);
+    assert!(signals.is_true("hs.go") && signals.is_true("hs.alias") && signals.is_true("hs.two"));
+    assert_eq!(signals.number("hs.pick"), 10.0);
+    assert!(signals.number("hs.clock") > 0.0);
+    let graph = signals.graph();
+    let go = graph.iter().find(|node| node.name == "hs.go").unwrap();
+    assert_eq!((go.kind.as_str(), go.inputs.as_slice()), ("or", &["hs.go#1".to_owned(), "hs.go#4".to_owned()][..]));
+    let and = graph.iter().find(|node| node.name == "hs.go#1").unwrap();
+    assert_eq!(and.inputs, ["hs.ready", "hs.go#2", "hs.go#3"], "a chain of `and` is one node");
+    assert!(graph.iter().all(|node| node.problem.is_none()), "{graph:?}");
 
     // Reload several times, running frames (and collections) on each new version while the
     // old ones are still mapped but no longer called.
@@ -1109,6 +1276,28 @@ fn a_haskell_plugin_runs_and_reloads_repeatedly() {
         app.native_plugins().loaded().collect::<Vec<_>>(),
         [("stepper", 4)]
     );
+
+    // A version that throws: the game pauses with the exception, and a fixed version
+    // carries on from where it stopped.
+    use crate::live::Live;
+    app.world.resource_mut::<Live>().catch_failures = true;
+    build_haskell(&workspace, "(error \"the step went missing\")");
+    assert_eq!(app.reload_native_plugins(), 1);
+    for _ in 0..3 {
+        app.update();
+    }
+    let live = app.world.resource::<Live>();
+    assert!(live.is_paused());
+    assert_eq!(live.failures().len(), 1, "{:?}", live.failures());
+    let failure = &live.failures()[0];
+    assert!(failure.system.starts_with("stepper::"), "{}", failure.system);
+    assert!(failure.message.contains("the step went missing"), "{}", failure.message);
+    assert_eq!(position(&app, entity).x, expected);
+    build_haskell(&workspace, "1");
+    assert_eq!(app.reload_native_plugins(), 1);
+    app.update();
+    assert!(!app.world.resource::<Live>().is_paused());
+    assert_eq!(position(&app, entity).x, expected + 1.0);
 }
 
 /// The example game, which is written entirely as a Haskell plugin: the scene, drawing, input,

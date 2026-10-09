@@ -365,3 +365,146 @@ mod blobs {
         assert_eq!(world.get::<Speed>(e), Some(&Speed(3.5)));
     }
 }
+
+mod scheduling {
+    use super::super::{not, resource_exists, IntoSystems};
+    use super::*;
+
+    #[derive(Default)]
+    struct Order(Vec<&'static str>);
+
+    fn a(mut order: ResMut<Order>) {
+        order.0.push("a");
+    }
+    fn b(mut order: ResMut<Order>) {
+        order.0.push("b");
+    }
+    fn c(mut order: ResMut<Order>) {
+        order.0.push("c");
+    }
+    fn d(mut order: ResMut<Order>) {
+        order.0.push("d");
+    }
+
+    fn order_of<M>(systems: impl IntoSystems<M>) -> Vec<&'static str> {
+        let mut world = World::new();
+        world.init_resource::<Order>();
+        run(&mut world, systems);
+        std::mem::take(&mut world.resource_mut::<Order>().0)
+    }
+
+    #[test]
+    fn systems_run_in_the_order_added_unless_told_otherwise() {
+        assert_eq!(order_of((a, b, c, d)), ["a", "b", "c", "d"]);
+        assert_eq!(order_of((a.after(c), b, c, d)), ["b", "c", "a", "d"]);
+        // A system waits for the ones it must follow; nothing is brought forward.
+        assert_eq!(order_of((a, b, c, d.before(a))), ["b", "c", "d", "a"]);
+        assert_eq!(order_of((a, b.after(d), c, d)), ["a", "c", "d", "b"]);
+        assert_eq!(
+            order_of(((d, c, b, a).chain(), a)),
+            ["d", "c", "b", "a", "a"]
+        );
+        // Naming a system that isn't there changes nothing.
+        assert_eq!(order_of((a.after(d), b.before(d))), ["a", "b"]);
+    }
+
+    #[test]
+    fn sets_order_groups_of_systems() {
+        let systems = (
+            d.after("forces"),
+            (a, b).in_set("forces"),
+            c.before("forces"),
+        );
+        assert_eq!(order_of(systems), ["c", "a", "b", "d"]);
+        // Constraints given to a group apply to each of its systems, and add up.
+        let systems = (a, (b, c).before(a).after(d), d);
+        assert_eq!(order_of(systems), ["d", "b", "c", "a"]);
+    }
+
+    #[test]
+    #[should_panic(expected = "ordered in a circle")]
+    fn a_circle_of_constraints_is_refused() {
+        order_of((a.after(b), b.after(c), c.after(a), d));
+    }
+
+    #[test]
+    fn the_order_survives_systems_being_added_and_replaced() {
+        let mut world = World::new();
+        world.init_resource::<Order>();
+        let mut schedule = Schedule::default();
+        schedule.add_systems((a.after(b), b));
+        schedule.initialize(&mut world);
+        assert_eq!(schedule.system_names().count(), 2);
+        schedule.run(&mut world);
+        // Added later, and still placed by its constraints.
+        schedule.add_systems(c.before(b));
+        schedule.run(&mut world);
+        assert_eq!(world.resource::<Order>().0, ["b", "a", "c", "b", "a"]);
+        let names: Vec<_> = schedule
+            .system_names()
+            .map(|name| name.rsplit("::").next().unwrap())
+            .collect();
+        assert_eq!(names, ["c", "b", "a"]);
+    }
+
+    struct Paused;
+
+    #[test]
+    fn conditions_decide_whether_a_system_runs() {
+        let mut world = World::new();
+        world.init_resource::<Order>();
+        world.insert_resource(Counter(0));
+        let mut schedule = Schedule::default();
+        schedule.add_systems((
+            a.run_if(not(resource_exists::<Paused>)),
+            b.run_if(resource_exists::<Paused>),
+            // Two conditions: both must hold. A closure with parameters is a condition too.
+            (c, d)
+                .run_if(|counter: Res<Counter>| counter.0 >= 2)
+                .run_if(not(resource_exists::<Paused>)),
+            |mut counter: ResMut<Counter>| counter.0 += 1,
+        ));
+        schedule.initialize(&mut world);
+        let mut frame = |world: &mut World| {
+            schedule.run(world);
+            std::mem::take(&mut world.resource_mut::<Order>().0)
+        };
+        assert_eq!(frame(&mut world), ["a"]);
+        assert_eq!(frame(&mut world), ["a"]);
+        assert_eq!(frame(&mut world), ["a", "c", "d"]);
+        world.insert_resource(Paused);
+        assert_eq!(frame(&mut world), ["b"]);
+        world.remove_resource::<Paused>();
+        assert_eq!(frame(&mut world), ["a", "c", "d"]);
+    }
+
+    #[test]
+    fn a_system_that_was_held_back_still_sees_what_changed_meanwhile() {
+        let mut world = World::new();
+        world.insert_resource(Counter(0));
+        let entity = world.spawn(Pos(0));
+        let mut schedule = Schedule::default();
+        schedule.add_systems(
+            (|changed: Query<&Pos, Changed<Pos>>, mut counter: ResMut<Counter>| {
+                counter.0 += changed.iter().count();
+            })
+            .run_if(not(resource_exists::<Paused>)),
+        );
+        schedule.run(&mut world);
+        assert_eq!(world.resource::<Counter>().0, 1);
+        world.insert_resource(Paused);
+        world.get_mut::<Pos>(entity).unwrap().0 = 5;
+        schedule.run(&mut world);
+        schedule.run(&mut world);
+        assert_eq!(world.resource::<Counter>().0, 1, "held back");
+        world.remove_resource::<Paused>();
+        schedule.run(&mut world);
+        assert_eq!(
+            world.resource::<Counter>().0,
+            2,
+            "and the change was not missed"
+        );
+        schedule.run(&mut world);
+        assert_eq!(world.resource::<Counter>().0, 2);
+    }
+}

@@ -68,6 +68,20 @@ pub const VOXL_SHAPE_CUBE: u32 = 0;
 pub const VOXL_SHAPE_SPHERE: u32 = 1;
 pub const VOXL_SHAPE_PLANE: u32 = 2;
 
+pub const VOXL_SIGNAL_AND: u32 = 0;
+pub const VOXL_SIGNAL_OR: u32 = 1;
+pub const VOXL_SIGNAL_NOT: u32 = 2;
+pub const VOXL_SIGNAL_COUNT: u32 = 3;
+pub const VOXL_SIGNAL_SUM: u32 = 4;
+pub const VOXL_SIGNAL_SELECT: u32 = 5;
+pub const VOXL_SIGNAL_TIMER: u32 = 6;
+pub const VOXL_SIGNAL_HELD_FOR: u32 = 7;
+pub const VOXL_SIGNAL_LESS: u32 = 8;
+pub const VOXL_SIGNAL_LESS_OR_EQUAL: u32 = 9;
+pub const VOXL_SIGNAL_EQUAL: u32 = 10;
+pub const VOXL_SIGNAL_GREATER_OR_EQUAL: u32 = 11;
+pub const VOXL_SIGNAL_GREATER: u32 = 12;
+
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct VoxlVertex {
@@ -377,6 +391,37 @@ pub struct VoxlApi {
         len: usize,
         transform: *const VoxlTransform,
     ) -> VoxlEntity,
+
+    pub system_fail: unsafe extern "C" fn(
+        system: *mut VoxlSystem,
+        message: *const u8,
+        len: usize,
+        trace: *const u8,
+        trace_len: usize,
+    ),
+
+    pub signal_set: unsafe extern "C" fn(
+        system: *mut VoxlSystem,
+        name: *const u8,
+        len: usize,
+        value: f64,
+        number: u32,
+    ),
+    pub signal_get: unsafe extern "C" fn(
+        system: *mut VoxlSystem,
+        name: *const u8,
+        len: usize,
+        out: *mut f64,
+    ) -> u32,
+    pub signal_define: unsafe extern "C" fn(
+        system: *mut VoxlSystem,
+        name: *const u8,
+        len: usize,
+        op: u32,
+        param: f64,
+        inputs: *const u8,
+        inputs_len: usize,
+    ),
 }
 
 /// `voxl.Transform`: 48 bytes, 16-byte aligned.

@@ -78,6 +78,11 @@ pub trait System: 'static {
     fn name(&self) -> &str;
     fn initialize(&mut self, world: &mut World);
     fn run(&mut self, world: &mut World);
+    /// What the system reads and writes, once it has been initialized. `None` for a system
+    /// that takes the whole world.
+    fn access(&self) -> Option<&Access> {
+        None
+    }
 }
 
 pub type BoxedSystem = Box<dyn System>;
@@ -139,6 +144,7 @@ pub struct FunctionSystem<Marker: 'static, F: SystemParamFunction<Marker>> {
     state: Option<<F::Param as SystemParam>::State>,
     last_run: Tick,
     name: &'static str,
+    access: Option<Access>,
     _marker: PhantomData<fn() -> Marker>,
 }
 
@@ -151,7 +157,12 @@ impl<Marker: 'static, F: SystemParamFunction<Marker>> System for FunctionSystem<
         if self.state.is_none() {
             let mut access = Access::new(self.name);
             self.state = Some(F::Param::init_state(world, &mut access));
+            self.access = Some(access);
         }
+    }
+
+    fn access(&self) -> Option<&Access> {
+        self.access.as_ref()
     }
 
     fn run(&mut self, world: &mut World) {
@@ -184,6 +195,7 @@ impl<Marker: 'static, F: SystemParamFunction<Marker>> IntoSystem<(FunctionMarker
             state: None,
             last_run: 0,
             name: type_name::<F>(),
+            access: None,
             _marker: PhantomData,
         }
     }

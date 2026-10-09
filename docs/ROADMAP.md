@@ -96,6 +96,40 @@ contract is `include/voxl.h`; see [PLUGINS.md](PLUGINS.md).
 **Exit test:** the Phase 4 sample game's rules live entirely in plugins, in two languages, and
 can be rewritten while the game is being played.
 
+## Phase 1B: A live program (L)
+
+Added at Chris's request (October 2026), after Bret Victor's talks and Jack Rusher's "Stop
+Writing Dead Programs": in debug builds the game is a program you change, question and repair
+while it runs, not one you restart. Hot reload (Phase 1A) is half of this; the other half is
+being able to see inside.
+
+- [x] A failure stops the game where it is instead of ending it: a system that panics is
+      caught, its stack and message kept, and the game paused with the world intact; fix the
+      code (a plugin reloads itself), resume; see [LIVE.md](LIVE.md)
+- [x] Time under control: pause, step frames, slow motion
+- [x] Every system's name, stage, order, constraints and run times, from the running app
+- [x] What each system reads and writes, from the running app
+- [x] A debug connection (a local socket speaking JSON) to a running game: list and search
+      entities, read and change any registered component or resource by name, spawn and
+      despawn, save the scene, pause and step, see failures with their stacks, reload
+      plugins, read and rewire the signal graph
+- [x] A command-line client for it (`voxl-debug`)
+- [ ] The same protocol under the editor (Phase 5); pushing changes to a client that is
+      watching, instead of being asked
+- [ ] Hot reload of the host's own Rust systems, not only plugins (the engine as a library the
+      game reloads)
+- [x] Rewind: snapshots of the world every few frames (reflection makes them); step back to
+      one, change code or state, play forward again
+- [ ] Snapshots of only what changed; scrubbing both ways; restoring what signals have timed
+- [x] Failures across the plugin boundary: a plugin system that throws (Haskell), panics
+      (Rust) or calls `system_fail` (C) pauses the game with its message, and reloading the
+      fixed plugin resumes it
+- [ ] Haskell call stacks with the exception; catching crashes in native plugin code
+
+**Exit test:** make a plugin system divide by zero while the sample game runs; the game
+freezes on that frame and shows the stack; fix the line, save, and play carries on from the
+same frame without the window ever closing.
+
 ## Phase 1: Data layer (L)
 
 The layer Unreal's editor, saves, networking and Blueprints all stand on.
@@ -128,7 +162,8 @@ and see it change in the running scene.
 
 ## Phase 2: Parallel core (L)
 
-- [ ] System ordering: before/after, system sets, run conditions, application states
+- [x] System ordering: before/after, system sets, chains, run conditions, application states
+      with enter and exit systems; see [SCHEDULING.md](SCHEDULING.md)
 - [ ] Parallel scheduler built on the existing access sets; `World` safe to share
 - [ ] Table storage as an option beside sparse sets, chosen per component
 - [ ] Hooks and observers: run code when a component is added or removed
@@ -137,6 +172,44 @@ and see it change in the running scene.
 
 **Exit test:** the Napoleonic demo's update time drops in proportion to cores used, with Miri
 and a thread sanitizer clean.
+
+## Phase 2B: Signals (M)
+
+Added at Chris's request (October 2026). Game rules written as handlers that set and clear
+shared flags get out of step with each other. His example is a bug in Age of Empires 4:
+standing on a sacred site pauses the win timer; step onto a second site and the units on the
+first die and the timer starts again. The rule should be stated once, as a function of the
+world: the timer is paused while anyone on your team stands on any sacred site the other
+team holds. That is a signal, in the sense of functional reactive programming: a value
+derived from other values, which the engine keeps true.
+
+- [x] Signals: a named value computed from queries over the world and from other signals,
+      read by systems through the `Signals` resource; see [SIGNALS.md](SIGNALS.md)
+- [x] Signals as run conditions, and edges (became true, became false) as conditions and
+      events, so "when the timer un-pauses" is written once
+- [x] Signals over time: held for, and a timer that runs only while a signal is true (the
+      sacred-site clock itself)
+- [ ] Sources skipped when what they read hasn't changed
+- [ ] Dependencies known to the engine: which signals read which, shown in the debug
+      connection, with the current value of each (Phase 1B)
+- [x] Signals from plugins, through the C interface (set, get, define), with Rust and Haskell
+      bindings
+- [x] A Haskell layer in which a rule reads as an expression (`defineRule`, `sig`, `.&&.`,
+      `notS`, `timer`, …)
+- [x] The sacred-site rule as a worked example and a test
+- [x] Signals as data, not closures: a graph of named nodes (sources read from the world;
+      operations such as and, or, not, count, compare, held-for) joined by connections, which
+      can be listed with their values and rewired, forced and redefined while the game runs
+- [ ] Saving and loading a signal graph; signals carrying entities
+- [x] The signal graph over the debug connection: read every node and its value, set
+      constants, connect inputs, force outputs, define and remove nodes, while the game runs
+- [x] A signal graph viewer in the terminal (`voxl-debug watch`): which signals are active as
+      you play, what feeds what, what just changed; edited live from a second terminal
+- [ ] The graphical viewer (Chris, October 2026): the graph laid out, signals and connections
+      edited by hand while the game runs; a panel of the editor (Phase 5)
+
+**Exit test:** the sacred-site game: two teams, several sites, units walking on and off and
+dying in any order; the timer is right in every case because no code ever sets it.
 
 ## Phase 3: GPU-driven renderer (XL)
 
@@ -258,4 +331,5 @@ project grows.
    seen in screenshots to fix alongside: the built-in sky is dull next to the sun it comes
    with; and objects that move every frame smear under temporal anti-aliasing (it has no
    motion vectors).
-3. System ordering, run conditions and states, then the parallel scheduler (Phase 2).
+3. The parallel scheduler, on the ordering constraints and access sets that are now there
+   (Phase 2).

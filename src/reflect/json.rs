@@ -19,6 +19,13 @@ pub fn to_string(value: &Value) -> String {
     out
 }
 
+/// Writes a value as JSON on one line, for sending rather than reading.
+pub fn to_line(value: &Value) -> String {
+    // Text is written with its line breaks escaped, so every real line break in the indented
+    // form is layout.
+    to_string(value).lines().map(str::trim_start).collect()
+}
+
 fn indent(out: &mut String, depth: usize) {
     out.push('\n');
     for _ in 0..depth {

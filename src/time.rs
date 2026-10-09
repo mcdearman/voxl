@@ -4,24 +4,25 @@ use crate::app::{App, Plugin};
 
 /// Frame timing. Updated at the very start of every frame.
 pub struct Time {
-    startup: Instant,
     last: Option<Instant>,
     delta: Duration,
     elapsed: Duration,
     frame: u64,
     /// When set, every frame lasts exactly this long, whatever the clock says.
     step: Option<Duration>,
+    /// How fast game time runs against the clock: 1 is real time.
+    scale: f32,
 }
 
 impl Default for Time {
     fn default() -> Self {
         Self {
-            startup: Instant::now(),
             last: None,
             delta: Duration::ZERO,
             elapsed: Duration::ZERO,
             frame: 0,
             step: None,
+            scale: 1.0,
         }
     }
 }
@@ -42,10 +43,36 @@ impl Time {
         }
         let now = Instant::now();
         // The first frame reports a zero delta so slow startup work doesn't cause a huge jump.
-        self.delta = self.last.map_or(Duration::ZERO, |last| now - last);
+        self.delta = self
+            .last
+            .map_or(Duration::ZERO, |last| (now - last).mul_f32(self.scale));
         self.last = Some(now);
-        self.elapsed = now - self.startup;
+        self.elapsed += self.delta;
         self.frame += 1;
+    }
+
+    /// Puts the clock back: for stepping back to an earlier moment of the game.
+    pub(crate) fn rewind_to(&mut self, elapsed: Duration, frame: u64) {
+        self.elapsed = elapsed;
+        self.frame = frame;
+        self.delta = Duration::ZERO;
+        self.last = None;
+    }
+
+    /// A frame in which no game time passes: the game is paused.
+    pub(crate) fn hold(&mut self) {
+        self.delta = Duration::ZERO;
+        self.last = Some(Instant::now());
+    }
+
+    /// Slows game time down or speeds it up: 0.25 is quarter speed. Frames forced to a fixed
+    /// step are not scaled.
+    pub fn set_scale(&mut self, scale: f32) {
+        self.scale = scale.max(0.0);
+    }
+
+    pub fn scale(&self) -> f32 {
+        self.scale
     }
 
     /// Steps time by a set amount instead of by the clock: for tests, and for rendering

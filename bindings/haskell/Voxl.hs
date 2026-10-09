@@ -91,6 +91,32 @@ module Voxl
   , setTextures
   , spawnModel
   , spawnPrefab
+    -- * Signals
+  , SignalOp (..)
+  , setSignal
+  , setSignalNumber
+  , signal
+  , signalIsTrue
+  , defineSignal
+    -- ** Rules as expressions
+  , Sig
+  , sig
+  , truth
+  , number
+  , notS
+  , (.&&.)
+  , (.||.)
+  , (.<.)
+  , (.<=.)
+  , (.==.)
+  , (.>=.)
+  , (.>.)
+  , countS
+  , selectS
+  , heldFor
+  , timer
+  , timerReset
+  , defineRule
     -- * Events
   , Event
   , registerEvent
@@ -218,6 +244,14 @@ foreign import ccall unsafe "voxl_hs_set_textures"
   c_set_textures :: Ptr () -> Word64 -> Word32 -> Word32 -> Word32 -> IO ()
 foreign import ccall unsafe "voxl_hs_spawn_model"
   c_spawn_model :: Ptr () -> Ptr CChar -> CSize -> Ptr Transform -> IO Word64
+foreign import ccall unsafe "voxl_hs_signal_set"
+  c_signal_set :: Ptr () -> Ptr CChar -> CSize -> CDouble -> Word32 -> IO ()
+foreign import ccall unsafe "voxl_hs_signal_get"
+  c_signal_get :: Ptr () -> Ptr CChar -> CSize -> Ptr CDouble -> IO Word32
+foreign import ccall unsafe "voxl_hs_signal_define"
+  c_signal_define :: Ptr () -> Ptr CChar -> CSize -> Word32 -> CDouble -> Ptr CChar -> CSize -> IO ()
+foreign import ccall unsafe "voxl_hs_system_fail"
+  c_system_fail :: Ptr () -> Ptr CChar -> CSize -> IO ()
 foreign import ccall unsafe "voxl_hs_spawn_prefab"
   c_spawn_prefab :: Ptr () -> Ptr CChar -> CSize -> Ptr Transform -> IO Word64
 foreign import ccall unsafe "voxl_hs_set_parent" c_set_parent :: Ptr () -> Word64 -> Word64 -> IO ()
@@ -910,8 +944,172 @@ spawnPrefab (System system) name at =
   withName name $ \chars len ->
     Foreign.with at (fmap Entity . c_spawn_prefab system chars len)
 
+-- | How a signal is worked out from its inputs.
+data SignalOp
+  = SignalAnd
+  | SignalOr
+  | SignalNot
+  | -- | How many inputs are true.
+    SignalCount
+  | SignalSum
+  | -- | The second input if the first is true, otherwise the third.
+    SignalSelect
+  | -- | Seconds the first input has been true; a true second input resets it.
+    SignalTimer
+  | -- | True once the input has been true this many seconds without a break.
+    SignalHeldFor !Double
+  | SignalLess
+  | SignalLessOrEqual
+  | SignalEqual
+  | SignalGreaterOrEqual
+  | SignalGreater
+  deriving (Eq, Show)
+
+-- | Sets a true-or-false signal, defining it if need be, when this system returns: how a
+-- plugin tells the signal graph a fact of its own.
+setSignal :: System -> String -> Bool -> IO ()
+setSignal (System system) name value =
+  withName name $ \chars len -> c_signal_set system chars len (if value then 1 else 0) 0
+
+-- | Sets a numeric signal, defining it if need be, when this system returns.
+setSignalNumber :: System -> String -> Double -> IO ()
+setSignalNumber (System system) name value =
+  withName name $ \chars len -> c_signal_set system chars len (realToFrac value) 1
+
+-- | A signal's value as of its last update, a truth being 1 or 0; 'Nothing' if there is no
+-- such signal.
+signal :: System -> String -> IO (Maybe Double)
+signal (System system) name =
+  withName name $ \chars len -> alloca $ \out -> do
+    found <- c_signal_get system chars len out
+    if found == 0 then pure Nothing else Just . realToFrac <$> peek out
+
+-- | Whether a signal is true. One that doesn't exist is not.
+signalIsTrue :: System -> String -> IO Bool
+signalIsTrue system name = maybe False (/= 0) <$> signal system name
+
+-- | Defines a signal worked out from others (a rule), or replaces its definition, when this
+-- system returns. The inputs are signal names.
+defineSignal :: System -> String -> SignalOp -> [String] -> IO ()
+defineSignal (System system) name op inputs =
+  withName name $ \chars len -> withName (unwords inputs) $ \inputChars inputLen ->
+    c_signal_define system chars len code (realToFrac param) inputChars inputLen
+  where
+    (code, param) = case op of
+      SignalAnd -> (0, 0 :: Double)
+      SignalOr -> (1, 0)
+      SignalNot -> (2, 0)
+      SignalCount -> (3, 0)
+      SignalSum -> (4, 0)
+      SignalSelect -> (5, 0)
+      SignalTimer -> (6, 0)
+      SignalHeldFor seconds -> (7, seconds)
+      SignalLess -> (8, 0)
+      SignalLessOrEqual -> (9, 0)
+      SignalEqual -> (10, 0)
+      SignalGreaterOrEqual -> (11, 0)
+      SignalGreater -> (12, 0)
+
+-- | A signal as an expression over other signals: what a rule is.
+--
+-- > defineRule sys "red.clock" $
+-- >   timer (sig "red.holds_all" .&&. notS (sig "blue.contesting"))
+-- > defineRule sys "red.wins" (sig "red.clock" .>=. number 600)
+--
+-- Numbers add with '+' (and a literal is a constant), so @sig "a" + sig "b" .>. 3@ is a rule.
+data Sig
+  = SigNamed String
+  | SigTruth Bool
+  | SigNumber Double
+  | SigOp SignalOp [Sig]
+
+infixr 3 .&&.
+
+infixr 2 .||.
+
+infix 4 .<., .<=., .==., .>=., .>.
+
+-- | Another signal, by name: one the host defines, another plugin sets, or another rule.
+sig :: String -> Sig
+sig = SigNamed
+
+-- | A constant truth.
+truth :: Bool -> Sig
+truth = SigTruth
+
+-- | A constant number.
+number :: Double -> Sig
+number = SigNumber
+
+notS :: Sig -> Sig
+notS a = SigOp SignalNot [a]
+
+(.&&.), (.||.), (.<.), (.<=.), (.==.), (.>=.), (.>.) :: Sig -> Sig -> Sig
+a .&&. b = SigOp SignalAnd (operands SignalAnd a ++ operands SignalAnd b)
+a .||. b = SigOp SignalOr (operands SignalOr a ++ operands SignalOr b)
+a .<. b = SigOp SignalLess [a, b]
+a .<=. b = SigOp SignalLessOrEqual [a, b]
+a .==. b = SigOp SignalEqual [a, b]
+a .>=. b = SigOp SignalGreaterOrEqual [a, b]
+a .>. b = SigOp SignalGreater [a, b]
+
+-- A chain of one operation is one node with many inputs, not a node for every pair.
+operands :: SignalOp -> Sig -> [Sig]
+operands op (SigOp inner inputs) | inner == op = inputs
+operands _ other = [other]
+
+-- | How many of these are true.
+countS :: [Sig] -> Sig
+countS = SigOp SignalCount
+
+-- | The second if the first is true, otherwise the third.
+selectS :: Sig -> Sig -> Sig -> Sig
+selectS condition yes no = SigOp SignalSelect [condition, yes, no]
+
+-- | True once the signal has been true for this many seconds without a break.
+heldFor :: Double -> Sig -> Sig
+heldFor seconds a = SigOp (SignalHeldFor seconds) [a]
+
+-- | Seconds for which the signal has been true: a clock that runs only while it holds.
+timer :: Sig -> Sig
+timer running = SigOp SignalTimer [running]
+
+-- | A 'timer' that goes back to zero while the second signal is true.
+timerReset :: Sig -> Sig -> Sig
+timerReset running reset = SigOp SignalTimer [running, reset]
+
+-- | Sums: @sig "a" + sig "b"@. Only addition and literals mean anything for signals; the
+-- other operations are errors.
+instance Num Sig where
+  a + b = SigOp SignalSum (operands SignalSum a ++ operands SignalSum b)
+  fromInteger = SigNumber . fromInteger
+  (*) = error "Voxl.Sig: signals can be added, not multiplied"
+  abs = error "Voxl.Sig: abs is not a signal operation"
+  signum = error "Voxl.Sig: signum is not a signal operation"
+  negate = error "Voxl.Sig: negate is not a signal operation"
+
+-- | Defines a signal by an expression, when this system returns. The parts of the
+-- expression become signals of their own, named after the rule (@red.clock#1@, …), so the
+-- whole of it shows in the signal graph. Defining the same rule again changes nothing.
+defineRule :: System -> String -> Sig -> IO ()
+defineRule sys name rule = do
+  counter <- newIORef (0 :: Int)
+  let fresh = atomicModifyIORef' counter (\n -> (n + 1, name ++ "#" ++ show (n + 1)))
+      -- Gives an expression a name in the graph, defining what it needs on the way.
+      place target expression = case expression of
+        SigNamed other -> defineSignal sys target SignalOr [other]
+        SigTruth value -> setSignal sys target value
+        SigNumber value -> setSignalNumber sys target value
+        SigOp op inputs -> mapM input inputs >>= defineSignal sys target op
+      input (SigNamed other) = pure other
+      input expression = do
+        part <- fresh
+        place part expression
+        pure part
+  place name rule
+
 -- What the engine calls for every Haskell system: `user` is the stable pointer to its
--- function. An exception must not escape into the engine, so it is logged instead.
+-- function. An exception must not escape into the engine, so the engine is told of it instead.
 foreign export ccall "voxl_hs_dispatch" dispatch :: Ptr () -> Ptr () -> IO ()
 
 dispatch :: Ptr () -> Ptr () -> IO ()
@@ -920,7 +1118,9 @@ dispatch system user = do
   result <- try (run system)
   case result of
     Right () -> pure ()
-    Left (err :: SomeException) -> logError ("a system threw: " ++ displayException err)
+    Left (err :: SomeException) ->
+      withCStringLen (displayException err) $ \(chars, len) ->
+        c_system_fail system chars (fromIntegral len)
 
 foreign export ccall "voxl_hs_unload" unload :: IO ()
 

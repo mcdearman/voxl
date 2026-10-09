@@ -117,6 +117,17 @@ pub struct Access {
     queries: Vec<FilteredAccess>,
     resource_reads: HashSet<TypeId>,
     resource_writes: HashSet<TypeId>,
+    resource_names: HashMap<TypeId, &'static str>,
+}
+
+/// What a system touches, by name: for a debugger or a profiler to show.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct AccessSummary {
+    /// Components read (filters such as `Changed` included), sorted.
+    pub reads: Vec<String>,
+    pub writes: Vec<String>,
+    pub resource_reads: Vec<String>,
+    pub resource_writes: Vec<String>,
 }
 
 impl Access {
@@ -126,6 +137,7 @@ impl Access {
             queries: Vec::new(),
             resource_reads: HashSet::new(),
             resource_writes: HashSet::new(),
+            resource_names: HashMap::new(),
         }
     }
 
@@ -169,6 +181,8 @@ impl Access {
         if self.resource_writes.contains(&TypeId::of::<T>()) {
             self.resource_conflict::<T>();
         }
+        self.resource_names
+            .insert(TypeId::of::<T>(), type_name::<T>());
         self.resource_reads.insert(TypeId::of::<T>());
     }
 
@@ -177,7 +191,45 @@ impl Access {
         if self.resource_reads.contains(&id) || self.resource_writes.contains(&id) {
             self.resource_conflict::<T>();
         }
+        self.resource_names.insert(id, type_name::<T>());
         self.resource_writes.insert(id);
+    }
+
+    /// Everything this system touches, by name.
+    pub fn summary(&self) -> AccessSummary {
+        let sorted = |mut names: Vec<String>| {
+            names.sort();
+            names.dedup();
+            names
+        };
+        let components = |pick: fn(&FilteredAccess) -> Vec<&ComponentKey>| {
+            sorted(
+                self.queries
+                    .iter()
+                    .flat_map(|query| {
+                        pick(query)
+                            .into_iter()
+                            .filter_map(|key| query.names.get(key).cloned())
+                    })
+                    .collect(),
+            )
+        };
+        let resources = |ids: &HashSet<TypeId>| {
+            sorted(
+                ids.iter()
+                    .map(|id| self.resource_names[id].to_owned())
+                    .collect(),
+            )
+        };
+        let writes = components(|query| query.writes.iter().collect());
+        let mut reads = components(|query| query.reads.iter().chain(&query.filter_reads).collect());
+        reads.retain(|name| !writes.contains(name));
+        AccessSummary {
+            reads,
+            writes,
+            resource_reads: resources(&self.resource_reads),
+            resource_writes: resources(&self.resource_writes),
+        }
     }
 
     fn resource_conflict<T: 'static>(&self) -> ! {

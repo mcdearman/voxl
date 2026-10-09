@@ -18,6 +18,7 @@ use super::{
     system::{check_queries, Context, DynamicSystem, Term},
 };
 use crate::{
+    signal::{Compare, Op, Signal, Signals},
     app::Stage,
     asset_server::AssetServer,
     assets::{Assets, Handle},
@@ -121,6 +122,10 @@ pub(crate) static API: VoxlApi = VoxlApi {
     set_parent,
     despawn_tree,
     spawn_prefab,
+    system_fail,
+    signal_set,
+    signal_get,
+    signal_define,
 };
 
 /// Runs `body`, turning a panic into `fallback` so it never unwinds into the plugin.
@@ -1265,5 +1270,127 @@ unsafe extern "C" fn spawn_prefab(
             world.insert(root, (transform, instance));
         });
         root.to_bits()
+    })
+}
+
+unsafe extern "C" fn system_fail(
+    system: *mut VoxlSystem,
+    message: *const u8,
+    len: usize,
+    trace: *const u8,
+    trace_len: usize,
+) {
+    guard("system_fail", (), || {
+        let Some(context) = context(system) else {
+            return;
+        };
+        let message = text(message, len).unwrap_or("the plugin gave no reason");
+        let trace = text(trace, trace_len).unwrap_or_default();
+        // The first failure of a run is the one that matters.
+        context
+            .failure
+            .get_or_insert_with(|| (message.to_owned(), trace.to_owned()));
+    })
+}
+
+unsafe extern "C" fn signal_set(
+    system: *mut VoxlSystem,
+    name: *const u8,
+    len: usize,
+    value: f64,
+    number: u32,
+) {
+    guard("signal_set", (), || {
+        let (Some(context), Some(name)) = (context(system), text(name, len)) else {
+            return;
+        };
+        let value = if number != 0 {
+            Signal::Number(value)
+        } else {
+            Signal::Bool(value != 0.0)
+        };
+        let name = name.to_owned();
+        context.queue.push(move |world| {
+            if let Some(signals) = world.get_resource_mut::<Signals>() {
+                // Left alone when nothing changed, so the graph isn't sorted again every frame.
+                if signals.constant(&name) != Some(value) {
+                    signals.set(&name, value);
+                }
+            }
+        });
+    })
+}
+
+unsafe extern "C" fn signal_get(
+    system: *mut VoxlSystem,
+    name: *const u8,
+    len: usize,
+    out: *mut f64,
+) -> u32 {
+    guard("signal_get", 0, || {
+        let (Some(context), Some(name)) = (context(system), text(name, len)) else {
+            return 0;
+        };
+        let Some(value) = context
+            .world()
+            .get_resource::<Signals>()
+            .and_then(|signals| signals.get(name))
+        else {
+            return 0;
+        };
+        if let Some(out) = out.as_mut() {
+            *out = value.number();
+        }
+        1
+    })
+}
+
+unsafe extern "C" fn signal_define(
+    system: *mut VoxlSystem,
+    name: *const u8,
+    len: usize,
+    op: u32,
+    param: f64,
+    inputs: *const u8,
+    inputs_len: usize,
+) {
+    guard("signal_define", (), || {
+        let (Some(context), Some(name)) = (context(system), text(name, len)) else {
+            return;
+        };
+        let op = match op {
+            sys::VOXL_SIGNAL_AND => Op::And,
+            sys::VOXL_SIGNAL_OR => Op::Or,
+            sys::VOXL_SIGNAL_NOT => Op::Not,
+            sys::VOXL_SIGNAL_COUNT => Op::Count,
+            sys::VOXL_SIGNAL_SUM => Op::Sum,
+            sys::VOXL_SIGNAL_SELECT => Op::Select,
+            sys::VOXL_SIGNAL_TIMER => Op::Timer,
+            sys::VOXL_SIGNAL_HELD_FOR => Op::HeldFor(param),
+            sys::VOXL_SIGNAL_LESS => Op::Compare(Compare::Less),
+            sys::VOXL_SIGNAL_LESS_OR_EQUAL => Op::Compare(Compare::LessOrEqual),
+            sys::VOXL_SIGNAL_EQUAL => Op::Compare(Compare::Equal),
+            sys::VOXL_SIGNAL_GREATER_OR_EQUAL => Op::Compare(Compare::GreaterOrEqual),
+            sys::VOXL_SIGNAL_GREATER => Op::Compare(Compare::Greater),
+            other => {
+                log::error!(target: "plugin", "signal_define: there is no operation {other}");
+                return;
+            }
+        };
+        let inputs: Vec<String> = text(inputs, inputs_len)
+            .unwrap_or_default()
+            .split_whitespace()
+            .map(str::to_owned)
+            .collect();
+        let name = name.to_owned();
+        context.queue.push(move |world| {
+            if let Some(signals) = world.get_resource_mut::<Signals>() {
+                // A plugin defines its rules again every time it loads; the same rule
+                // again changes nothing.
+                if !signals.is_defined_as(&name, op, &inputs) {
+                    signals.define(&name, op, inputs);
+                }
+            }
+        });
     })
 }

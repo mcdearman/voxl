@@ -113,6 +113,23 @@ enum {
     VOXL_SHAPE_PLANE = 2   /* a: edge length; flat, facing up */
 };
 
+/* How a signal is worked out from its inputs, for `signal_define`. */
+enum {
+    VOXL_SIGNAL_AND = 0,
+    VOXL_SIGNAL_OR = 1,
+    VOXL_SIGNAL_NOT = 2,
+    VOXL_SIGNAL_COUNT = 3,            /* how many inputs are true */
+    VOXL_SIGNAL_SUM = 4,
+    VOXL_SIGNAL_SELECT = 5,           /* input 1 if input 0 is true, else input 2 */
+    VOXL_SIGNAL_TIMER = 6,            /* seconds input 0 has been true; input 1 resets */
+    VOXL_SIGNAL_HELD_FOR = 7,         /* true once input 0 has been true for `param` seconds */
+    VOXL_SIGNAL_LESS = 8,             /* input 0 against input 1, and so on below */
+    VOXL_SIGNAL_LESS_OR_EQUAL = 9,
+    VOXL_SIGNAL_EQUAL = 10,
+    VOXL_SIGNAL_GREATER_OR_EQUAL = 11,
+    VOXL_SIGNAL_GREATER = 12
+};
+
 typedef struct VoxlVertex {
     float position[3];
     float normal[3];
@@ -423,6 +440,35 @@ typedef struct VoxlApi {
      * the next frame, and are rebuilt whenever the prefab's file is saved again. */
     VoxlEntity (*spawn_prefab)(VoxlSystem *system, const char *name, size_t len,
                                const VoxlTransform *transform);
+
+    /* ---- failures (inside a system) ---- */
+
+    /* Says that this run of the system has failed: an exception was thrown, an assertion
+     * did not hold. `trace` is whatever the language can say about where (a stack, a source
+     * location), and may be empty. Call it and return. In a debug build the engine then
+     * pauses the game with the message and trace on show and leaves the system out until the
+     * plugin is reloaded; otherwise it logs them. What the system queued this run (spawns,
+     * inserts) is dropped. Language bindings call this for you when a system throws. */
+    void (*system_fail)(VoxlSystem *system, const char *message, size_t len, const char *trace,
+                        size_t trace_len);
+
+    /* ---- signals (inside a system) ----
+     * Values derived from the world and from each other, which the engine keeps true; see
+     * docs/SIGNALS.md. A plugin gives the graph its own facts by setting signals from a
+     * system, builds rules on them as data, and reads any signal by name. */
+
+    /* Sets a signal to a truth (`number` 0: any `value` but 0 is true) or to a number
+     * (`number` 1), defining it if need be. Takes effect when the system returns. */
+    void (*signal_set)(VoxlSystem *system, const char *name, size_t len, double value,
+                       uint32_t number);
+    /* Reads a signal as of its last update: returns 0 if there is none, else 1 and writes
+     * its value to `out` (a truth as 1 or 0). */
+    uint32_t (*signal_get)(VoxlSystem *system, const char *name, size_t len, double *out);
+    /* Defines a signal worked out from others, or replaces its definition, when the system
+     * returns. `op` is a VOXL_SIGNAL_ value; `inputs` is the input signals' names separated
+     * by spaces; `param` is the seconds of VOXL_SIGNAL_HELD_FOR, and ignored otherwise. */
+    void (*signal_define)(VoxlSystem *system, const char *name, size_t len, uint32_t op,
+                          double param, const char *inputs, size_t inputs_len);
 } VoxlApi;
 
 /* ---- conveniences for C and C++ ---- */
