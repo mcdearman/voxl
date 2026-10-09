@@ -24,7 +24,10 @@
 //! nothing here can prevent that. Load only plugins you would be willing to link statically.
 
 mod api;
+mod events;
 mod system;
+
+pub use events::PluginEvents;
 
 #[cfg(test)]
 mod tests;

@@ -79,12 +79,42 @@ module Voxl
   , meshCreate
   , setMesh
   , setMaterial
+    -- * Events
+  , Event
+  , registerEvent
+  , sendEvent
+  , readEvents
+    -- * The scene
+  , Camera (..)
+  , defaultCamera
+  , Light (..)
+  , defaultLight
+  , setCamera
+  , setLight
+  , setAmbient
+  , setWindowTitle
+    -- * Physics
+  , Shape (..)
+  , Collider (..)
+  , colliderOf
+  , BodyKind (..)
+  , Body (..)
+  , bodyOf
+  , setCollider
+  , setBody
+  , applyImpulse
+  , setVelocity
+  , getVelocity
+  , RayHit (..)
+  , raycast
+  , Contact (..)
     -- * Logging
   , logInfo
   , logWarn
   , logError
     -- * Engine components
   , Transform (..)
+  , lookingAt
   , V3 (..)
   , Quat (..)
   ) where
@@ -141,6 +171,32 @@ foreign import ccall unsafe "voxl_hs_mesh_create"
   c_mesh_create :: Ptr () -> Ptr Vertex -> CSize -> Ptr Word32 -> CSize -> IO Word32
 foreign import ccall unsafe "voxl_hs_set_mesh" c_set_mesh :: Ptr () -> Word64 -> Word32 -> IO ()
 foreign import ccall unsafe "voxl_hs_set_material" c_set_material :: Ptr () -> Word64 -> Ptr Material -> IO ()
+foreign import ccall unsafe "voxl_hs_event_register"
+  c_event_register :: Ptr () -> Ptr CChar -> CSize -> CSize -> IO Word32
+foreign import ccall unsafe "voxl_hs_event_send" c_event_send :: Ptr () -> Word32 -> Ptr () -> IO ()
+foreign import ccall unsafe "voxl_hs_event_next" c_event_next :: Ptr () -> Word32 -> Ptr () -> IO Word8
+foreign import ccall unsafe "voxl_hs_set_camera"
+  c_set_camera :: Ptr () -> Word64 -> CFloat -> CFloat -> Word32 -> IO ()
+foreign import ccall unsafe "voxl_hs_set_light"
+  c_set_light :: Ptr () -> Word64 -> CFloat -> CFloat -> CFloat -> CFloat -> Word32 -> IO ()
+foreign import ccall unsafe "voxl_hs_set_ambient"
+  c_set_ambient :: Ptr () -> CFloat -> CFloat -> CFloat -> CFloat -> IO ()
+foreign import ccall unsafe "voxl_hs_set_window_title"
+  c_set_window_title :: Ptr () -> Ptr CChar -> CSize -> IO ()
+foreign import ccall unsafe "voxl_hs_set_collider"
+  c_set_collider ::
+    Ptr () -> Word64 -> Word32 -> CFloat -> CFloat -> CFloat -> CFloat -> CFloat -> Word32 -> IO ()
+foreign import ccall unsafe "voxl_hs_set_body"
+  c_set_body :: Ptr () -> Word64 -> Word32 -> CFloat -> CFloat -> CFloat -> CFloat -> Word32 -> IO ()
+foreign import ccall unsafe "voxl_hs_apply_impulse"
+  c_apply_impulse :: Ptr () -> Word64 -> CFloat -> CFloat -> CFloat -> IO ()
+foreign import ccall unsafe "voxl_hs_set_velocity"
+  c_set_velocity :: Ptr () -> Word64 -> CFloat -> CFloat -> CFloat -> IO ()
+foreign import ccall unsafe "voxl_hs_velocity" c_velocity :: Ptr () -> Word64 -> Ptr CFloat -> IO Word8
+foreign import ccall unsafe "voxl_hs_raycast"
+  c_raycast ::
+    Ptr () -> CFloat -> CFloat -> CFloat -> CFloat -> CFloat -> CFloat -> CFloat -> Ptr Word64 ->
+    Ptr CFloat -> IO Word8
 foreign import ccall unsafe "voxl_hs_spawn" c_spawn :: Ptr () -> IO Word64
 foreign import ccall unsafe "voxl_hs_despawn" c_despawn :: Ptr () -> Word64 -> IO ()
 foreign import ccall unsafe "voxl_hs_insert" c_insert :: Ptr () -> Word64 -> Word32 -> Ptr () -> IO ()
@@ -525,6 +581,220 @@ setMaterial :: System -> Entity -> Material -> IO ()
 setMaterial (System system) (Entity entity) surface =
   Foreign.with surface (c_set_material system entity)
 
+-- | An event type whose events are values of @a@.
+newtype Event a = Event Word32
+
+-- | Defines an event type, or finds the one the name already has. Any plugin that knows the
+-- name can send and read it, in any language; that is how plugins talk to each other. The
+-- engine's own events are found the same way: @"voxl.Contact"@ is a 'Contact'.
+registerEvent :: forall a. Storable a => App -> String -> IO (Event a)
+registerEvent (App app) name = do
+  handle <- withName name $ \chars len ->
+    c_event_register app chars len (fromIntegral (sizeOf (undefined :: a)))
+  when (handle == 0) $
+    ioError (userError ("could not register event `" ++ name ++ "` (is it another size?)"))
+  pure (Event handle)
+
+-- | Sends an event when this system returns. Systems later this frame, and every system next
+-- frame, can read it.
+sendEvent :: Storable a => System -> Event a -> a -> IO ()
+sendEvent (System system) (Event handle) value =
+  Foreign.with value $ \ptr -> c_event_send system handle (castPtr ptr)
+
+-- | The events this system hasn't read yet, oldest first. Each system reads each event once,
+-- and a reloaded system carries on where the old one stopped.
+readEvents :: Storable a => System -> Event a -> IO [a]
+readEvents (System system) (Event handle) = alloca $ \ptr ->
+  let loop seen = do
+        more <- c_event_next system handle (castPtr ptr)
+        if more /= 0 then peek ptr >>= \event -> loop (event : seen) else pure (reverse seen)
+   in loop []
+
+flag :: Bool -> Word32
+flag = fromIntegral . fromEnum
+
+-- | What the scene is seen through. The first active camera is the one drawn.
+data Camera = Camera
+  { fieldOfView :: !Float
+    -- ^ vertical, in radians
+  , nearPlane :: !Float
+  , cameraActive :: !Bool
+  }
+  deriving (Eq, Show)
+
+-- | A camera with a 60 degree field of view.
+defaultCamera :: Camera
+defaultCamera = Camera (pi / 3) 0.1 True
+
+-- | A sun-like light, shining along the forward direction (-Z) of the entity's transform.
+data Light = Light
+  { lightColor :: !V3
+  , lightIntensity :: !Float
+  , castsShadows :: !Bool
+  }
+  deriving (Eq, Show)
+
+-- | White sunlight that casts shadows.
+defaultLight :: Light
+defaultLight = Light (V3 1 1 1) 3 True
+
+-- | Makes the entity a camera (it also needs a 'Transform'), when this system returns.
+setCamera :: System -> Entity -> Camera -> IO ()
+setCamera (System system) (Entity entity) (Camera fov near on) =
+  c_set_camera system entity (realToFrac fov) (realToFrac near) (flag on)
+
+-- | Makes the entity a light (it also needs a 'Transform'), when this system returns.
+setLight :: System -> Entity -> Light -> IO ()
+setLight (System system) (Entity entity) (Light (V3 r g b) strength cast) =
+  c_set_light system entity (realToFrac r) (realToFrac g) (realToFrac b) (realToFrac strength) (flag cast)
+
+-- | Sets the light arriving from every direction: a colour and a strength.
+setAmbient :: System -> V3 -> Float -> IO ()
+setAmbient (System system) (V3 r g b) strength =
+  c_set_ambient system (realToFrac r) (realToFrac g) (realToFrac b) (realToFrac strength)
+
+setWindowTitle :: System -> String -> IO ()
+setWindowTitle (System system) title = withName title (c_set_window_title system)
+
+-- | The solid form of a collider.
+data Shape
+  = Sphere !Float
+  | -- | Half extents along x, y and z.
+    Box !V3
+  | -- | Upright: a radius and a height.
+    Capsule !Float !Float
+  | -- | Everything below the entity's position.
+    Ground
+  deriving (Eq, Show)
+
+-- | Makes an entity solid. Without a 'Body' it never moves.
+data Collider = Collider
+  { colliderShape :: !Shape
+  , friction :: !Float
+  , restitution :: !Float
+    -- ^ bounciness, 0 to 1
+  , isSensor :: !Bool
+    -- ^ detects overlaps but blocks nothing
+  }
+  deriving (Eq, Show)
+
+-- | A collider of the given shape with ordinary friction and no bounce.
+colliderOf :: Shape -> Collider
+colliderOf form = Collider form 0.5 0 False
+
+data BodyKind
+  = -- | Moved by gravity, forces and collisions.
+    Dynamic
+  | -- | Moved only by its velocity; pushes other bodies and is never pushed.
+    Kinematic
+  | -- | Moved by setting its transform; pushes other bodies and is never pushed.
+    Animated
+  deriving (Eq, Show, Enum)
+
+-- | Makes an entity with a collider move.
+data Body = Body
+  { bodyKind :: !BodyKind
+  , bodyMass :: !Float
+    -- ^ kilograms; 0 to work it out from the collider's size
+  , bodyVelocity :: !V3
+  , lockRotation :: !Bool
+    -- ^ keeps it upright
+  }
+  deriving (Eq, Show)
+
+-- | A body of the given kind, at rest, with its mass worked out from its collider.
+bodyOf :: BodyKind -> Body
+bodyOf how = Body how 0 (V3 0 0 0) False
+
+-- | Makes the entity solid, when this system returns. Does nothing in an app without physics.
+setCollider :: System -> Entity -> Collider -> IO ()
+setCollider (System system) (Entity entity) (Collider form rough bounce ghost) =
+  c_set_collider system entity code (realToFrac x) (realToFrac y) (realToFrac z)
+    (realToFrac rough) (realToFrac bounce) (flag ghost)
+  where
+    (code, V3 x y z) = case form of
+      Sphere radius -> (0, V3 radius 0 0)
+      Box half -> (1, half)
+      Capsule radius height -> (2, V3 radius height 0)
+      Ground -> (3, V3 0 0 0)
+
+-- | Makes an entity with a collider move, when this system returns.
+setBody :: System -> Entity -> Body -> IO ()
+setBody (System system) (Entity entity) (Body how kilograms (V3 x y z) upright) =
+  c_set_body system entity (fromIntegral (fromEnum how)) (realToFrac kilograms)
+    (realToFrac x) (realToFrac y) (realToFrac z) (flag upright)
+
+-- | A sudden push on a dynamic body, in newton-seconds.
+applyImpulse :: System -> Entity -> V3 -> IO ()
+applyImpulse (System system) (Entity entity) (V3 x y z) =
+  c_apply_impulse system entity (realToFrac x) (realToFrac y) (realToFrac z)
+
+setVelocity :: System -> Entity -> V3 -> IO ()
+setVelocity (System system) (Entity entity) (V3 x y z) =
+  c_set_velocity system entity (realToFrac x) (realToFrac y) (realToFrac z)
+
+peekV3 :: Ptr CFloat -> Int -> IO V3
+peekV3 floats at =
+  V3 <$> (realToFrac <$> peekElemOff floats at)
+    <*> (realToFrac <$> peekElemOff floats (at + 1))
+    <*> (realToFrac <$> peekElemOff floats (at + 2))
+
+-- | The body's velocity, or 'Nothing' if the entity has no body.
+getVelocity :: System -> Entity -> IO (Maybe V3)
+getVelocity (System system) (Entity entity) = allocaArray 3 $ \floats -> do
+  found <- c_velocity system entity floats
+  if found /= 0 then Just <$> peekV3 floats 0 else pure Nothing
+
+-- | What a ray met.
+data RayHit = RayHit
+  { hitEntity :: !Entity
+  , hitPoint :: !V3
+  , hitNormal :: !V3
+  , hitDistance :: !Float
+  }
+  deriving (Eq, Show)
+
+-- | The first collider a ray from the origin along the direction meets within the distance,
+-- as things stood after the last physics step.
+raycast :: System -> V3 -> V3 -> Float -> IO (Maybe RayHit)
+raycast (System system) (V3 ox oy oz) (V3 dx dy dz) reach =
+  alloca $ \entityOut -> allocaArray 7 $ \floats -> do
+    found <-
+      c_raycast system (realToFrac ox) (realToFrac oy) (realToFrac oz) (realToFrac dx)
+        (realToFrac dy) (realToFrac dz) (realToFrac reach) entityOut floats
+    if found == 0
+      then pure Nothing
+      else do
+        entity <- peek entityOut
+        hit <- RayHit (Entity entity) <$> peekV3 floats 0 <*> peekV3 floats 3
+        Just . hit . realToFrac <$> peekElemOff floats 6
+
+-- | The engine's @"voxl.Contact"@ event: two colliders touched during a physics step.
+data Contact = Contact
+  { contactA :: !Entity
+  , contactB :: !Entity
+  , contactPoint :: !V3
+  , contactNormal :: !V3
+    -- ^ from the first toward the second
+  , contactImpulse :: !Float
+    -- ^ how hard, in newton-seconds
+  }
+  deriving (Eq, Show)
+
+instance Storable Contact where
+  sizeOf _ = 48
+  alignment _ = 8
+  peek ptr =
+    Contact <$> (Entity <$> peek (castPtr ptr)) <*> (Entity <$> peek (castPtr (ptr `plusPtr` 8)))
+      <*> peek (castPtr (ptr `plusPtr` 16)) <*> peek (castPtr (ptr `plusPtr` 28))
+      <*> peek (castPtr (ptr `plusPtr` 40))
+  poke ptr (Contact (Entity a) (Entity b) point normal push) = do
+    poke (castPtr ptr) a
+    poke (castPtr (ptr `plusPtr` 8)) b
+    poke (castPtr (ptr `plusPtr` 16)) point
+    poke (castPtr (ptr `plusPtr` 28)) normal
+    poke (castPtr (ptr `plusPtr` 40)) push
+
 -- What the engine calls for every Haskell system: `user` is the stable pointer to its
 -- function. An exception must not escape into the engine, so it is logged instead.
 foreign export ccall voxl_hs_dispatch :: Ptr () -> Ptr () -> IO ()
@@ -572,6 +842,35 @@ data Transform = Transform
   , scale :: !V3
   }
   deriving (Eq, Show)
+
+-- | A transform at the first point, turned so that its forward direction (-Z, the way a
+-- camera sees and a light shines) points at the second. Not for looking straight up or down.
+lookingAt :: V3 -> V3 -> Transform
+lookingAt eye@(V3 ex ey ez) (V3 tx ty tz) = Transform eye orientation (V3 1 1 1)
+  where
+    unit (x, y, z) = let len = sqrt (x * x + y * y + z * z) in (x / len, y / len, z / len)
+    cross (ax, ay, az) (bx, by, bz) = (ay * bz - az * by, az * bx - ax * bz, ax * by - ay * bx)
+    forward@(fx, fy, fz) = unit (tx - ex, ty - ey, tz - ez)
+    right@(rx, ry, rz) = unit (cross forward (0, 1, 0))
+    (ux, uy, uz) = cross right forward
+    -- The rotation whose columns are right, up and back, as a quaternion.
+    (m00, m01, m02) = (rx, ux, -fx)
+    (m10, m11, m12) = (ry, uy, -fy)
+    (m20, m21, m22) = (rz, uz, -fz)
+    trace = m00 + m11 + m22
+    orientation
+      | trace > 0 =
+          let s = sqrt (trace + 1) * 2
+           in Quat ((m21 - m12) / s) ((m02 - m20) / s) ((m10 - m01) / s) (s / 4)
+      | m00 > m11 && m00 > m22 =
+          let s = sqrt (1 + m00 - m11 - m22) * 2
+           in Quat (s / 4) ((m01 + m10) / s) ((m02 + m20) / s) ((m21 - m12) / s)
+      | m11 > m22 =
+          let s = sqrt (1 + m11 - m00 - m22) * 2
+           in Quat ((m01 + m10) / s) (s / 4) ((m12 + m21) / s) ((m02 - m20) / s)
+      | otherwise =
+          let s = sqrt (1 + m22 - m00 - m11) * 2
+           in Quat ((m02 + m20) / s) ((m12 + m21) / s) (s / 4) ((m10 - m01) / s)
 
 instance Storable Transform where
   sizeOf _ = 48

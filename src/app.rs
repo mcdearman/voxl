@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use crate::{
     ecs::{event_update_system, Events, IntoSystems, Schedule, World},
     input::InputPlugin,
-    plugin::NativePlugins,
+    plugin::{NativePlugins, PluginEvents},
     render::RenderPlugin,
     time::{FixedTime, Time, TimePlugin},
     transform::TransformPlugin,
@@ -82,6 +82,10 @@ impl App {
             native: NativePlugins::default(),
         };
         app.add_event::<AppExit>();
+        app.init_resource::<PluginEvents>();
+        app.add_systems(Stage::First, |world: &mut World| {
+            world.resource_mut::<PluginEvents>().update();
+        });
         app
     }
 

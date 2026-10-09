@@ -1,9 +1,10 @@
-//! A host for games written as plugins: it opens a window, sets up a camera and a sun, and
-//! loads the plugins named on the command line. Everything else is up to them.
+//! A host for games written as plugins: it opens a window, turns on physics, and loads the
+//! plugins named on the command line. The camera, the lights and everything else are up to
+//! them (so a plugin that sets up no camera shows nothing).
 //!
 //! ```text
-//! plugins/chase/build.sh
-//! cargo run --example host -- chase
+//! plugins/chase/build.sh && cargo build -p scoreboard
+//! cargo run --example host -- chase scoreboard
 //! ```
 //!
 //! An argument is a plugin built into Cargo's output directory (`chase`), or a path to a
@@ -16,16 +17,16 @@ use voxl::{plugin::cargo_library_path, prelude::*, render::Screenshot};
 fn main() -> anyhow::Result<()> {
     let plugins: Vec<String> = std::env::args().skip(1).collect();
     if plugins.is_empty() {
-        anyhow::bail!("name at least one plugin, e.g. `cargo run --example host -- chase`");
+        anyhow::bail!("name at least one plugin, e.g. `cargo run --example host -- chase scoreboard`");
     }
 
     let mut app = App::new();
     app.add_plugins(DefaultPlugins)
+        .add_plugins(PhysicsPlugin)
         .insert_resource(WindowSettings {
             title: format!("voxl: {}", plugins.join(", ")),
             ..Default::default()
         })
-        .add_systems(Stage::Startup, setup)
         .add_systems(Stage::Update, (quit, screenshot));
 
     for plugin in &plugins {
@@ -37,24 +38,6 @@ fn main() -> anyhow::Result<()> {
         app.load_native_plugin(&path)?;
     }
     app.run()
-}
-
-fn setup(mut commands: Commands) {
-    commands.spawn((
-        Transform::IDENTITY.looking_at(Vec3::new(-0.4, -1.0, -0.5), Vec3::Y),
-        DirectionalLight {
-            intensity: 2.5,
-            ..Default::default()
-        },
-    ));
-    commands.insert_resource(AmbientLight {
-        intensity: 0.5,
-        ..Default::default()
-    });
-    commands.spawn((
-        Transform::from_xyz(0.0, 17.0, 15.0).looking_at(Vec3::new(0.0, 0.0, 1.0), Vec3::Y),
-        Camera::default(),
-    ));
 }
 
 fn quit(keys: Res<ButtonInput<KeyCode>>, mut exit: EventWriter<AppExit>) {

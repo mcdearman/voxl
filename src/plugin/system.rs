@@ -2,6 +2,8 @@ use std::ffi::c_void;
 
 use voxl_plugin::sys::{self, VoxlSystemFn};
 
+use super::events::PluginEvents;
+
 use crate::{
     assets::Assets,
     ecs::{
@@ -67,6 +69,8 @@ pub(crate) struct DynamicSystem {
     queue: CommandQueue,
     /// The entities each query will consider this run; kept to reuse the allocations.
     entities: Vec<Vec<Entity>>,
+    /// This system's reader in `PluginEvents`, found by name on its first run.
+    reader: Option<u32>,
 }
 
 impl DynamicSystem {
@@ -85,6 +89,7 @@ impl DynamicSystem {
             queries: vec![terms],
             queue: CommandQueue::default(),
             entities: Vec::new(),
+            reader: None,
         }
     }
 
@@ -117,6 +122,7 @@ impl System for DynamicSystem {
         access.read_resource::<ButtonInput<MouseButton>>();
         access.read_resource::<Mouse>();
         access.write_resource::<Assets<Mesh>>();
+        access.read_resource::<PluginEvents>();
     }
 
     fn run(&mut self, world: &mut World) {
@@ -152,6 +158,11 @@ impl System for DynamicSystem {
             });
         }
 
+        let events = world_ref.get_resource::<PluginEvents>();
+        if self.reader.is_none() {
+            self.reader = events.map(|events| events.reader(&self.name));
+        }
+
         let time = world_ref.get_resource::<Time>();
         let delta = match world_ref.get_resource::<FixedTime>() {
             Some(fixed) if self.fixed => fixed.timestep_secs(),
@@ -161,6 +172,7 @@ impl System for DynamicSystem {
             world: world_ref,
             queries: cursors,
             queue: &mut self.queue,
+            reader: self.reader,
             tick,
             delta,
             elapsed: time.map_or(0.0, |t| t.elapsed().as_secs_f64()),
@@ -220,6 +232,7 @@ pub(crate) struct Context<'a> {
     world: &'a World,
     queries: Vec<Cursor<'a>>,
     pub queue: &'a mut CommandQueue,
+    reader: Option<u32>,
     tick: Tick,
     pub delta: f32,
     pub elapsed: f64,
@@ -252,6 +265,13 @@ impl Context<'_> {
         if let Some(cursor) = self.queries.get_mut(query) {
             cursor.position = 0;
         }
+    }
+
+    /// The next event on a channel that this system hasn't read, if any.
+    pub(crate) fn next_event(&mut self, event: u32) -> Option<&[u8]> {
+        self.world
+            .get_resource::<PluginEvents>()?
+            .next(self.reader?, event)
     }
 
     pub(crate) fn spawn(&mut self) -> Entity {

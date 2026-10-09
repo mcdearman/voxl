@@ -1,12 +1,18 @@
 {-# LANGUAGE ForeignFunctionInterface #-}
 
--- | A whole (very small) game as a voxl plugin: steer the cube with WASD or the arrow keys
--- and collect the spheres. Each one collected is replaced somewhere else.
+-- | A whole (very small) game as a voxl plugin: steer the cube with WASD or the arrow keys,
+-- collect the spheres, and shove the crates about. Each sphere collected is replaced
+-- somewhere else.
 --
--- > plugins/chase/build.sh && cargo run --example host -- chase
+-- > plugins/chase/build.sh && cargo build -p scoreboard
+-- > cargo run --example host -- chase scoreboard
 --
--- The host knows nothing about the game. Everything here can be changed while it is being
--- played: edit, run the build script again, and carry on from the same position and score.
+-- The host only opens a window. The camera, the lighting, the physics and the rules are all
+-- here, and all of it can be changed while the game is being played: edit, run the build
+-- script again, and carry on from the same position and score.
+--
+-- Each sphere collected is announced as a @chase.Collected@ event. The game does nothing
+-- with it; @plugins/scoreboard@, a separate plugin in Rust, shows the score.
 module Chase where
 
 import Control.Monad (forM_, when)
@@ -23,8 +29,9 @@ playerSpeed = 7
 reach = 1.1
 fieldSize = 9
 
-pickupCount :: Int
+pickupCount, crateCount :: Int
 pickupCount = 10
+crateCount = 6
 
 -- | Marks the cube the player steers.
 newtype Player = Player Float
@@ -50,6 +57,7 @@ data Game = Game
   , playerC :: Component Player
   , pickupC :: Component Pickup
   , ballMesh :: Ptr Mesh
+  , collected :: Event Int32
   , score :: Ptr Int32
   , seed :: Ptr Word32
   }
@@ -64,6 +72,7 @@ voxl_hs_main = plugin $ \app -> do
       <*> registerComponent app "chase.Player"
       <*> registerComponent app "chase.Pickup"
       <*> statePtr app "chase.ball"
+      <*> registerEvent app "chase.Collected"
       <*> statePtr app "chase.score"
       <*> statePtr app "chase.seed"
   let transform = transformC game
@@ -98,7 +107,7 @@ voxl_hs_main = plugin $ \app -> do
             despawn sys entity
             total <- (+ 1) <$> peek (score game)
             poke (score game) total
-            logInfo ("collected " ++ show total)
+            sendEvent sys (collected game) total
             spawnPickup game sys
 
   addSystem app "bob" Update ((,) <$> write transform <*> readC (pickupC game)) $
@@ -121,16 +130,41 @@ setup game sys = do
   ground <- meshPlane sys 1
   poke (ballMesh game) ball
 
+  -- The scene: a camera looking down at the field, a sun, and some light from the sky.
+  eye <- spawn sys
+  insert sys eye (transformC game) (lookingAt (V3 0 17 15) (V3 0 0 1))
+  setCamera sys eye defaultCamera
+  sun <- spawn sys
+  insert sys sun (transformC game) (lookingAt (V3 0 0 0) (V3 (-0.4) (-1) (-0.5)))
+  setLight sys sun defaultLight {lightIntensity = 2.5}
+  setAmbient sys (V3 1 1 1) 0.5
+
   field <- spawn sys
   insert sys field (transformC game) (at (V3 0 0 0)) {scale = V3 (fieldSize * 2 + 2) 1 (fieldSize * 2 + 2)}
   setMesh sys field ground
   setMaterial sys field (material (V3 0.16 0.30 0.20))
+  setCollider sys field (colliderOf Ground)
 
+  -- The player is moved by the `steer` system, not by physics, but is solid: an animated
+  -- body pushes whatever it walks into.
   player <- spawn sys
   insert sys player (transformC game) (at (V3 0 0.5 0))
   insert sys player (playerC game) (Player playerSpeed)
   setMesh sys player cube
   setMaterial sys player (material (V3 0.85 0.25 0.20))
+  setCollider sys player (colliderOf (Box (V3 0.5 0.5 0.5)))
+  setBody sys player (bodyOf Animated)
+
+  -- Crates: ordinary physics. Nothing in this file moves them.
+  forM_ [1 .. crateCount] $ \_ -> do
+    x <- random game
+    z <- random game
+    crate <- spawn sys
+    insert sys crate (transformC game) (at (V3 (x * fieldSize * 0.8) 0.5 (z * fieldSize * 0.8)))
+    setMesh sys crate cube
+    setMaterial sys crate (material (V3 0.45 0.30 0.16))
+    setCollider sys crate (colliderOf (Box (V3 0.5 0.5 0.5)))
+    setBody sys crate (bodyOf Dynamic)
 
   forM_ [1 .. pickupCount] $ \_ -> spawnPickup game sys
 

@@ -54,11 +54,12 @@ Then edit `plugins/swirl/Swirl.hs` (Haskell, the default plugin language), `plug
 (Rust) or `plugins/pulse/pulse.c` (C) and rebuild it. Each plugin is optional.
 
 A plugin can be the whole game. `plugins/chase` is a small one in Haskell (WASD to steer,
-collect the spheres), run by a host that only provides a window, a camera and a sun:
+collect the spheres, push the crates), with its own camera, lighting and physics. A separate
+Rust plugin shows the score from an event the game sends. The host only opens a window:
 
 ```
-plugins/chase/build.sh
-cargo run --example host -- chase
+plugins/chase/build.sh && cargo build -p scoreboard
+cargo run --example host -- chase scoreboard
 ```
 
 Shaders and textures reload while the app runs too; see [docs/HOT_RELOAD.md](docs/HOT_RELOAD.md).

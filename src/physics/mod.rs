@@ -347,12 +347,48 @@ impl Body {
     }
 }
 
+/// The name of the event native plugins read to learn of contacts (`VoxlContact` in voxl.h).
+pub const CONTACT_EVENT: &str = "voxl.Contact";
+
+/// Publishes each step's contacts as events, so plugins in any language can react to them.
+fn publish_contacts(world: Res<PhysicsWorld>, mut events: ResMut<crate::plugin::PluginEvents>) {
+    let Some(id) = events.id(CONTACT_EVENT) else {
+        return;
+    };
+    for contact in &world.contacts {
+        // Laid out as `VoxlContact`: two entities, a point, a normal, an impulse, padding.
+        let mut bytes = [0u8; 48];
+        bytes[0..8].copy_from_slice(&contact.a.to_bits().to_ne_bytes());
+        bytes[8..16].copy_from_slice(&contact.b.to_bits().to_ne_bytes());
+        let floats = contact
+            .point
+            .to_array()
+            .into_iter()
+            .chain(contact.normal.to_array())
+            .chain([contact.impulse]);
+        for (i, value) in floats.enumerate() {
+            bytes[16 + i * 4..20 + i * 4].copy_from_slice(&value.to_ne_bytes());
+        }
+        events.send(id, &bytes);
+    }
+}
+
 pub struct PhysicsPlugin;
 
 impl Plugin for PhysicsPlugin {
     fn build(&self, app: &mut App) {
+        if let Err(err) = app
+            .world
+            .resource_mut::<crate::plugin::PluginEvents>()
+            .register(CONTACT_EVENT, 48)
+        {
+            log::error!("{err}");
+        }
         app.init_resource::<PhysicsWorld>()
-            .add_systems(Stage::FixedUpdate, (step, query::move_characters, fluid::step_water, fluid::step_particles))
+            .add_systems(
+                Stage::FixedUpdate,
+                (step, publish_contacts, query::move_characters, fluid::step_water, fluid::step_particles),
+            )
             .add_systems(Stage::PostUpdate, fluid::update_fluid_meshes);
     }
 }

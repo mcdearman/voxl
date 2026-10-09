@@ -168,3 +168,80 @@ void voxl_hs_set_mesh(VoxlSystem *system, VoxlEntity entity, VoxlMesh mesh) {
 void voxl_hs_set_material(VoxlSystem *system, VoxlEntity entity, const VoxlMaterial *material) {
     api->set_material(system, entity, material);
 }
+
+uint32_t voxl_hs_event_register(VoxlApp *app, const char *name, size_t name_len, size_t size) {
+    return api->event_register(app, name, name_len, size);
+}
+
+void voxl_hs_event_send(VoxlSystem *system, uint32_t event, const void *value) {
+    api->event_send(system, event, value);
+}
+
+uint8_t voxl_hs_event_next(VoxlSystem *system, uint32_t event, void *value) {
+    return api->event_next(system, event, value);
+}
+
+/* The structures below are small, so Haskell passes their fields and they are assembled here:
+ * one definition of each layout (the header's) instead of a second one in Haskell. */
+
+void voxl_hs_set_camera(VoxlSystem *system, VoxlEntity entity, float fov_y, float near,
+                        uint32_t active) {
+    VoxlCamera camera = {fov_y, near, active};
+    api->set_camera(system, entity, &camera);
+}
+
+void voxl_hs_set_light(VoxlSystem *system, VoxlEntity entity, float r, float g, float b,
+                       float intensity, uint32_t shadows) {
+    VoxlLight light = {{r, g, b}, intensity, shadows};
+    api->set_light(system, entity, &light);
+}
+
+void voxl_hs_set_ambient(VoxlSystem *system, float r, float g, float b, float intensity) {
+    float color[3] = {r, g, b};
+    api->set_ambient(system, color, intensity);
+}
+
+void voxl_hs_set_window_title(VoxlSystem *system, const char *title, size_t len) {
+    api->set_window_title(system, title, len);
+}
+
+void voxl_hs_set_collider(VoxlSystem *system, VoxlEntity entity, uint32_t shape, float x, float y,
+                          float z, float friction, float restitution, uint32_t sensor) {
+    VoxlCollider collider = {shape, {x, y, z}, friction, restitution, sensor};
+    api->set_collider(system, entity, &collider);
+}
+
+void voxl_hs_set_body(VoxlSystem *system, VoxlEntity entity, uint32_t kind, float mass, float vx,
+                      float vy, float vz, uint32_t lock_rotation) {
+    VoxlBody body = {kind, mass, {vx, vy, vz}, lock_rotation};
+    api->set_body(system, entity, &body);
+}
+
+void voxl_hs_apply_impulse(VoxlSystem *system, VoxlEntity entity, float x, float y, float z) {
+    float impulse[3] = {x, y, z};
+    api->apply_impulse(system, entity, impulse);
+}
+
+void voxl_hs_set_velocity(VoxlSystem *system, VoxlEntity entity, float x, float y, float z) {
+    float velocity[3] = {x, y, z};
+    api->set_velocity(system, entity, velocity);
+}
+
+uint8_t voxl_hs_velocity(VoxlSystem *system, VoxlEntity entity, float *velocity) {
+    return api->velocity(system, entity, velocity);
+}
+
+/* `out` receives seven floats: the point, the normal, and the distance. */
+uint8_t voxl_hs_raycast(VoxlSystem *system, float ox, float oy, float oz, float dx, float dy,
+                        float dz, float max_distance, VoxlEntity *entity, float *out) {
+    float origin[3] = {ox, oy, oz}, direction[3] = {dx, dy, dz};
+    VoxlRayHit hit;
+    if (!api->raycast(system, origin, direction, max_distance, &hit)) return 0;
+    *entity = hit.entity;
+    for (int i = 0; i < 3; i++) {
+        out[i] = hit.point[i];
+        out[3 + i] = hit.normal[i];
+    }
+    out[6] = hit.distance;
+    return 1;
+}

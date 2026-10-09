@@ -75,8 +75,11 @@ contract is `include/voxl.h`; see [PLUGINS.md](PLUGINS.md).
 - [x] More than one query per system, checked against each other like typed queries
 - [x] A generic host (`examples/host`) and a whole small game as a Haskell plugin
       (`plugins/chase`)
-- [ ] Reach more of the engine from a plugin: events, resources, camera and lights, more
-      built-in components (`GlobalTransform`, `Parent`), assets loaded from files, physics
+- [x] Events between plugins and from the engine, with each reader's place kept across
+      reloads; cameras, lights and the window title; colliders, bodies, impulses, raycasts and
+      contact events. The example game now needs nothing from its host.
+- [ ] Reach more of the engine from a plugin: assets loaded from files, hierarchy (`Parent`),
+      joints and character controllers, voxel terrain, text and UI, sound
 - [ ] Optional terms and change filters in queries
 - [ ] Removing a plugin at runtime, with its components and systems
 - [ ] A generic script host for languages that can't build a shared library themselves
@@ -229,9 +232,9 @@ project grows.
 
 ## Next three steps
 
-1. Camera, lights, events and physics from plugins, so a plugin game needs nothing from its
-   host (Phase 1A).
-2. Image-diff tests around the demos, and the rest of the crate split (Phase 0). A bare scene
+1. Image-diff tests around the demos, and the rest of the crate split (Phase 0). A bare scene
    with no sky set up renders washed out; fix the renderer's defaults while doing this.
-3. Start the data layer: a proc-macro crate with `#[derive(Component)]` and
+2. Start the data layer: a proc-macro crate with `#[derive(Component)]` and
    `#[derive(Reflect)]` (Phase 1).
+3. Assets from files for plugins (models and textures by path), which needs the asset server
+   from Phase 1.
