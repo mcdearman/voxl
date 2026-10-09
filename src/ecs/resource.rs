@@ -101,7 +101,7 @@ unsafe fn fetch_res_mut<'w, T: 'static>(
     }))
 }
 
-impl<T: 'static> SystemParam for Res<'_, T> {
+impl<T: Send + Sync + 'static> SystemParam for Res<'_, T> {
     type State = ();
     type Item<'w, 's> = Res<'w, T>;
 
@@ -114,7 +114,7 @@ impl<T: 'static> SystemParam for Res<'_, T> {
     }
 }
 
-impl<T: 'static> SystemParam for Option<Res<'_, T>> {
+impl<T: Send + Sync + 'static> SystemParam for Option<Res<'_, T>> {
     type State = ();
     type Item<'w, 's> = Option<Res<'w, T>>;
 
@@ -127,7 +127,7 @@ impl<T: 'static> SystemParam for Option<Res<'_, T>> {
     }
 }
 
-impl<T: 'static> SystemParam for ResMut<'_, T> {
+impl<T: Send + Sync + 'static> SystemParam for ResMut<'_, T> {
     type State = ();
     type Item<'w, 's> = ResMut<'w, T>;
 
@@ -140,7 +140,7 @@ impl<T: 'static> SystemParam for ResMut<'_, T> {
     }
 }
 
-impl<T: 'static> SystemParam for Option<ResMut<'_, T>> {
+impl<T: Send + Sync + 'static> SystemParam for Option<ResMut<'_, T>> {
     type State = ();
     type Item<'w, 's> = Option<ResMut<'w, T>>;
 
@@ -170,7 +170,7 @@ impl<T> DerefMut for Local<'_, T> {
     }
 }
 
-impl<T: Default + 'static> SystemParam for Local<'_, T> {
+impl<T: Default + Send + 'static> SystemParam for Local<'_, T> {
     type State = T;
     type Item<'w, 's> = Local<'s, T>;
 

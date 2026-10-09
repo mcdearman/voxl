@@ -113,10 +113,28 @@ impl Op {
     }
 }
 
+/// A numeric source: reads the world and gives a number.
+type Measure = Box<dyn FnMut(&mut World) -> f64 + Send>;
+
 enum Kind {
-    Truth(BoxedCondition),
-    Measure(Box<dyn FnMut(&mut World) -> f64>),
+    Truth(Exclusive<BoxedCondition>),
+    Measure(Exclusive<Measure>),
     Op(Op),
+}
+
+/// A value only ever reached through `&mut`, which makes sharing a reference to it between
+/// threads harmless: nothing can be done with one. Lets `Signals` be a resource any system
+/// may read while its sources are only `Send`.
+struct Exclusive<T>(T);
+
+// SAFETY: a `&Exclusive<T>` gives no access to the `T`; the only way in is `get_mut`, which
+// needs `&mut`.
+unsafe impl<T: Send> Sync for Exclusive<T> {}
+
+impl<T> Exclusive<T> {
+    fn get_mut(&mut self) -> &mut T {
+        &mut self.0
+    }
 }
 
 struct Node {
@@ -198,12 +216,16 @@ impl Signals {
     /// Defines a true-or-false source: a function with system parameters that returns
     /// `bool`, asked once every update.
     pub fn source<M>(&mut self, name: &str, read: impl IntoCondition<M>) {
-        self.put(name, Kind::Truth(read.into_condition()), Vec::new());
+        self.put(
+            name,
+            Kind::Truth(Exclusive(read.into_condition())),
+            Vec::new(),
+        );
     }
 
     /// Defines a numeric source, read from the world once every update.
-    pub fn measure(&mut self, name: &str, read: impl FnMut(&mut World) -> f64 + 'static) {
-        self.put(name, Kind::Measure(Box::new(read)), Vec::new());
+    pub fn measure(&mut self, name: &str, read: impl FnMut(&mut World) -> f64 + Send + 'static) {
+        self.put(name, Kind::Measure(Exclusive(Box::new(read))), Vec::new());
     }
 
     /// Defines a node worked out from other signals, or replaces the definition of one.
@@ -423,8 +445,8 @@ impl Signals {
             let input = |at: usize| inputs.get(at).copied().unwrap_or(Signal::Bool(false));
             let node = &mut self.nodes[index];
             let worked_out = match &mut node.kind {
-                Kind::Truth(read) => Signal::Bool(read.check(world)),
-                Kind::Measure(read) => Signal::Number(read(world)),
+                Kind::Truth(read) => Signal::Bool(read.get_mut().check(world)),
+                Kind::Measure(read) => Signal::Number(read.get_mut()(world)),
                 Kind::Op(op) => match *op {
                     Op::Constant(value) => value,
                     Op::And => Signal::Bool(inputs.iter().all(|i| i.is_true())),

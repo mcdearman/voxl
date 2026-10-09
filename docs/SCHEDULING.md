@@ -82,6 +82,11 @@ fn start(keys: Res<ButtonInput<KeyCode>>, mut next: ResMut<NextState<Game>>) {
 - Systems still run one at a time. Each stage is already planned into batches of systems
   that touch nothing in common and aren't ordered against each other (`SystemInfo::batch`,
   and `mira-debug systems`); the executor that runs a batch on several threads is next.
+  What it needs from your code is already asked for: a resource read through `Res` or
+  `ResMut` must be `Send + Sync`, and what a system keeps between runs (`Local`, queued
+  commands) must be `Send`. For something that has to stay on the main thread, call
+  `world.pin_to_main_thread::<T>()`: systems that use it are kept there
+  (`SystemInfo::main_thread`), and everything else is free to move. The window is pinned.
 - A condition on a tuple is asked once per system, not once for the group.
 - Plugins written against the C interface can't yet give constraints or conditions for their
   own systems; the host can order around them by name.

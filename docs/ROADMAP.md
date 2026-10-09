@@ -205,9 +205,12 @@ and see it change in the running scene.
 - [x] Groundwork for running systems in parallel: components must be `Send + Sync` (they all
       were), systems and conditions report what they touch, and each stage is planned into
       batches of systems that could run at the same moment (shown by the debug connection)
-- [ ] The parallel executor itself: a thread pool running each batch; resources that can't
-      leave the main thread; commands applied between batches; plugin systems kept on one
-      thread
+- [x] Thread safety settled in the types: resources read through `Res`/`ResMut` must be
+      `Send + Sync`, system state and commands `Send`; a resource can be pinned to the main
+      thread (the window is), and each system is marked if it must run there (pinned
+      resource, whole world, or a plugin's code)
+- [ ] The parallel executor itself: a thread pool running each batch, pinned systems on the
+      main thread, commands applied between batches
 - [ ] Table storage as an option beside sparse sets, chosen per component
 - [ ] Hooks and observers: run code when a component is added or removed
 - [ ] Relations: `(ChildOf, e)`-style pairs, replacing `Parent`

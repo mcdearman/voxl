@@ -2,7 +2,7 @@ use super::{entity::Entity, storage::Component, world::World};
 
 /// A set of components that can be inserted together. Implemented for every component and for
 /// tuples of bundles, so `(Transform, Velocity, (Mesh3d, Material))` works.
-pub trait Bundle: 'static {
+pub trait Bundle: Send + 'static {
     fn insert_into(self, world: &mut World, entity: Entity);
 }
 

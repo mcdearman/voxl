@@ -89,7 +89,7 @@ pub(crate) fn stream_chunks(
     let load_radius = settings.view_radius + 1;
     let unload_radius = load_radius + 2;
 
-    while let Ok((chunk, data)) = streaming.generated.receiver.try_recv() {
+    while let Ok((chunk, data)) = streaming.generated.try_recv() {
         streaming.generating.remove(&chunk);
         if horizontal_distance_squared(chunk, center) <= unload_radius * unload_radius {
             // Not `insert_chunk`: edits loaded from a file while this chunk was being
@@ -151,7 +151,7 @@ pub(crate) fn remesh_chunks(
     viewers: Query<&GlobalTransform, With<ChunkViewer>>,
 ) {
     let streaming = &mut *streaming;
-    while let Ok((chunk, mesh)) = streaming.meshed.receiver.try_recv() {
+    while let Ok((chunk, mesh)) = streaming.meshed.try_recv() {
         streaming.meshing.remove(&chunk);
         if world.contains_chunk(chunk) {
             streaming.uploads.push((chunk, mesh));

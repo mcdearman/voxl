@@ -11,7 +11,7 @@ pub struct SystemMeta {
 /// Anything that can appear as an argument of a system function.
 pub trait SystemParam: Sized {
     /// Per-system state that persists between runs (e.g. the `Local` value or the command queue).
-    type State: 'static;
+    type State: Send + 'static;
     type Item<'w, 's>;
 
     /// Registers what the parameter accesses. Called once, before the first run.
@@ -82,6 +82,11 @@ pub trait System: 'static {
     /// that takes the whole world.
     fn access(&self) -> Option<&Access> {
         None
+    }
+    /// Whether the system must run on the main thread whatever it touches: code from a
+    /// plugin, whose language runtime may be tied to one thread.
+    fn main_thread_only(&self) -> bool {
+        false
     }
 }
 

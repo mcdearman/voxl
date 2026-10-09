@@ -55,6 +55,9 @@ pub struct SystemInfo {
     /// Which batch of the stage it is in: systems that share a batch touch nothing in common
     /// and could run at the same moment. `None` until the schedule has been initialized.
     pub batch: Option<usize>,
+    /// Whether it has to run on the main thread: it takes the whole world, comes from a
+    /// plugin, or uses a resource pinned there (the window). `None` until initialized.
+    pub main_thread: Option<bool>,
 }
 
 /// A system that panicked while the schedule was guarded.
@@ -95,6 +98,8 @@ pub struct Schedule {
     /// For each place in `order`, which batch that system is in: systems of one batch touch
     /// nothing in common and could run at the same moment. Empty until worked out.
     batches: Vec<usize>,
+    /// For each place in `order`, whether that system has to run on the main thread.
+    pinned: Vec<bool>,
     sorted: bool,
     /// Whether a panicking system is caught and suspended instead of unwinding out of `run`.
     guarded: bool,
@@ -205,7 +210,7 @@ impl Schedule {
         if !self.sorted {
             self.sort();
         }
-        self.plan();
+        self.plan(world);
     }
 
     /// Whether the system at `index` could run at the same moment as the one at `other`:
@@ -230,8 +235,28 @@ impl Schedule {
     /// same moment: a system joins the batch before it unless it clashes with, or was told to
     /// run after, something in it. Systems still run one at a time; this is the plan a
     /// parallel executor will follow, and it is what `systems()` reports.
-    fn plan(&mut self) {
+    fn plan(&mut self, world: &World) {
         self.batches.clear();
+        self.pinned = self
+            .order
+            .iter()
+            .map(|&index| {
+                let config = &self.systems[index].1;
+                let touches_pinned = |access: Option<&Access>| match access {
+                    Some(access) => access
+                        .resources()
+                        .any(|resource| world.is_pinned_to_main_thread(resource)),
+                    // It takes the whole world, pinned resources and all.
+                    None => true,
+                };
+                config.system.main_thread_only()
+                    || touches_pinned(config.system.access())
+                    || config
+                        .conditions
+                        .iter()
+                        .any(|condition| touches_pinned(condition.access()))
+            })
+            .collect();
         let mut current: Vec<usize> = Vec::new();
         let mut batch = 0;
         for &index in &self.order {
@@ -258,7 +283,7 @@ impl Schedule {
             self.sort();
         }
         if self.batches.len() != self.order.len() {
-            self.plan();
+            self.plan(world);
         }
         for &index in &self.order {
             let config = &mut self.systems[index].1;
@@ -346,6 +371,7 @@ impl Schedule {
                     stats: config.stats,
                     access: config.system.access().map(Access::summary),
                     batch: self.batches.get(i).copied(),
+                    main_thread: self.pinned.get(i).copied(),
                 }
             })
             .collect()

@@ -65,12 +65,35 @@ impl TaskPool {
 /// Both ends of a result channel, for storing in a resource.
 pub struct Mailbox<T> {
     pub sender: Sender<T>,
-    pub receiver: Receiver<T>,
+    /// Behind a lock so that a resource holding a mailbox can be shared between threads; a
+    /// receiver alone can only be moved between them.
+    receiver: Mutex<Receiver<T>>,
 }
 
 impl<T> Default for Mailbox<T> {
     fn default() -> Self {
         let (sender, receiver) = channel();
-        Self { sender, receiver }
+        Self {
+            sender,
+            receiver: Mutex::new(receiver),
+        }
+    }
+}
+
+impl<T> Mailbox<T> {
+    fn receiver(&self) -> std::sync::MutexGuard<'_, Receiver<T>> {
+        self.receiver
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// A result that has arrived, if one has.
+    pub fn try_recv(&self) -> Result<T, std::sync::mpsc::TryRecvError> {
+        self.receiver().try_recv()
+    }
+
+    /// Waits for the next result.
+    pub fn recv(&self) -> Result<T, std::sync::mpsc::RecvError> {
+        self.receiver().recv()
     }
 }
