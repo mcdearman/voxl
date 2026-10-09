@@ -1,0 +1,12 @@
+[package]
+name = "mira_editor"
+version = "0.1.0"
+edition = "2021"
+description = "mira's engine app: a game shown and worked on inside a Neo window"
+
+[dependencies]
+mira = { path = "../.." }
+neo = { git = "https://github.com/mcdearman/neo", rev = "caaacc0eaeb1fec88a2f6fa43a6ac1bf9ced59d5" }
+
+[dev-dependencies]
+anyhow = "1"

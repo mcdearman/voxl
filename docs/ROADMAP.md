@@ -356,7 +356,8 @@ editor needs from it.
       [EDITOR.md](EDITOR.md). Neo is public, so the app can be built in this workspace
 - [x] The game run by a host: on a device it is given, with no window or loop of its own,
       its frames a texture for the host to show (`App::host`, `render::frame_texture`)
-- [ ] The first app: a Neo window with the game in a viewport (waits on Neo's viewport)
+- [x] The first app: a Neo window with the game in a viewport, and a bar to pause, resume
+      and step it (`crates/mira_editor`)
 
 - [ ] Viewport, entity tree, inspector generated from reflection, transform gizmos
 - [ ] Asset browser, drag to place, prefab editing

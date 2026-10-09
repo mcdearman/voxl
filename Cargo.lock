@@ -163,7 +163,7 @@ dependencies = [
 [[package]]
 name = "armature"
 version = "0.1.0"
-source = "git+https://github.com/mcdearman/armature?rev=bbc8af0b0539#bbc8af0b053905aeed34e7a1740c65936ed5b2fe"
+source = "git+https://github.com/mcdearman/armature?rev=9cd6e9d5da0f8bf546ba1018cb6f31a294f0e42e#9cd6e9d5da0f8bf546ba1018cb6f31a294f0e42e"
 dependencies = [
  "arboard",
  "armature-render",
@@ -180,7 +180,7 @@ dependencies = [
 [[package]]
 name = "armature-render"
 version = "0.1.0"
-source = "git+https://github.com/mcdearman/armature?rev=bbc8af0b0539#bbc8af0b053905aeed34e7a1740c65936ed5b2fe"
+source = "git+https://github.com/mcdearman/armature?rev=9cd6e9d5da0f8bf546ba1018cb6f31a294f0e42e#9cd6e9d5da0f8bf546ba1018cb6f31a294f0e42e"
 dependencies = [
  "bytemuck",
  "glyphon",
@@ -1338,6 +1338,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "mira_editor"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "mira",
+ "neo",
+]
+
+[[package]]
 name = "mira_plugin"
 version = "0.1.0"
 
@@ -1448,6 +1457,24 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ee6cda3051665f1fb8d9e08fc35c96d5a244fb1be711a03b71118828afc9a873"
 dependencies = [
  "jni-sys 0.3.1",
+]
+
+[[package]]
+name = "neo"
+version = "0.1.0"
+source = "git+https://github.com/mcdearman/neo?rev=caaacc0eaeb1fec88a2f6fa43a6ac1bf9ced59d5#caaacc0eaeb1fec88a2f6fa43a6ac1bf9ced59d5"
+dependencies = [
+ "armature",
+ "armature-render",
+ "neo-theme",
+]
+
+[[package]]
+name = "neo-theme"
+version = "0.1.0"
+source = "git+https://github.com/mcdearman/neo?rev=caaacc0eaeb1fec88a2f6fa43a6ac1bf9ced59d5#caaacc0eaeb1fec88a2f6fa43a6ac1bf9ced59d5"
+dependencies = [
+ "armature-render",
 ]
 
 [[package]]
