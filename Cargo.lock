@@ -1313,6 +1313,7 @@ dependencies = [
  "libloading",
  "log",
  "mira_derive",
+ "mira_ecs",
  "mira_plugin",
  "pollster 0.3.0",
  "wgpu",
@@ -1326,6 +1327,14 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.118",
+]
+
+[[package]]
+name = "mira_ecs"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "mira_derive",
 ]
 
 [[package]]

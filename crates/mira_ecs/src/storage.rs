@@ -188,7 +188,7 @@ impl<T> ComponentSet<T> {
 
 /// Type-erased view of a component's storage, so the world can keep every kind in one map
 /// and code that only knows a component's size (native plugins) can still reach its values.
-pub(crate) trait ErasedStorage {
+pub trait ErasedStorage {
     /// The Rust type stored, or nothing for a component defined at runtime.
     fn type_name(&self) -> &'static str {
         ""

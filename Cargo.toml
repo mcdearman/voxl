@@ -5,11 +5,12 @@ version = "0.1.0"
 edition = "2021"
 
 [workspace]
-members = ["crates/mira_plugin", "crates/mira_derive", "crates/mira_ui", "plugins/wave", "plugins/scoreboard"]
+members = ["crates/mira_ecs", "crates/mira_plugin", "crates/mira_derive", "crates/mira_ui", "plugins/wave", "plugins/scoreboard"]
 
 [dependencies]
 mira_plugin = { path = "crates/mira_plugin" }
 mira_derive = { path = "crates/mira_derive" }
+mira_ecs = { path = "crates/mira_ecs" }
 libloading = "0.8"
 anyhow = "1"
 bytemuck = { version = "1.13", features = ["derive"] }
