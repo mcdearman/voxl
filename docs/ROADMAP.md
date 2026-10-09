@@ -188,6 +188,12 @@ derived from other values, which the engine keeps true.
 - [ ] Signals from plugins, through the C interface; a Haskell layer in the applicative style
       of the bindings' queries
 - [ ] The sacred-site rule as a worked example and a test
+- [ ] Signals as data, not closures: a graph of named nodes (sources read from the world;
+      combinators such as and, or, not, any, count, compare, held-for) joined by connections,
+      so that the graph can be shown and changed while the game runs
+- [ ] A signal graph viewer (Chris, October 2026): watch which signals are active as you
+      play, and edit signals and their connections live to change the game's rules while
+      developing; first over the debug connection, then as a panel of the editor (Phase 5)
 
 **Exit test:** the sacred-site game: two teams, several sites, units walking on and off and
 dying in any order; the timer is right in every case because no code ever sets it.
