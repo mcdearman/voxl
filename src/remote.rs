@@ -25,7 +25,7 @@ use crate::{
     input::{key_named, InjectedInput, Played},
     live::{FrameStats, History, Live},
     reflect::{json, Scene, Schema, TypeRegistry, Value},
-    signal::{Compare, Op, Signal, Signals},
+    signal::{Op, Signal, Signals},
     time::Time,
     transform::despawn_recursive,
 };
@@ -272,26 +272,9 @@ fn signal_of(value: &Value) -> Result<Signal, String> {
 }
 
 fn op_of(request: &Value) -> Result<Op, String> {
-    let amount = || number(request, "seconds");
-    Ok(match text(request, "op")? {
-        "constant" => Op::Constant(signal_of(
-            request.field("value").ok_or("a constant needs `value`")?,
-        )?),
-        "and" => Op::And,
-        "or" => Op::Or,
-        "not" => Op::Not,
-        "count" => Op::Count,
-        "sum" => Op::Sum,
-        "select" => Op::Select,
-        "timer" => Op::Timer,
-        "held_for" => Op::HeldFor(amount()?),
-        "less" => Op::Compare(Compare::Less),
-        "less_or_equal" => Op::Compare(Compare::LessOrEqual),
-        "equal" => Op::Compare(Compare::Equal),
-        "greater_or_equal" => Op::Compare(Compare::GreaterOrEqual),
-        "greater" => Op::Compare(Compare::Greater),
-        other => return Err(format!("there is no operation `{other}`")),
-    })
+    let value = request.field("value").map(signal_of).transpose()?;
+    let seconds = request.field("seconds").and_then(Value::as_f64);
+    Op::named(text(request, "op")?, value, seconds)
 }
 
 const STAGES: [Stage; 13] = [
@@ -1125,6 +1108,16 @@ fn handle(app: &mut App, request: &Value) -> Answer {
                 .resource_mut::<Signals>()
                 .define(text(request, "name")?, op, inputs);
             done
+        }
+        "signals_save" => {
+            let path = text(request, "path")?;
+            app.world.resource::<Signals>().save_rules(path)?;
+            done
+        }
+        "signals_load" => {
+            let path = text(request, "path")?;
+            let defined = app.world.resource_mut::<Signals>().load_rules(path)?;
+            Ok(Value::Int(defined as i64))
         }
         "signal_remove" => {
             let name = text(request, "name")?;

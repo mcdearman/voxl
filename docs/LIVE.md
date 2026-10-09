@@ -161,6 +161,7 @@ answered at the start of a frame, whether or not the game is paused.
 | `signal_connect` | `name`, `input`, `to` | |
 | `signal_define` | `name`, `op`, `inputs`, and `value` or `seconds` where the op has one | |
 | `signal_remove` | `name` | |
+| `signals_save`, `signals_load` | `path` | the rules (everything but sources) to and from a JSON file |
 
 A client can also ask to be told what happens instead of asking over and over. After
 `{"cmd": "watch"}` the game sends that connection a line whenever a system fails (with its

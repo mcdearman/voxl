@@ -212,6 +212,16 @@ const TOOLS: &[Tool] = &[
         ],
     },
     Tool {
+        command: "signals_save",
+        about: "Saves the game's rules (every signal that isn't read from the world in code: its operation, inputs and constants) to a JSON file, to keep what was worked out while the game ran.",
+        arguments: &["path: string: where to write the file"],
+    },
+    Tool {
+        command: "signals_load",
+        about: "Reads rules from a file written by signals_save and defines them, replacing rules of the same name. Returns how many were defined.",
+        arguments: &["path: string: the file to read"],
+    },
+    Tool {
         command: "signal_remove",
         about: "Removes a signal.",
         arguments: &["name: string: the signal's name"],

@@ -103,6 +103,48 @@ pub enum Op {
 }
 
 impl Op {
+    /// The operation's name in saved rules and over the debug connection.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Op::Constant(_) => "constant",
+            Op::And => "and",
+            Op::Or => "or",
+            Op::Not => "not",
+            Op::Count => "count",
+            Op::Sum => "sum",
+            Op::Select => "select",
+            Op::Timer => "timer",
+            Op::HeldFor(_) => "held_for",
+            Op::Compare(Compare::Less) => "less",
+            Op::Compare(Compare::LessOrEqual) => "less_or_equal",
+            Op::Compare(Compare::Equal) => "equal",
+            Op::Compare(Compare::GreaterOrEqual) => "greater_or_equal",
+            Op::Compare(Compare::Greater) => "greater",
+        }
+    }
+
+    /// The operation with this name. A constant needs its `value`, and `held_for` its
+    /// `seconds`.
+    pub fn named(name: &str, value: Option<Signal>, seconds: Option<f64>) -> Result<Op, String> {
+        Ok(match name {
+            "constant" => Op::Constant(value.ok_or("a constant needs a `value`")?),
+            "and" => Op::And,
+            "or" => Op::Or,
+            "not" => Op::Not,
+            "count" => Op::Count,
+            "sum" => Op::Sum,
+            "select" => Op::Select,
+            "timer" => Op::Timer,
+            "held_for" => Op::HeldFor(seconds.ok_or("`held_for` needs `seconds`")?),
+            "less" => Op::Compare(Compare::Less),
+            "less_or_equal" => Op::Compare(Compare::LessOrEqual),
+            "equal" => Op::Compare(Compare::Equal),
+            "greater_or_equal" => Op::Compare(Compare::GreaterOrEqual),
+            "greater" => Op::Compare(Compare::Greater),
+            other => return Err(format!("there is no operation `{other}`")),
+        })
+    }
+
     fn label(&self) -> String {
         match self {
             Op::Constant(_) => "constant".to_owned(),
@@ -424,6 +466,111 @@ impl Signals {
             ])
         });
         Value::List(nodes.collect())
+    }
+
+    /// The rules as data to keep: every signal that is worked out from others or is a
+    /// constant, with its operation and inputs. Sources are code, and are not in it.
+    pub fn rules(&self) -> Value {
+        let rules = self.nodes.iter().filter_map(|node| {
+            let Kind::Op(op) = &node.kind else {
+                return None;
+            };
+            let mut rule = vec![
+                ("name".to_owned(), Value::Text(node.name.clone())),
+                ("op".to_owned(), Value::Text(op.name().to_owned())),
+            ];
+            match op {
+                Op::Constant(Signal::Bool(value)) => {
+                    rule.push(("value".to_owned(), Value::Bool(*value)))
+                }
+                Op::Constant(Signal::Number(value)) => {
+                    rule.push(("value".to_owned(), Value::Float(*value)))
+                }
+                Op::HeldFor(seconds) => rule.push(("seconds".to_owned(), Value::Float(*seconds))),
+                _ => {}
+            }
+            if !node.inputs.is_empty() {
+                let inputs = node.inputs.iter().cloned().map(Value::Text).collect();
+                rule.push(("inputs".to_owned(), Value::List(inputs)));
+            }
+            Some(Value::Map(rule))
+        });
+        Value::Map(vec![
+            ("version".to_owned(), Value::Int(1)),
+            ("signals".to_owned(), Value::List(rules.collect())),
+        ])
+    }
+
+    /// Defines every rule in `rules` (as [`Signals::rules`] gives them), replacing those of
+    /// the same name and leaving everything else alone. Nothing is changed if any of it
+    /// can't be read. Returns how many were defined.
+    pub fn apply_rules(&mut self, rules: &Value) -> Result<usize, String> {
+        if rules.field("version") != Some(&Value::Int(1)) {
+            return Err("not a version 1 set of signal rules".to_owned());
+        }
+        let Some(Value::List(list)) = rules.field("signals") else {
+            return Err("the rules have no `signals` list".to_owned());
+        };
+        let mut read = Vec::new();
+        for rule in list {
+            let Some(Value::Text(name)) = rule.field("name") else {
+                return Err("a rule needs a `name`".to_owned());
+            };
+            let wrong = |why: String| format!("`{name}`: {why}");
+            let Some(Value::Text(op)) = rule.field("op") else {
+                return Err(wrong("it needs an `op`".to_owned()));
+            };
+            let value = match rule.field("value") {
+                None => None,
+                Some(Value::Bool(value)) => Some(Signal::Bool(*value)),
+                Some(other) => Some(Signal::Number(other.as_f64().ok_or_else(|| {
+                    wrong("its `value` is true, false or a number".to_owned())
+                })?)),
+            };
+            let seconds = rule.field("seconds").and_then(Value::as_f64);
+            let op = Op::named(op, value, seconds).map_err(wrong)?;
+            let inputs = match rule.field("inputs") {
+                None => Vec::new(),
+                Some(Value::List(inputs)) => inputs
+                    .iter()
+                    .map(|input| match input {
+                        Value::Text(input) => Ok(input.clone()),
+                        _ => Err(wrong("its `inputs` are signal names".to_owned())),
+                    })
+                    .collect::<Result<_, _>>()?,
+                Some(_) => return Err(wrong("its `inputs` are a list".to_owned())),
+            };
+            if matches!(
+                self.names.get(name).map(|&index| &self.nodes[index].kind),
+                Some(Kind::Truth(_) | Kind::Measure(_))
+            ) {
+                return Err(wrong("it is a source, defined in code".to_owned()));
+            }
+            read.push((name.clone(), op, inputs));
+        }
+        let count = read.len();
+        for (name, op, inputs) in read {
+            self.define(&name, op, inputs);
+        }
+        Ok(count)
+    }
+
+    /// Writes the rules to a JSON file.
+    pub fn save_rules(&self, path: impl AsRef<std::path::Path>) -> Result<(), String> {
+        let path = path.as_ref();
+        std::fs::write(path, crate::reflect::json::to_string(&self.rules()))
+            .map_err(|err| format!("can't write {}: {err}", path.display()))
+    }
+
+    /// Reads rules from a JSON file and defines them. See [`Signals::apply_rules`].
+    pub fn load_rules(&mut self, path: impl AsRef<std::path::Path>) -> Result<usize, String> {
+        let path = path.as_ref();
+        let text = std::fs::read_to_string(path)
+            .map_err(|err| format!("can't read {}: {err}", path.display()))?;
+        let rules = crate::reflect::json::parse(&text)
+            .map_err(|err| format!("{}: {err}", path.display()))?;
+        self.apply_rules(&rules)
+            .map_err(|err| format!("{}: {err}", path.display()))
     }
 
     /// Puts the nodes in an order where each comes after its inputs. A node on a circle is
@@ -969,5 +1116,86 @@ mod tests {
         assert_eq!(signals.op("lit"), None);
         assert!(!signals.set_op("lit", Op::Not) && !signals.set_inputs("lit", ["a"]));
         assert!(!signals.set_op("nothing", Op::Not) && !signals.set_inputs("nothing", ["a"]));
+    }
+    #[test]
+    fn rules_can_be_saved_and_brought_back() {
+        let mut world = World::new();
+        let mut signals = Signals::default();
+        signals.source("lit", |_: Query<&Transform>| true);
+        signals.set("limit", 30.0);
+        signals.set("open", true);
+        signals.define("ready", Op::And, ["lit", "open"]);
+        signals.define("steady", Op::HeldFor(2.5), ["ready"]);
+        signals.define("clock", Op::Timer, ["ready"]);
+        signals.define(
+            "done",
+            Op::Compare(Compare::GreaterOrEqual),
+            ["clock", "limit"],
+        );
+        let saved = signals.rules();
+        let text = crate::reflect::json::to_string(&saved);
+        assert!(
+            !text.contains("\"lit\"") || text.contains("\"inputs\""),
+            "the source is only named as an input"
+        );
+        assert_eq!(
+            saved.get_path("signals.0.name"),
+            Some(&Value::Text("limit".into()))
+        );
+
+        // Another run of the same game: its sources come from code, its rules from the file.
+        let mut later = Signals::default();
+        later.source("lit", |_: Query<&Transform>| true);
+        later.set("limit", 99.0);
+        let parsed = crate::reflect::json::parse(&text).unwrap();
+        assert_eq!(later.apply_rules(&parsed), Ok(6));
+        assert_eq!(
+            later.rules(),
+            saved,
+            "and saving again gives the same rules"
+        );
+        later.update(&mut world, 1.0);
+        assert!(later.is_true("ready") && !later.is_true("steady"));
+        assert_eq!(later.number("limit"), 30.0);
+
+        // What can't be read changes nothing, and says which rule it was.
+        let before = later.rules();
+        for (bad, why) in [
+            (r#"{"version": 2, "signals": []}"#, "version 1"),
+            (r#"{"version": 1}"#, "no `signals`"),
+            (
+                r#"{"version": 1, "signals": [{"name": "x", "op": "and"}, {"name": "y", "op": "xor"}]}"#,
+                "`y`: there is no operation",
+            ),
+            (
+                r#"{"version": 1, "signals": [{"name": "x", "op": "held_for"}]}"#,
+                "`x`: `held_for` needs",
+            ),
+            (
+                r#"{"version": 1, "signals": [{"name": "lit", "op": "not", "inputs": ["open"]}]}"#,
+                "`lit`: it is a source",
+            ),
+            (
+                r#"{"version": 1, "signals": [{"name": "x", "op": "and", "inputs": [3]}]}"#,
+                "signal names",
+            ),
+        ] {
+            let err = later
+                .apply_rules(&crate::reflect::json::parse(bad).unwrap())
+                .unwrap_err();
+            assert!(err.contains(why), "{bad}: {err}");
+            assert_eq!(later.rules(), before);
+        }
+        assert!(later.get("x").is_none());
+
+        // And through a file.
+        let path = std::env::temp_dir().join(format!("mira-rules-{}.json", std::process::id()));
+        signals.save_rules(&path).unwrap();
+        assert_eq!(Signals::default().load_rules(&path), Ok(6));
+        let _ = std::fs::remove_file(&path);
+        assert!(Signals::default()
+            .load_rules(&path)
+            .unwrap_err()
+            .contains("can't read"));
     }
 }
