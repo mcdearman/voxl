@@ -161,6 +161,7 @@ answered at the start of a frame, whether or not the game is paused.
 | `signal_force` | `name`, `value` (none lets it go) | |
 | `signal_connect` | `name`, `input`, `to` | |
 | `signal_define` | `name`, `op`, `inputs`, and `value` or `seconds` where the op has one | |
+| `signal_rename` | `name`, `to` | a rule's name; what reads it follows |
 | `signal_remove` | `name` | |
 | `signals_save`, `signals_load` | `path` | the rules (everything but sources) to and from a JSON file |
 

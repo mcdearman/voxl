@@ -86,6 +86,12 @@ lit while that signal is true.
 - **Add an input:** drag from a box's output onto another box.
 - **Change a rule:** right-click a box to move it on to the next operation (and, or, not,
   count, sum).
+- **Type it:** click a box's name to give it another; what reads it follows. Click its lower
+  line, or press Enter with the pointer over the box, to type what it is: a value (`true`,
+  `42`) makes it a constant, and an operation makes it that (`and`, `or`, `not`, `count`,
+  `sum`, `select`, `timer`, `held_for 5`, and `<`, `<=`, `==`, `>=`, `>`). Enter takes what
+  was typed, Escape or a click elsewhere drops it, and something that can't be (a name
+  already taken, a word that is no operation) leaves the field open to be put right.
 - **Add and remove:** right-click the panel's background for a new constant, there; press
   Backspace with the pointer over a box to remove it. Sources belong to the game's code and
   can't be removed or changed, only forced.
@@ -125,10 +131,9 @@ taken out of `ButtonInput`, so typing a name does not also walk the player about
 
 ## What isn't here yet
 
-- More controls: a list, a dropdown, tabs. The signal panel does not use the text field
-  yet: naming signals and typing numbers there comes next.
+- More controls: a list, a dropdown, tabs.
 - Interface in the world (a health bar over a unit), gamepad focus, and laying out for
   different screen sizes.
-- In the signal panel: naming a new signal, choosing timers and comparisons, and typing a
-  number. Boxes not yet placed are laid out by column only, so wires cross.
+- In the signal panel: boxes not yet placed are laid out by column only, so wires cross, and
+  an operation is typed, not picked from a list.
 - Armature's glass (backdrop blur) can't see the game behind it, so it is left off.

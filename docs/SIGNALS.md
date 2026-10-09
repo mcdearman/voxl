@@ -140,6 +140,7 @@ cargo run --bin mira-debug -- signal_set name=win_after value=30
 cargo run --bin mira-debug -- signal_force name=blue.contesting value=false
 cargo run --bin mira-debug -- signal_connect name=red.clock.running input=1 to=always
 cargo run --bin mira-debug -- signal_define name=blue.calm op=held_for seconds=3 inputs='["blue.away"]'
+cargo run --bin mira-debug -- signal_rename name=blue.calm to=blue.quiet
 ```
 
 ## From a plugin

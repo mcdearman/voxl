@@ -39,7 +39,7 @@ Each tool is one command of the [debug connection](LIVE.md#the-debug-connection)
 | `mira_run_until` | runs until a [signal](SIGNALS.md) is true, then pauses: getting the game to a moment worth looking at |
 | `mira_input` | **playing the game**: keys, mouse buttons, mouse motion and position, and text typed into the interface, as if at the keyboard |
 | `mira_record`, `mira_history`, `mira_rewind` | going back |
-| `mira_signals`, `mira_signal_set`, `mira_signal_force`, `mira_signal_connect`, `mira_signal_define`, `mira_signal_remove` | the [signal graph](SIGNALS.md): the game's rules, drawn and listed, and changed live |
+| `mira_signals`, `mira_signal_set`, `mira_signal_force`, `mira_signal_connect`, `mira_signal_define`, `mira_signal_rename`, `mira_signal_remove` | the [signal graph](SIGNALS.md): the game's rules, drawn and listed, and changed live |
 | `mira_reload_plugins`, `mira_save_scene` | code and data |
 
 A command the game refuses comes back as a tool result marked as an error, with the reason in

@@ -242,6 +242,14 @@ const TOOLS: &[Tool] = &[
         arguments: &["path: string: the file to read"],
     },
     Tool {
+        command: "signal_rename",
+        about: "Gives a rule another name; everything that reads it follows. Sources keep the names the game gave them.",
+        arguments: &[
+            "name: string: the signal's name now",
+            "to: string: its new name, one word",
+        ],
+    },
+    Tool {
         command: "signal_remove",
         about: "Removes a signal.",
         arguments: &["name: string: the signal's name"],

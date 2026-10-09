@@ -563,6 +563,7 @@ pub struct Field<M> {
     hint: String,
     on_input: fn(String) -> M,
     on_submit: Option<M>,
+    on_cancel: Option<M>,
     width: f32,
     autofocus: bool,
     text: Option<TextLayout>,
@@ -586,6 +587,7 @@ pub fn field<M: Clone + 'static>(
         hint: hint.into(),
         on_input,
         on_submit: None,
+        on_cancel: None,
         width: 180.0,
         autofocus: false,
         text: None,
@@ -597,6 +599,12 @@ impl<M> Field<M> {
     /// What to send when Enter is pressed.
     pub fn on_submit(mut self, message: M) -> Self {
         self.on_submit = Some(message);
+        self
+    }
+
+    /// What to send when Escape is pressed, which also gives up the keyboard.
+    pub fn on_cancel(mut self, message: M) -> Self {
+        self.on_cancel = Some(message);
         self
     }
 
@@ -752,7 +760,12 @@ impl<M: Clone + 'static> Widget<M> for Field<M> {
                     cx.emit(message);
                 }
             }
-            Some(FieldAction::Cancel | FieldAction::Arrow(_)) | None => {}
+            Some(FieldAction::Cancel) => {
+                if let Some(message) = self.on_cancel.clone() {
+                    cx.emit(message);
+                }
+            }
+            Some(FieldAction::Arrow(_)) | None => {}
         }
         status
     }

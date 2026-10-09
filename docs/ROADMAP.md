@@ -280,7 +280,8 @@ derived from other values, which the engine keeps true.
 - [x] In the panel: adding and removing inputs by dragging wires, changing a box's
       operation, adding constants, removing signals
 - [x] The panel's layout is kept with the rules and saved with them
-- [ ] Naming signals, timers and comparisons from the panel; typing numbers
+- [x] Naming signals, timers and comparisons from the panel; typing numbers (click a box's
+      name or its lower line; `Signals::rename`, `signal_rename`)
 - [ ] The graphical editor of the graph (Chris, October 2026): signals and connections laid
       out and edited by hand while the game runs; in the game's panel and in the editor
       (Phase 5)
