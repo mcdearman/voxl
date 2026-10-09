@@ -11,6 +11,7 @@ pub mod plugin;
 pub mod prefab;
 pub mod reflect;
 pub mod render;
+pub mod state;
 pub mod tasks;
 pub mod time;
 pub mod transform;
@@ -38,6 +39,7 @@ pub mod prelude {
             GltfScene, Image, Leg, Limb, LodLevel, Lods, Material, Mesh, Mesh3d, NotShadowCaster,
             Pattern, PostProcess, RayTracingSettings, Reach, ShadowSettings, VolumetricLight,
         },
+        state::{in_state, NextState, State, States},
         time::{FixedTime, Time},
         transform::{Children, GlobalTransform, HierarchyCommands, Interpolate, Parent, Transform},
         voxel::{BlockId, BlockRegistry, ChunkViewer, VoxelPlugin, VoxelSettings, VoxelWorld},

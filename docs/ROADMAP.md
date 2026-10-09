@@ -128,7 +128,8 @@ and see it change in the running scene.
 
 ## Phase 2: Parallel core (L)
 
-- [ ] System ordering: before/after, system sets, run conditions, application states
+- [x] System ordering: before/after, system sets, chains, run conditions, application states
+      with enter and exit systems; see [SCHEDULING.md](SCHEDULING.md)
 - [ ] Parallel scheduler built on the existing access sets; `World` safe to share
 - [ ] Table storage as an option beside sparse sets, chosen per component
 - [ ] Hooks and observers: run code when a component is added or removed
@@ -258,4 +259,5 @@ project grows.
    seen in screenshots to fix alongside: the built-in sky is dull next to the sun it comes
    with; and objects that move every frame smear under temporal anti-aliasing (it has no
    motion vectors).
-3. System ordering, run conditions and states, then the parallel scheduler (Phase 2).
+3. The parallel scheduler, on the ordering constraints and access sets that are now there
+   (Phase 2).

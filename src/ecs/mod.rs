@@ -4,6 +4,7 @@ mod access;
 mod bundle;
 mod change;
 mod commands;
+mod condition;
 mod entity;
 mod event;
 mod query;
@@ -20,6 +21,7 @@ pub use access::{Access, FilteredAccess};
 pub use bundle::Bundle;
 pub use change::Mut;
 pub use commands::{CommandQueue, Commands, EntityCommands};
+pub use condition::{not, resource_exists, BoxedCondition, Condition, IntoCondition};
 pub use entity::Entity;
 pub(crate) use event::event_update_system;
 pub use event::{EventReader, EventWriter, Events};
@@ -28,7 +30,7 @@ pub use query::{
     Without,
 };
 pub use resource::{Local, Res, ResMut};
-pub use schedule::{IntoSystems, Schedule, SystemOwner};
+pub use schedule::{IntoLabel, IntoSystems, Schedule, SystemConfig, SystemConfigs, SystemOwner};
 pub(crate) use storage::ErasedStorage;
 pub use storage::{Component, ComponentKey, ComponentTicks, DropFn, Tick};
 pub use voxl_derive::Component;
@@ -38,6 +40,7 @@ pub use world::{NamedComponent, World};
 pub mod prelude {
     pub use super::{
         Added, Bundle, Changed, Commands, Component, Entity, EventReader, EventWriter, Events,
-        Local, Mut, Query, Res, ResMut, Schedule, With, Without, World,
+        not, resource_exists, IntoSystems, Local, Mut, Query, Res, ResMut, Schedule, With,
+        Without, World,
     };
 }

@@ -1,4 +1,5 @@
 use super::{
+    condition::{BoxedCondition, IntoCondition},
     system::{BoxedSystem, IntoSystem},
     world::World,
 };
@@ -8,17 +9,50 @@ use super::{
 pub type SystemOwner = u32;
 pub const ENGINE: SystemOwner = 0;
 
-/// An ordered list of systems. Systems run one after another in the order they were added,
-/// and each system's commands are applied before the next one starts.
+/// A system with what was said about when it runs.
+pub struct SystemConfig {
+    system: BoxedSystem,
+    /// Names of systems or sets this one runs before.
+    before: Vec<String>,
+    after: Vec<String>,
+    /// The sets it belongs to, which others can order themselves around.
+    sets: Vec<String>,
+    /// It runs only when all of these say so.
+    conditions: Vec<BoxedCondition>,
+}
+
+impl SystemConfig {
+    fn new(system: BoxedSystem) -> Self {
+        Self {
+            system,
+            before: Vec::new(),
+            after: Vec::new(),
+            sets: Vec::new(),
+            conditions: Vec::new(),
+        }
+    }
+
+    fn answers_to(&self, label: &str) -> bool {
+        self.system.name() == label || self.sets.iter().any(|set| set == label)
+    }
+}
+
+/// A list of systems. They run one at a time, and each system's commands are applied before
+/// the next one starts. The order is the order they were added in, except that a system told
+/// to run after another (or that another was told to run before) waits for it.
 #[derive(Default)]
 pub struct Schedule {
-    systems: Vec<(SystemOwner, BoxedSystem)>,
+    systems: Vec<(SystemOwner, SystemConfig)>,
+    /// Indices into `systems`, in the order they run. Rebuilt when `systems` changes.
+    order: Vec<usize>,
+    sorted: bool,
 }
 
 impl Schedule {
     pub fn add_systems<M>(&mut self, systems: impl IntoSystems<M>) {
         self.systems
-            .extend(systems.into_systems().into_iter().map(|s| (ENGINE, s)));
+            .extend(systems.into_configs().into_iter().map(|s| (ENGINE, s)));
+        self.sorted = false;
     }
 
     /// Makes `systems` the complete set belonging to `owner`. A new system takes the place of
@@ -28,16 +62,15 @@ impl Schedule {
         let mut kept = vec![false; self.systems.len()];
         let mut added = Vec::new();
         for system in systems {
-            let slot =
-                self.systems.iter().enumerate().position(|(i, (o, old))| {
-                    *o == owner && !kept[i] && old.name() == system.name()
-                });
+            let slot = self.systems.iter().enumerate().position(|(i, (o, old))| {
+                *o == owner && !kept[i] && old.system.name() == system.name()
+            });
             match slot {
                 Some(i) => {
-                    self.systems[i].1 = system;
+                    self.systems[i].1.system = system;
                     kept[i] = true;
                 }
-                None => added.push((owner, system)),
+                None => added.push((owner, SystemConfig::new(system))),
             }
         }
         let mut index = 0;
@@ -47,22 +80,101 @@ impl Schedule {
             keep
         });
         self.systems.extend(added);
+        self.sorted = false;
+    }
+
+    /// Works out the order the systems run in: at each step, the earliest-added system that
+    /// isn't waiting for another.
+    ///
+    /// # Panics
+    /// If the constraints go round in a circle.
+    fn sort(&mut self) {
+        let count = self.systems.len();
+        // `follows[a]` lists the systems that must come after `a`.
+        let mut follows: Vec<Vec<usize>> = vec![Vec::new(); count];
+        let mut waiting_on = vec![0usize; count];
+        let mut edge = |first: usize, then: usize| {
+            if first != then && !follows[first].contains(&then) {
+                follows[first].push(then);
+                waiting_on[then] += 1;
+            }
+        };
+        for (index, (_, config)) in self.systems.iter().enumerate() {
+            // A name nothing answers to is not an error: the other system may belong to a
+            // plugin that isn't there.
+            for (other, (_, candidate)) in self.systems.iter().enumerate() {
+                if config
+                    .before
+                    .iter()
+                    .any(|label| candidate.answers_to(label))
+                {
+                    edge(index, other);
+                }
+                if config.after.iter().any(|label| candidate.answers_to(label)) {
+                    edge(other, index);
+                }
+            }
+        }
+        self.order.clear();
+        let mut placed = vec![false; count];
+        while self.order.len() < count {
+            // The earliest-added system that is waiting on nothing.
+            let Some(next) = (0..count).find(|&i| !placed[i] && waiting_on[i] == 0) else {
+                let stuck: Vec<&str> = (0..count)
+                    .filter(|&i| !placed[i])
+                    .map(|i| self.systems[i].1.system.name())
+                    .collect();
+                panic!(
+                    "these systems are ordered in a circle, each before another: {}",
+                    stuck.join(", ")
+                );
+            };
+            placed[next] = true;
+            self.order.push(next);
+            for &then in &follows[next] {
+                waiting_on[then] -= 1;
+            }
+        }
+        self.sorted = true;
     }
 
     pub fn initialize(&mut self, world: &mut World) {
-        for (_, system) in &mut self.systems {
-            system.initialize(world);
+        for (_, config) in &mut self.systems {
+            config.system.initialize(world);
+            for condition in &mut config.conditions {
+                condition.initialize(world);
+            }
+        }
+        if !self.sorted {
+            self.sort();
         }
     }
 
     pub fn run(&mut self, world: &mut World) {
-        for (_, system) in &mut self.systems {
-            system.run(world);
+        if !self.sorted {
+            self.sort();
+        }
+        for &index in &self.order {
+            let config = &mut self.systems[index].1;
+            // Every condition is asked, so each one sees every frame.
+            let mut wanted = true;
+            for condition in &mut config.conditions {
+                wanted &= condition.check(world);
+            }
+            if wanted {
+                config.system.run(world);
+            }
         }
     }
 
+    /// The systems' names, in the order they run (the order they were added, until the
+    /// schedule has been initialized or run).
     pub fn system_names(&self) -> impl Iterator<Item = &str> + '_ {
-        self.systems.iter().map(|(_, s)| s.name())
+        let sorted = self.sorted.then_some(&self.order);
+        (0..self.systems.len()).map(move |i| {
+            let index = sorted.map_or(i, |order| order[i]);
+            self.systems[index].1.system.name()
+        })
     }
 
     pub fn len(&self) -> usize {
@@ -74,17 +186,112 @@ impl Schedule {
     }
 }
 
+/// What a system can be ordered against: another system (give the function) or a set (give
+/// its name).
+pub trait IntoLabel<Marker> {
+    fn into_label(self) -> String;
+}
+
+impl IntoLabel<()> for &str {
+    fn into_label(self) -> String {
+        self.to_owned()
+    }
+}
+
+#[doc(hidden)]
+pub struct SystemLabel;
+
+impl<M, S: IntoSystem<M>> IntoLabel<(SystemLabel, M)> for S {
+    fn into_label(self) -> String {
+        use super::system::System;
+        self.into_system().name().to_owned()
+    }
+}
+
+/// Systems that have been told something about when they run. What `before`, `after`,
+/// `in_set`, `run_if` and `chain` return, so they can be combined.
+pub struct SystemConfigs(Vec<SystemConfig>);
+
+impl IntoSystems<()> for SystemConfigs {
+    fn into_configs(self) -> Vec<SystemConfig> {
+        self.0
+    }
+}
+
 /// A single system or a tuple of them, e.g. `app.add_systems(Stage::Update, (move_player, spin))`.
-pub trait IntoSystems<Marker> {
-    fn into_systems(self) -> Vec<BoxedSystem>;
+///
+/// Systems run in the order they are added unless told otherwise:
+///
+/// ```ignore
+/// app.add_systems(Stage::Update, (
+///     follow_player.after(move_player),          // wherever `move_player` was added
+///     (read_input, move_player, collide).chain(), // one after another
+///     spawn_enemies.run_if(in_state(Game::Playing)),
+///     (gravity, drag).in_set("forces"),
+///     integrate.after("forces"),
+/// ));
+/// ```
+pub trait IntoSystems<Marker>: Sized {
+    fn into_configs(self) -> Vec<SystemConfig>;
+
+    /// Runs these before a system (give the function) or every system in a set (give its
+    /// name), in the same stage. Naming something that isn't in the stage does nothing.
+    fn before<M>(self, other: impl IntoLabel<M>) -> SystemConfigs {
+        let label = other.into_label();
+        let mut configs = self.into_configs();
+        for config in &mut configs {
+            config.before.push(label.clone());
+        }
+        SystemConfigs(configs)
+    }
+
+    /// Runs these after a system or every system in a set, in the same stage.
+    fn after<M>(self, other: impl IntoLabel<M>) -> SystemConfigs {
+        let label = other.into_label();
+        let mut configs = self.into_configs();
+        for config in &mut configs {
+            config.after.push(label.clone());
+        }
+        SystemConfigs(configs)
+    }
+
+    /// Puts these in a named set, which other systems can run `before` or `after`.
+    fn in_set(self, set: &str) -> SystemConfigs {
+        let mut configs = self.into_configs();
+        for config in &mut configs {
+            config.sets.push(set.to_owned());
+        }
+        SystemConfigs(configs)
+    }
+
+    /// Runs these only when the condition holds. A condition is a function with system
+    /// parameters that returns `bool`; each system asks its own copy just before it would
+    /// run.
+    fn run_if<M>(self, condition: impl IntoCondition<M> + Clone) -> SystemConfigs {
+        let mut configs = self.into_configs();
+        for config in &mut configs {
+            config.conditions.push(condition.clone().into_condition());
+        }
+        SystemConfigs(configs)
+    }
+
+    /// Runs these one after another, in the order written.
+    fn chain(self) -> SystemConfigs {
+        let mut configs = self.into_configs();
+        for index in 1..configs.len() {
+            let previous = configs[index - 1].system.name().to_owned();
+            configs[index].after.push(previous);
+        }
+        SystemConfigs(configs)
+    }
 }
 
 #[doc(hidden)]
 pub struct SingleSystem;
 
 impl<M, S: IntoSystem<M>> IntoSystems<(SingleSystem, M)> for S {
-    fn into_systems(self) -> Vec<BoxedSystem> {
-        vec![Box::new(self.into_system())]
+    fn into_configs(self) -> Vec<SystemConfig> {
+        vec![SystemConfig::new(Box::new(self.into_system()))]
     }
 }
 
@@ -95,10 +302,10 @@ macro_rules! impl_into_systems_tuple {
     ($(($S:ident, $M:ident)),*) => {
         #[allow(non_snake_case)]
         impl<$($M, $S: IntoSystems<$M>),*> IntoSystems<(SystemTuple, $($M,)*)> for ($($S,)*) {
-            fn into_systems(self) -> Vec<BoxedSystem> {
+            fn into_configs(self) -> Vec<SystemConfig> {
                 let ($($S,)*) = self;
                 let mut systems = Vec::new();
-                $(systems.extend($S.into_systems());)*
+                $(systems.extend($S.into_configs());)*
                 systems
             }
         }
