@@ -3,6 +3,7 @@ use glam::{Mat3, Mat4, Quat, Vec3};
 use crate::{
     app::{App, Plugin, Stage},
     ecs::{Commands, Component, Entity, Query, Res, With, Without},
+    reflect::Reflect,
     time::FixedTime,
 };
 
@@ -11,7 +12,8 @@ use crate::{
 /// Exported to native plugins as `voxl.Transform`, so its layout is fixed: it must match
 /// `VoxlTransform` in `include/voxl.h`.
 #[repr(C)]
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Reflect)]
+#[reflect(name = "voxl.Transform", default)]
 pub struct Transform {
     pub translation: Vec3,
     pub rotation: Quat,
@@ -116,7 +118,8 @@ impl GlobalTransform {
 }
 
 /// Makes this entity's `Transform` relative to another entity.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Reflect)]
+#[reflect(name = "voxl.Parent")]
 pub struct Parent(pub Entity);
 
 impl Component for Parent {}
@@ -208,6 +211,7 @@ pub struct TransformPlugin;
 
 impl Plugin for TransformPlugin {
     fn build(&self, app: &mut App) {
+        app.register_type::<Transform>().register_type::<Parent>();
         if TRANSFORM_MATCHES_HEADER {
             app.world.export_component::<Transform>("voxl.Transform");
         } else {

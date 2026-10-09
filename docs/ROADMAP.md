@@ -97,9 +97,12 @@ can be rewritten while the game is being played.
 
 The layer Unreal's editor, saves, networking and Blueprints all stand on.
 
-- [ ] Proc-macro crate: `#[derive(Component)]`, `#[derive(Reflect)]`
-- [ ] Type registry: look up a type by name, list and edit its fields at runtime
-- [ ] Serialization of any reflected value; a text scene format; prefabs with overrides
+- [x] Proc-macro crate: `#[derive(Component)]`, `#[derive(Reflect)]`
+- [x] Type registry: look up a type by name, list and edit its fields at runtime
+- [x] Serialization of any reflected value; a text scene format (JSON); see
+      [SCENES.md](SCENES.md)
+- [ ] Prefabs with overrides; reflecting the physics, animation and voxel components;
+      capturing resources and plugin-defined components
 - [ ] Hierarchy as a real feature: `Children`, recursive despawn, cached propagation
 - [ ] Asset server: load by path on worker threads, reference-counted handles, dependencies,
       hot reload when a file changes

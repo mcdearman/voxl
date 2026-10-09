@@ -64,6 +64,9 @@ cargo run --example host -- chase scoreboard
 
 Shaders and textures reload while the app runs too; see [docs/HOT_RELOAD.md](docs/HOT_RELOAD.md).
 
+Components can be saved to and loaded from JSON scene files, and inspected by name; see
+[docs/SCENES.md](docs/SCENES.md).
+
 Where the engine is headed: [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## Layout
@@ -77,6 +80,7 @@ Where the engine is headed: [docs/ROADMAP.md](docs/ROADMAP.md).
 | `physics` | Rigid bodies (dynamic, kinematic, and animated ones the game moves) with sphere, box, capsule, plane, triangle-mesh and compound colliders; a sequential-impulse solver with friction, restitution, warm starting and sleeping; ball, hinge (with limits), distance and fixed joints; raycasts, overlap tests and a `CharacterController` that climbs steps and slides along walls. Fluids: `WaterSurface`, a wave-equation height field that floats bodies and ripples where things move or fall in, and `ParticleFluid`, position-based fluid particles with surface tension for jets, pours and spray that join the surfaces they land in. Add `PhysicsPlugin` |
 | `voxel` | Chunk storage, background terrain generation and meshing with ambient occlusion, streaming around a `ChunkViewer`, raycasts, frustum culling |
 | `plugin` | Loads native plugins over the C interface and hot-reloads them |
+| `reflect` | Describes, saves and loads values by name: derive macros, the type registry, JSON scenes |
 | `tasks` | Worker thread pool |
 | `input`, `window`, `time`, `assets` | The usual |
 

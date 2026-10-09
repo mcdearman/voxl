@@ -251,7 +251,8 @@ impl Mesh {
 }
 
 /// Renders the referenced mesh at this entity's `GlobalTransform`.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, crate::reflect::Reflect)]
+#[reflect(name = "voxl.Mesh3d")]
 pub struct Mesh3d(pub Handle<Mesh>);
 
 impl Component for Mesh3d {}
