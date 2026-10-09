@@ -351,8 +351,12 @@ Built with [Neo](https://github.com/mcdearman/neo), Chris's GUI toolkit, on top 
 engine's reflection. Before starting, work out with the Neo project what the
 editor needs from it.
 
-- [ ] Agree with Neo on what it must provide: a wgpu viewport inside a Neo window, dockable
-      panels, tree and property views, drag and drop, undo
+- [x] Agree with Neo on what it must provide: a wgpu viewport inside a Neo window, dockable
+      panels, tree and property views, drag and drop, a transcript for the agent window; see
+      [EDITOR.md](EDITOR.md). Neo is public, so the app can be built in this workspace
+- [x] The game run by a host: on a device it is given, with no window or loop of its own,
+      its frames a texture for the host to show (`App::host`, `render::frame_texture`)
+- [ ] The first app: a Neo window with the game in a viewport (waits on Neo's viewport)
 
 - [ ] Viewport, entity tree, inspector generated from reflection, transform gizmos
 - [ ] Asset browser, drag to place, prefab editing

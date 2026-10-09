@@ -36,7 +36,9 @@ pub fn main_multisample(alpha_to_coverage: bool) -> wgpu::MultisampleState {
 pub struct Gpu {
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
-    pub surface: wgpu::Surface<'static>,
+    /// The window's surface. None when a host owns the device and shows the frames itself:
+    /// see [`Gpu::hosted`].
+    pub surface: Option<wgpu::Surface<'static>>,
     pub config: wgpu::SurfaceConfiguration,
     pub targets: Targets,
     /// Hardware ray queries are available and enabled.
@@ -167,11 +169,45 @@ impl Gpu {
         Ok(Self {
             device,
             queue,
-            surface,
+            surface: Some(surface),
             config,
             targets,
             ray_tracing: traced,
         })
+    }
+
+    /// A renderer on a device that someone else opened, with no window of its own: frames
+    /// are drawn into a texture (see [`frame_texture`](super::frame_texture)) for the host to
+    /// show. For an editor, or any program that puts the game inside its own interface.
+    /// `format` is what the frames are drawn as; ray tracing is off, since it depends on
+    /// what the device was opened with.
+    pub fn hosted(
+        device: wgpu::Device,
+        queue: wgpu::Queue,
+        format: wgpu::TextureFormat,
+        width: u32,
+        height: u32,
+    ) -> Self {
+        let config = wgpu::SurfaceConfiguration {
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            format,
+            width: width.max(1),
+            height: height.max(1),
+            present_mode: wgpu::PresentMode::AutoVsync,
+            alpha_mode: wgpu::CompositeAlphaMode::Opaque,
+            color_space: wgpu::SurfaceColorSpace::Auto,
+            view_formats: vec![],
+            desired_maximum_frame_latency: 2,
+        };
+        let targets = Targets::new(&device, &config);
+        Self {
+            device,
+            queue,
+            surface: None,
+            config,
+            targets,
+            ray_tracing: false,
+        }
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {
@@ -184,7 +220,9 @@ impl Gpu {
     }
 
     pub fn reconfigure(&mut self) {
-        self.surface.configure(&self.device, &self.config);
+        if let Some(surface) = &self.surface {
+            surface.configure(&self.device, &self.config);
+        }
         self.targets = Targets::new(&self.device, &self.config);
     }
 
