@@ -15,6 +15,10 @@ use super::{
 pub trait Condition: 'static {
     fn initialize(&mut self, world: &mut World);
     fn check(&mut self, world: &mut World) -> bool;
+    /// What the condition reads, once initialized; `None` if it can't say.
+    fn access(&self) -> Option<&Access> {
+        None
+    }
 }
 
 pub type BoxedCondition = Box<dyn Condition>;
@@ -64,6 +68,7 @@ struct FunctionCondition<Marker: 'static, F: ConditionFunction<Marker>> {
     state: Option<<F::Param as SystemParam>::State>,
     last_run: Tick,
     name: &'static str,
+    access: Option<Access>,
     _marker: PhantomData<fn() -> Marker>,
 }
 
@@ -72,7 +77,12 @@ impl<Marker: 'static, F: ConditionFunction<Marker>> Condition for FunctionCondit
         if self.state.is_none() {
             let mut access = Access::new(self.name);
             self.state = Some(F::Param::init_state(world, &mut access));
+            self.access = Some(access);
         }
+    }
+
+    fn access(&self) -> Option<&Access> {
+        self.access.as_ref()
     }
 
     fn check(&mut self, world: &mut World) -> bool {
@@ -101,6 +111,7 @@ impl<Marker: 'static, F: ConditionFunction<Marker>> IntoCondition<Marker> for F 
             state: None,
             last_run: 0,
             name: type_name::<F>(),
+            access: None,
             _marker: PhantomData,
         })
     }
@@ -126,6 +137,10 @@ impl Condition for NotCondition {
 
     fn check(&mut self, world: &mut World) -> bool {
         !self.0.check(world)
+    }
+
+    fn access(&self) -> Option<&Access> {
+        self.0.access()
     }
 }
 

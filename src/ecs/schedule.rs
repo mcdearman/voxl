@@ -52,6 +52,9 @@ pub struct SystemInfo {
     /// What it reads and writes; `None` for a system that takes the whole world, or one that
     /// hasn't been initialized yet.
     pub access: Option<AccessSummary>,
+    /// Which batch of the stage it is in: systems that share a batch touch nothing in common
+    /// and could run at the same moment. `None` until the schedule has been initialized.
+    pub batch: Option<usize>,
 }
 
 /// A system that panicked while the schedule was guarded.
@@ -89,6 +92,9 @@ pub struct Schedule {
     systems: Vec<(SystemOwner, SystemConfig)>,
     /// Indices into `systems`, in the order they run. Rebuilt when `systems` changes.
     order: Vec<usize>,
+    /// For each place in `order`, which batch that system is in: systems of one batch touch
+    /// nothing in common and could run at the same moment. Empty until worked out.
+    batches: Vec<usize>,
     sorted: bool,
     /// Whether a panicking system is caught and suspended instead of unwinding out of `run`.
     guarded: bool,
@@ -100,6 +106,7 @@ impl Schedule {
         self.systems
             .extend(systems.into_configs().into_iter().map(|s| (ENGINE, s)));
         self.sorted = false;
+        self.batches.clear();
     }
 
     /// Makes `systems` the complete set belonging to `owner`. A new system takes the place of
@@ -130,6 +137,7 @@ impl Schedule {
         });
         self.systems.extend(added);
         self.sorted = false;
+        self.batches.clear();
     }
 
     /// Works out the order the systems run in: at each step, the earliest-added system that
@@ -197,11 +205,60 @@ impl Schedule {
         if !self.sorted {
             self.sort();
         }
+        self.plan();
+    }
+
+    /// Whether the system at `index` could run at the same moment as the one at `other`:
+    /// both say what they touch, conditions included, and none of it clashes.
+    fn independent(&self, index: usize, other: usize) -> bool {
+        let parts = |index: usize| {
+            let config = &self.systems[index].1;
+            let mut parts = vec![config.system.access()];
+            parts.extend(config.conditions.iter().map(|condition| condition.access()));
+            parts.into_iter().collect::<Option<Vec<&Access>>>()
+        };
+        match (parts(index), parts(other)) {
+            (Some(mine), Some(theirs)) => mine
+                .iter()
+                .all(|a| theirs.iter().all(|b| !a.conflicts_with(b))),
+            // One of them takes the whole world, or hasn't said what it takes.
+            _ => false,
+        }
+    }
+
+    /// Groups the systems, in running order, into batches of systems that could run at the
+    /// same moment: a system joins the batch before it unless it clashes with, or was told to
+    /// run after, something in it. Systems still run one at a time; this is the plan a
+    /// parallel executor will follow, and it is what `systems()` reports.
+    fn plan(&mut self) {
+        self.batches.clear();
+        let mut current: Vec<usize> = Vec::new();
+        let mut batch = 0;
+        for &index in &self.order {
+            let config = &self.systems[index].1;
+            let waits_for = |other: usize| {
+                let earlier = &self.systems[other].1;
+                config.after.iter().any(|label| earlier.answers_to(label))
+                    || earlier.before.iter().any(|label| config.answers_to(label))
+            };
+            let fits = current
+                .iter()
+                .all(|&other| self.independent(index, other) && !waits_for(other));
+            if !fits && !current.is_empty() {
+                batch += 1;
+                current.clear();
+            }
+            current.push(index);
+            self.batches.push(batch);
+        }
     }
 
     pub fn run(&mut self, world: &mut World) {
         if !self.sorted {
             self.sort();
+        }
+        if self.batches.len() != self.order.len() {
+            self.plan();
         }
         for &index in &self.order {
             let config = &mut self.systems[index].1;
@@ -288,6 +345,7 @@ impl Schedule {
                     suspended: config.suspended,
                     stats: config.stats,
                     access: config.system.access().map(Access::summary),
+                    batch: self.batches.get(i).copied(),
                 }
             })
             .collect()

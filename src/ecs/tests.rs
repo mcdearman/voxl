@@ -508,3 +508,82 @@ mod scheduling {
         assert_eq!(world.resource::<Counter>().0, 2);
     }
 }
+
+mod batches {
+    use super::super::{resource_exists, IntoSystems};
+    use super::*;
+
+    fn moves(mut q: Query<(&mut Pos, &Vel)>) {
+        for (mut pos, vel) in &mut q {
+            pos.0 += vel.0;
+        }
+    }
+    fn reads_pos(_: Query<&Pos>) {}
+    fn reads_vel(_: Query<&Vel>) {}
+    fn writes_vel(_: Query<&mut Vel>) {}
+    fn writes_marked_pos(_: Query<&mut Pos, With<Marker>>) {}
+    fn writes_unmarked_pos(_: Query<&mut Pos, Without<Marker>>) {}
+    fn counts(mut counter: ResMut<Counter>) {
+        counter.0 += 1;
+    }
+    fn reads_count(_: Res<Counter>) {}
+    fn whole_world(_: &mut World) {}
+
+    fn plan<M>(systems: impl IntoSystems<M>) -> Vec<usize> {
+        let mut world = World::new();
+        world.insert_resource(Counter(0));
+        let mut schedule = Schedule::default();
+        schedule.add_systems(systems);
+        schedule.initialize(&mut world);
+        schedule
+            .systems()
+            .iter()
+            .map(|s| s.batch.unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn systems_that_touch_nothing_in_common_share_a_batch() {
+        // Readers together; a writer of what they read comes after; then readers again.
+        assert_eq!(
+            plan((reads_pos, reads_vel, reads_count, moves, reads_pos)),
+            [0, 0, 0, 1, 2]
+        );
+        // Writers of different things, and of the same thing on entities that can't be the
+        // same, go together.
+        assert_eq!(
+            plan((writes_vel, writes_marked_pos, writes_unmarked_pos, counts)),
+            [0, 0, 0, 0]
+        );
+        assert_eq!(plan((writes_vel, reads_vel)), [0, 1]);
+        assert_eq!(plan((counts, reads_count, counts)), [0, 1, 2]);
+        // A system that takes the whole world is alone.
+        assert_eq!(
+            plan((reads_pos, whole_world, reads_vel, reads_pos)),
+            [0, 1, 2, 2]
+        );
+    }
+
+    #[test]
+    fn order_and_conditions_count() {
+        // Told to run one after the other, they can't be at the same moment, clash or not.
+        assert_eq!(plan((reads_pos, reads_vel).chain()), [0, 1]);
+        assert_eq!(
+            plan((
+                reads_vel,
+                reads_pos.after("early"),
+                reads_vel.in_set("early")
+            )),
+            [0, 0, 1]
+        );
+        // What a condition reads is part of what its system touches.
+        assert_eq!(
+            plan((counts, reads_pos.run_if(resource_exists::<Counter>))),
+            [0, 1]
+        );
+        assert_eq!(
+            plan((reads_count, reads_pos.run_if(resource_exists::<Counter>))),
+            [0, 0]
+        );
+    }
+}

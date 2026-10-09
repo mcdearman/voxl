@@ -164,7 +164,12 @@ and see it change in the running scene.
 
 - [x] System ordering: before/after, system sets, chains, run conditions, application states
       with enter and exit systems; see [SCHEDULING.md](SCHEDULING.md)
-- [ ] Parallel scheduler built on the existing access sets; `World` safe to share
+- [x] Groundwork for running systems in parallel: components must be `Send + Sync` (they all
+      were), systems and conditions report what they touch, and each stage is planned into
+      batches of systems that could run at the same moment (shown by the debug connection)
+- [ ] The parallel executor itself: a thread pool running each batch; resources that can't
+      leave the main thread; commands applied between batches; plugin systems kept on one
+      thread
 - [ ] Table storage as an option beside sparse sets, chosen per component
 - [ ] Hooks and observers: run code when a component is added or removed
 - [ ] Relations: `(ChildOf, e)`-style pairs, replacing `Parent`
