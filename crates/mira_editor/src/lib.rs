@@ -14,10 +14,18 @@
 //! among its own controls.
 //!
 //! The window is a dock of panels that can be dragged about, split and stacked as tabs:
-//! the game, its entities as a tree, what the chosen entity is made of, and its signals. How they are arranged is kept in `.mira/editor.layout`
+//! the game, its entities as a tree, what the chosen entity is made of, its signals, and a
+//! conversation with an agent that is working on the game. How they are arranged is kept in `.mira/editor.layout`
 //! in the folder the app is run from. See mira's `docs/EDITOR.md` for what is to come.
 
-use std::time::{Duration, Instant};
+pub mod agent;
+
+use std::{
+    sync::mpsc::{channel, Receiver, Sender},
+    time::{Duration, Instant},
+};
+
+use agent::{Agent, Heard, NoAgent};
 
 use mira::{
     ecs::Entity,
@@ -57,6 +65,12 @@ pub enum Message {
     /// A field of the chosen entity was given a new value in the inspector: the component
     /// by its full name, the way down to the field, and the value.
     Edited(String, Vec<String>, Value),
+    /// Something was typed in what is being written to the agent.
+    Writing(Action),
+    /// What was written is sent to the agent.
+    Ask,
+    /// The agent is told to stop.
+    Stop,
 }
 
 /// The panels, by the names the layout knows them by.
@@ -64,15 +78,17 @@ const GAME: &str = "Game";
 const ENTITIES: &str = "Entities";
 const SIGNALS: &str = "Signals";
 const INSPECTOR: &str = "Inspector";
+const AGENT: &str = "Agent";
 
 /// Where the arrangement of the panels is kept, in the folder the app is run from.
 const LAYOUT_FILE: &str = ".mira/editor.layout";
 
-/// The arrangement to start from: the game, and down its right side the entities (with the
+/// The arrangement to start from: the game over the conversation with the agent, and down
+/// their right side the entities (with the
 /// signals behind them) over what the chosen one is made of.
 fn first_layout() -> Dock {
     Dock::beside(
-        Dock::tabs([GAME]),
+        Dock::above(Dock::tabs([GAME]), 0.66, Dock::tabs([AGENT])),
         0.7,
         Dock::above(
             Dock::tabs([ENTITIES, SIGNALS]),
@@ -87,7 +103,7 @@ fn kept_layout(kept: &str) -> Option<Dock> {
     let layout = Dock::parse(kept.trim())?;
     let mut panels = layout.panels();
     panels.sort_unstable();
-    (panels == [ENTITIES, GAME, INSPECTOR, SIGNALS]).then_some(layout)
+    (panels == [AGENT, ENTITIES, GAME, INSPECTOR, SIGNALS]).then_some(layout)
 }
 
 /// What the lists show of the game, read from it now and then.
@@ -164,6 +180,13 @@ pub struct Editor {
     /// The entity chosen in the tree, and the ones whose children are hidden.
     chosen: Option<Entity>,
     shut: Vec<Entity>,
+    /// The agent, what has been said with it, what is being written to it, and whether it
+    /// is at work on something.
+    agent: Box<dyn Agent>,
+    said: Vec<Said>,
+    writing: Document,
+    working: bool,
+    heard: (Sender<Heard>, Receiver<Heard>),
 }
 
 #[derive(Clone, Copy, Default, PartialEq)]
@@ -190,7 +213,45 @@ impl Editor {
             lists: Lists::default(),
             chosen: None,
             shut: Vec::new(),
+            agent: Box::new(NoAgent),
+            said: Vec::new(),
+            writing: Document::new(""),
+            working: false,
+            heard: channel(),
         }
+    }
+
+    /// Gives the app the agent its conversation panel talks to.
+    pub fn with_agent(mut self, agent: impl Agent + 'static) -> Self {
+        self.agent = Box::new(agent);
+        self
+    }
+
+    /// What has been said between the person and the agent.
+    pub fn said(&self) -> &[Said] {
+        &self.said
+    }
+
+    /// Takes in what the agent has said since last looked. Says whether there was anything.
+    fn listen(&mut self) -> bool {
+        let mut any = false;
+        while let Ok(heard) = self.heard.1.try_recv() {
+            any = true;
+            match heard {
+                // Its answer grows where it stands, until something else is said.
+                Heard::Text(more) => match self.said.last_mut() {
+                    Some(last) if last.who == Speaker::Them => last.text += &more,
+                    _ => self.said.push(Said::new(Speaker::Them, more)),
+                },
+                Heard::Did(what) => self.said.push(Said::new(Speaker::Note, what)),
+                Heard::Done => self.working = false,
+                Heard::Failed(why) => {
+                    self.working = false;
+                    self.said.push(Said::new(Speaker::Note, why));
+                }
+            }
+        }
+        any
     }
 
     /// The game being shown.
@@ -301,6 +362,25 @@ impl Editor {
             )
             .into(),
             INSPECTOR => self.inspector(),
+            AGENT => {
+                let asking = prompt(&self.writing, Message::Writing)
+                    .on_submit(Message::Ask)
+                    .placeholder(if self.working {
+                        "The agent is working…"
+                    } else {
+                        "Ask the agent about the game, or to change it"
+                    });
+                let stop = button("Stop").on_press_maybe(self.working.then_some(Message::Stop));
+                column()
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .push(container(transcript(&self.said)).height(Length::Fill))
+                    .push(
+                        container(row().spacing(8.0).align(Align::End).push(asking).push(stop))
+                            .padding(8.0),
+                    )
+                    .into()
+            }
             SIGNALS => lines(self.lists.signals.iter().map(|(name, value)| {
                 let shown = match value {
                     Signal::Bool(value) => value.to_string(),
@@ -582,7 +662,7 @@ impl App for Editor {
             self.hosted = true;
         }
         self.game.update();
-        let mut changed = false;
+        let mut changed = self.listen();
         let frame = frame_texture(&self.game.world);
         if frame.as_ref() != self.shown.as_ref().map(|(texture, _)| texture) {
             self.shown = frame.map(|texture| {
@@ -686,6 +766,25 @@ impl App for Editor {
                 });
                 self.lists = Lists::of(&self.game, self.chosen);
             }
+            Message::Writing(action) => {
+                self.writing.apply(action);
+            }
+            Message::Ask => {
+                let asked = self.writing.text().trim().to_owned();
+                if asked.is_empty() || self.working {
+                    return;
+                }
+                self.writing = Document::new("");
+                self.said.push(Said::new(Speaker::You, asked.clone()));
+                self.working = true;
+                self.agent.ask(&asked, self.heard.0.clone());
+            }
+            Message::Stop => {
+                self.agent.stop();
+                if std::mem::take(&mut self.working) {
+                    self.said.push(Said::new(Speaker::Note, "Stopped."));
+                }
+            }
             Message::Arranged(layout) => {
                 // Kept for next time; an arrangement that can't be written is still used.
                 let _ = std::fs::create_dir_all(".mira")
@@ -729,9 +828,39 @@ impl App for Editor {
     }
 }
 
+/// Where `mira-mcp` is: `MIRA_MCP` if set, else beside this program (or one folder up, where
+/// an example finds it), else whatever the system finds by that name.
+fn tools_program() -> std::path::PathBuf {
+    if let Some(given) = std::env::var_os("MIRA_MCP") {
+        return given.into();
+    }
+    let beside = std::env::current_exe().ok().and_then(|program| {
+        let folder = program.parent()?;
+        [folder.join("mira-mcp"), folder.parent()?.join("mira-mcp")]
+            .into_iter()
+            .find(|there| there.exists())
+    });
+    beside.unwrap_or_else(|| "mira-mcp".into())
+}
+
 /// Opens the engine app on a game, and returns when its window is closed.
-pub fn run(game: mira::app::App) -> Result<(), Box<dyn std::error::Error>> {
-    neo::run(Editor::new(game))?;
+///
+/// The app's agent is Claude Code, given the game's tools: the game is made to listen for
+/// them on a port of its own if it is not listening already. See [`agent::ClaudeCode`].
+pub fn run(mut game: mira::app::App) -> Result<(), Box<dyn std::error::Error>> {
+    let listening = match game.debugger_address() {
+        Some(address) => Some(address),
+        None => game.listen_for_debugger("127.0.0.1:0").ok(),
+    };
+    let editor = Editor::new(game);
+    let editor = match listening {
+        Some(address) => {
+            editor.with_agent(agent::ClaudeCode::new(tools_program(), address.to_string()))
+        }
+        // An agent with no way to the game would only guess: better none.
+        None => editor,
+    };
+    neo::run(editor)?;
     Ok(())
 }
 
@@ -772,7 +901,7 @@ mod tests {
     #[test]
     fn the_arrangement_is_kept_only_while_it_fits_the_panels_there_are() {
         let first = first_layout();
-        assert_eq!(first.shown(), [GAME, ENTITIES, INSPECTOR]);
+        assert_eq!(first.shown(), [GAME, AGENT, ENTITIES, INSPECTOR]);
         // Written and read back, it is the same; rearranged, it is still taken.
         assert_eq!(kept_layout(&first.encode()), Some(first.clone()));
         let stacked = first.with(SIGNALS, ENTITIES, Side::Middle);
@@ -907,6 +1036,89 @@ mod tests {
             .map(|(name, _)| name.as_str())
             .collect();
         assert_eq!(made_of, ["mira.Transform", "mira.Parent"]);
+    }
+
+    /// An agent that says what it was told to, for tests.
+    struct Scripted(Vec<Heard>, std::rc::Rc<std::cell::Cell<u32>>);
+
+    impl Agent for Scripted {
+        fn ask(&mut self, asked: &str, heard: Sender<Heard>) {
+            let _ = heard.send(Heard::Did(format!("asked: {asked}")));
+            for said in self.0.drain(..) {
+                let _ = heard.send(said);
+            }
+        }
+
+        fn stop(&mut self) {
+            self.1.set(self.1.get() + 1);
+        }
+    }
+
+    #[test]
+    fn a_conversation_with_the_agent_is_kept_as_it_is_said() {
+        let stops = std::rc::Rc::new(std::cell::Cell::new(0));
+        let script = vec![
+            Heard::Text("The clock ".into()),
+            Heard::Text("is paused.".into()),
+            Heard::Did("mira_signals".into()),
+            Heard::Text("Blue is on a site.".into()),
+            Heard::Done,
+        ];
+        let mut editor =
+            Editor::new(mira::app::App::new()).with_agent(Scripted(script, stops.clone()));
+        let write = |editor: &mut Editor, text: &str| {
+            editor.writing = Document::new(text);
+            editor.update(Message::Ask);
+        };
+        // Nothing written, nothing asked.
+        write(&mut editor, "  ");
+        assert!(editor.said().is_empty() && !editor.working);
+
+        write(&mut editor, "Why is the clock stopped?");
+        assert!(editor.working && editor.writing.text().is_empty());
+        // Asked again while it works: not sent, and what was written is kept.
+        write(&mut editor, "And now?");
+        assert_eq!(editor.said().len(), 1);
+        assert_eq!(editor.writing.text(), "And now?");
+
+        assert!(editor.listen());
+        let said: Vec<(Speaker, &str)> = editor
+            .said()
+            .iter()
+            .map(|said| (said.who, said.text.as_str()))
+            .collect();
+        assert_eq!(
+            said,
+            [
+                (Speaker::You, "Why is the clock stopped?"),
+                (Speaker::Note, "asked: Why is the clock stopped?"),
+                // What comes in pieces is one answer, until something else happens.
+                (Speaker::Them, "The clock is paused."),
+                (Speaker::Note, "mira_signals"),
+                (Speaker::Them, "Blue is on a site."),
+            ]
+        );
+        assert!(!editor.working && !editor.listen());
+
+        // Stopped while at work, it is told so and the conversation says so; when not at
+        // work, stopping says nothing.
+        write(&mut editor, "And now?");
+        editor.update(Message::Stop);
+        assert_eq!(stops.get(), 1);
+        assert_eq!(
+            editor.said().last().map(|said| said.text.as_str()),
+            Some("Stopped.")
+        );
+        let length = editor.said().len();
+        editor.update(Message::Stop);
+        assert_eq!(editor.said().len(), length);
+
+        // With no agent, asking says how to have one.
+        let mut alone = Editor::new(mira::app::App::new());
+        write(&mut alone, "Hello?");
+        alone.listen();
+        assert!(alone.said()[1].text.contains("There is no agent"));
+        assert!(!alone.working);
     }
 
     #[test]
