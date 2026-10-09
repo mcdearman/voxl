@@ -205,10 +205,13 @@ pub fn build(headless: bool) -> anyhow::Result<App> {
     signals.define("blue.calm", Op::Not, ["blue.contesting"]);
     signals.define("red.clock.running", Op::And, ["red.holds_all", "blue.calm"]);
     signals.define("red.lost_a_site", Op::Not, ["red.holds_all"]);
+    // A lost site sets the clock back; so does asking for a new round.
+    signals.set("restart", false);
+    signals.define("red.clock.reset", Op::Or, ["red.lost_a_site", "restart"]);
     signals.define(
         "red.clock",
         Op::Timer,
-        ["red.clock.running", "red.lost_a_site"],
+        ["red.clock.running", "red.clock.reset"],
     );
     signals.set("win_after", 60.0);
     signals.define(

@@ -34,6 +34,7 @@ use winit::{
     keyboard::{Key as WinitKey, NamedKey, PhysicalKey},
 };
 
+pub mod kit;
 pub mod signal_graph;
 
 /// Brings game state into the interface each frame, before it is drawn.

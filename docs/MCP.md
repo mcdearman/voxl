@@ -68,8 +68,9 @@ mira_quit
 
 An agent that has changed something wants to see what happens, and what happens usually takes
 input and time. `mira_input` plays keys and the mouse into the game (a tap, or a press held
-until released); it arrives at the start of the next simulated frame, so input played into a
-paused game is there, pressed that very frame, when the game is stepped. `mira_run_until`
+until released); keys arrive at the start of the next simulated frame, so a key played into a
+paused game is there, pressed that very frame, when the game is stepped; the pointer arrives
+at once, paused or not, as a real mouse does, so an agent can work a paused game's interface. `mira_run_until`
 then runs the simulation until a signal is true, or a number of frames have passed, and
 pauses:
 

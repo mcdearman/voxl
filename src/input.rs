@@ -149,13 +149,24 @@ impl InjectedInput {
     }
 }
 
-/// Plays injected input into the input resources. Called at the start of a frame in which
-/// the simulation runs.
-pub(crate) fn play_injected(world: &mut World) {
+/// Plays injected input into the input resources at the start of a frame. In a frame the
+/// simulation runs (`running`), everything that is due; in a frame it is held still, only
+/// the pointer, as a real mouse would still move and click over a paused game's interface.
+/// Keys wait for the game to run, so that a key pressed into a paused game is pressed on the
+/// first frame stepped.
+pub(crate) fn play_injected(world: &mut World, running: bool) {
     let Some(injected) = world.get_resource_mut::<InjectedInput>() else {
         return;
     };
-    let due = injected.due();
+    let due = if running {
+        injected.due()
+    } else {
+        let (pointer, keys) = std::mem::take(&mut injected.now)
+            .into_iter()
+            .partition(|played| !matches!(played, Played::Key(..)));
+        injected.now = keys;
+        pointer
+    };
     // An interface hears the window's own events, so input played from outside is put among
     // them as well: a click an agent makes lands on a panel as a person's would.
     let mut heard = Vec::new();

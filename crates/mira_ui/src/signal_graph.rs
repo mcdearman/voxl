@@ -113,6 +113,15 @@ impl Default for SignalGraph {
 }
 
 impl SignalGraph {
+    /// Hides or shows the panel, as F1 does.
+    pub fn set_hidden(&mut self, hidden: bool) {
+        self.hidden = hidden;
+    }
+
+    pub fn is_hidden(&self) -> bool {
+        self.hidden
+    }
+
     /// The edits made since this was last called.
     pub fn take_edits(&mut self) -> Vec<Edit> {
         std::mem::take(&mut self.edits)

@@ -21,11 +21,58 @@ widgets, and an `update` for the messages its widgets send. `mira_ui` does the r
 - **State.** `sync` runs every frame with the world and the interface, to copy in what it
   shows. The interface itself lives in the world as `UiHost<A>` and stays on the main thread.
 
+## Controls for games
+
+`mira_ui::kit` is a small set of controls with a look a game can change:
+
+```rust
+fn view(&self) -> Element<Ask> {
+    anchored(Anchor::BottomRight, panel(
+        column().spacing(10.0)
+            .push(heading("Sacred sites"))
+            .push(bar(self.clock / self.limit))
+            .push(caption(format!("{:.0} of {:.0} seconds", self.clock, self.limit)))
+            .push(slider(10.0..=120.0, self.limit, Ask::Limit))
+            .push(toggle("Paused", self.paused, Ask::Pause))
+            .push(button("New round", Ask::Restart)),
+    ))
+}
+
+fn style(&self, _: Scheme) -> Style {
+    Theme::default().style()
+}
+```
+
+| | |
+| --- | --- |
+| `anchored(anchor, child)` | puts `child` at a corner, an edge or the middle of the screen; the rest stays the game's |
+| `panel(child)` | a rounded, see-through backing |
+| `heading`, `caption`, and plain strings | text |
+| `button(label, message)` | sends `message` on a click, or Enter or Space with focus |
+| `toggle(label, on, message)` | a switch |
+| `slider(range, value, message)` | dragging, clicking the track, and arrow keys |
+| `bar(fraction)` | health, progress, a clock |
+| `column()`, `row()`, `stack()` | Armature's own layout |
+
+The look comes from a `Theme`: the panel's colour and edge, text colours, the colour of
+controls at rest and of what is on, corner radius and text size. Change any of it
+(`Theme { accent: Color::hex(0xffb347), ..Default::default() }`) and return its `style()`.
+A control of your own reads the same theme, and is written as these are: Armature supplies
+how sliders and text fields behave, and the widget paints.
+
+The pattern for acting on the game: the interface keeps what was asked of it (its messages)
+and an ordinary exclusive system takes them from `UiHost<A>` and carries them out. The
+example below does this for its pause switch, its slider and its button.
+
 ## The signal graph, in the game
 
 ```sh
 cargo run -p mira_ui --example sacred_sites_graph
 ```
+
+The example has two interfaces at once: a panel of the kit's controls at the bottom right
+(the clock, how long red must hold out, pause, a new round) and the signal graph at the top
+left.
 
 `mira_ui::signal_graph::plugin()` adds a panel that shows the game's [signals](SIGNALS.md) as
 a circuit and lets you rewire it while the game runs. Each signal is a box, with its inputs
@@ -71,8 +118,8 @@ agent makes lands on a panel as a person's would.
 
 ## What isn't here yet
 
-- A look for games: `mira_ui` has one hand-drawn panel. Buttons, text fields and the rest come
-  from Armature's controls, which need a style.
+- More controls: a text field, a list, a dropdown, tabs; text entry is what the signal panel
+  needs next, to name signals and type numbers.
 - Interface in the world (a health bar over a unit), gamepad focus, and laying out for
   different screen sizes.
 - In the signal panel: naming a new signal, choosing timers and comparisons, and typing a
