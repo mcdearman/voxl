@@ -10,3 +10,5 @@ dist/
 # Left by a frame test that failed: what was drawn, and where it differs.
 tests/frames/*.new.png
 tests/frames/*.diff.png
+# What the engine app keeps for a project: how its panels were arranged.
+.mira/

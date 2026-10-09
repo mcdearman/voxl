@@ -7,7 +7,11 @@ project and what exists on each side.
 ## What there is
 
 `crates/mira_editor`: a Neo window with the game in a viewport, under a bar to pause, resume
-and step it. The game is any mira `App`, built as it would be to run alone:
+and step it, and beside it lists of the game's entities (with their registered components)
+and its signals, read from the game a few times a second. The three are panels of a dock:
+drag a tab to move a panel, onto another to stack them or to an edge to split; drag the bar
+between two to resize. The arrangement is kept in `.mira/editor.layout` in the folder the app
+is run from. The game is any mira `App`, built as it would be to run alone:
 
 ```rust
 mira_editor::run(my_game::build()?)?;
@@ -57,7 +61,7 @@ Agreed in outline with the Neo session (October 2026); built there, not here.
    focus, forwards pointer and key input, captures the pointer for mouselook, and asks for
    a redraw every frame while playing; and a call once per presented frame, before drawing,
    in which mira steps and renders, so the picture shown is never a frame behind.
-2. **Docking**: a split tree, tabbed groups, the layout saved and restored.
+2. **Docking** (done, Neo `25c92b0`): a split tree, tabbed groups, the layout saved and restored.
 3. **A tree** (expand, select, rename, drag to reparent) and **fields** for a property
    view: numbers that drag, vectors, entity references, a colour picker. The view itself is
    generated on mira's side from reflection.
