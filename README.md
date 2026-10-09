@@ -104,4 +104,11 @@ Where the engine is headed: [docs/ROADMAP.md](docs/ROADMAP.md).
 cargo test
 cargo +nightly miri test --lib -- ecs::     # the ECS's unsafe code
 MIRA_SCREENSHOT=frame.png cargo run --release   # render a frame to a file and quit
+MIRA_FRAME_TESTS=1 cargo test --test frames     # draw fixed scenes and compare with stored frames
 ```
+
+The last needs a graphics card, so it runs only when asked. It starts a scene hidden and
+paused (`MIRA_PAUSED=1`), steps it to a set frame, and compares the picture, made small, with
+the one in `tests/frames`; a frame that differs leaves `<name>.new.png` and `<name>.diff.png`
+there. After a change that was meant to change the picture, store new frames with
+`MIRA_UPDATE_FRAMES=1`. The comparison is `mira::render::frame_diff`, for a game's own tests.

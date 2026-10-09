@@ -48,7 +48,12 @@ Make the project safe to change quickly.
       itself is still one crate)
 - [x] CI on macOS and Linux: build, test, clippy, Miri on the ECS (written; not yet seen to
       pass on GitHub)
-- [ ] Image-diff tests: render fixed scenes with `MIRA_SCREENSHOT` and compare to stored frames
+- [x] Image-diff tests: a fixed scene is stepped to a set frame, drawn, and compared with a
+      stored frame (`tests/frames.rs`, `render::frame_diff`); run where there is a graphics
+      card with `MIRA_FRAME_TESTS=1`
+- [ ] Image-diff tests of the bigger demos (voxel world, Paris, Napoleonic), which load in
+      the background and so are not yet at the same moment every run; run in CI (the runners
+      have no graphics card set up)
 - [x] CPU frame timings: per frame, per stage and per system, from the running game
       (`FrameStats`, `mira-debug profile`)
 - [ ] A timeline of a frame across threads; GPU timings (timestamp queries per pass); shown

@@ -1,5 +1,6 @@
 mod animation;
 mod environment;
+pub mod frame_diff;
 pub mod gait;
 pub mod reach;
 mod gltf_scene;
