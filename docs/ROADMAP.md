@@ -258,7 +258,8 @@ derived from other values, which the engine keeps true.
 - [x] Signals as data, not closures: a graph of named nodes (sources read from the world;
       operations such as and, or, not, count, compare, held-for) joined by connections, which
       can be listed with their values and rewired, forced and redefined while the game runs
-- [ ] Saving and loading a signal graph; signals carrying entities
+- [x] Saving and loading a game's rules (`Signals::save_rules`, `load_rules`)
+- [ ] Signals carrying entities
 - [x] The signal graph over the debug connection: read every node and its value, set
       constants, connect inputs, force outputs, define and remove nodes, while the game runs
 - [x] A signal graph viewer in the terminal (`mira-debug watch`): which signals are active as

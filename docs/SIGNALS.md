@@ -169,11 +169,27 @@ In C these are `signal_set`, `signal_get` and `signal_define` in `include/mira.h
 in the next. Defining the same rule again changes nothing, so a plugin can define its rules
 every frame or once; either way they are there again after a reload, with their clocks intact.
 
+## Keeping rules
+
+Rules worked out while the game ran can be kept. `signals.save_rules("rules.json")` writes
+every signal that isn't a source (its operation, inputs, and constants' values) and
+`signals.load_rules("rules.json")` defines them again, replacing rules of the same name;
+sources come from the game's code and are only named, as inputs. A file that can't be read
+changes nothing and says which rule was wrong. From outside: `mira-debug signals_save
+path=rules.json` and `signals_load`.
+
+```json
+{"version": 1, "signals": [
+  {"name": "win_after", "op": "constant", "value": 60.0},
+  {"name": "blue.calm", "op": "not", "inputs": ["blue.contesting"]},
+  {"name": "red.clock", "op": "timer", "inputs": ["red.clock.running", "red.lost_a_site"]}
+]}
+```
+
 ## What isn't here yet
 
 - A graphical viewer, with the graph laid out and edited by hand: a panel of the editor.
 - Sources written in a plugin as functions the engine calls (a plugin sets its facts from a
   system instead).
 - Signals that carry more than a truth or a number (an entity, a set of entities).
-- Saving a graph to a file and loading it, as scenes are.
 - Sources are asked every frame; they are not yet skipped when what they read hasn't changed.
