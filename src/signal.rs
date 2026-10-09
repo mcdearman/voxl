@@ -223,6 +223,9 @@ pub struct Signals {
     /// The order nodes are worked out in: inputs before what reads them. Empty when stale.
     order: Vec<usize>,
     changes: Vec<SignalChanged>,
+    /// Where each signal's box was put in a drawing of the graph, by whoever draws it. The
+    /// rules don't depend on it; it is kept with them so a drawing can be the same next time.
+    places: HashMap<String, [f32; 2]>,
 }
 
 impl Signals {
@@ -321,6 +324,16 @@ impl Signals {
         true
     }
 
+    /// Records where a signal's box sits in a drawing of the graph.
+    pub fn place(&mut self, name: &str, at: [f32; 2]) {
+        self.places.insert(name.to_owned(), at);
+    }
+
+    /// Where a signal's box was put, if it was put anywhere.
+    pub fn place_of(&self, name: &str) -> Option<[f32; 2]> {
+        self.places.get(name).copied()
+    }
+
     /// The operation of a node that is worked out from others; `None` for a source or a
     /// signal that doesn't exist.
     pub fn op(&self, name: &str) -> Option<Op> {
@@ -382,6 +395,7 @@ impl Signals {
             return false;
         };
         self.nodes.remove(index);
+        self.places.remove(name);
         for other in self.names.values_mut() {
             *other -= (*other > index) as usize;
         }
@@ -495,10 +509,24 @@ impl Signals {
             }
             Some(Value::Map(rule))
         });
-        Value::Map(vec![
+        let mut saved = vec![
             ("version".to_owned(), Value::Int(1)),
             ("signals".to_owned(), Value::List(rules.collect())),
-        ])
+        ];
+        // In the order the signals were defined, so the same graph gives the same file.
+        let layout: Vec<(String, Value)> = self
+            .nodes
+            .iter()
+            .filter_map(|node| {
+                let [x, y] = self.places.get(&node.name)?;
+                let at = vec![Value::Float(*x as f64), Value::Float(*y as f64)];
+                Some((node.name.clone(), Value::List(at)))
+            })
+            .collect();
+        if !layout.is_empty() {
+            saved.push(("layout".to_owned(), Value::Map(layout)));
+        }
+        Value::Map(saved)
     }
 
     /// Defines every rule in `rules` (as [`Signals::rules`] gives them), replacing those of
@@ -548,10 +576,31 @@ impl Signals {
             }
             read.push((name.clone(), op, inputs));
         }
+        let mut places = Vec::new();
+        match rules.field("layout") {
+            None => {}
+            Some(Value::Map(layout)) => {
+                for (name, at) in layout {
+                    match at {
+                        Value::List(at) if at.len() == 2 => {
+                            match (at[0].as_f64(), at[1].as_f64()) {
+                                (Some(x), Some(y)) => {
+                                    places.push((name.clone(), [x as f32, y as f32]))
+                                }
+                                _ => return Err(format!("`{name}`: its place is two numbers")),
+                            }
+                        }
+                        _ => return Err(format!("`{name}`: its place is two numbers")),
+                    }
+                }
+            }
+            Some(_) => return Err("the `layout` is a map of places by signal name".to_owned()),
+        }
         let count = read.len();
         for (name, op, inputs) in read {
             self.define(&name, op, inputs);
         }
+        self.places.extend(places);
         Ok(count)
     }
 
@@ -1132,7 +1181,10 @@ mod tests {
             Op::Compare(Compare::GreaterOrEqual),
             ["clock", "limit"],
         );
+        signals.place("ready", [240.0, 0.0]);
+        signals.place("lit", [0.0, 70.5]);
         let saved = signals.rules();
+        assert_eq!(saved.get_path("layout.lit.1"), Some(&Value::Float(70.5)));
         let text = crate::reflect::json::to_string(&saved);
         assert!(
             !text.contains("\"lit\"") || text.contains("\"inputs\""),
@@ -1154,6 +1206,8 @@ mod tests {
             saved,
             "and saving again gives the same rules"
         );
+        assert_eq!(later.place_of("ready"), Some([240.0, 0.0]));
+        assert_eq!(later.place_of("clock"), None);
         later.update(&mut world, 1.0);
         assert!(later.is_true("ready") && !later.is_true("steady"));
         assert_eq!(later.number("limit"), 30.0);
@@ -1178,6 +1232,10 @@ mod tests {
             (
                 r#"{"version": 1, "signals": [{"name": "x", "op": "and", "inputs": [3]}]}"#,
                 "signal names",
+            ),
+            (
+                r#"{"version": 1, "signals": [], "layout": {"ready": [1]}}"#,
+                "`ready`: its place",
             ),
         ] {
             let err = later

@@ -46,6 +46,8 @@ lit while that signal is true.
 - **Settings:** click a true-or-false constant's value to flip it; scroll over a number to
   turn it up or down.
 - **Arrange:** drag a box by its body, or the panel by its background. F1 hides the panel.
+  Where a box was put is kept with the game's rules, and saved with them
+  ([SIGNALS.md](SIGNALS.md#keeping-rules)).
 
 Every edit is made to the running game at once: force `red.wins` and the game announces it.
 A signal that changed this frame has a gold outline; an input wired to a signal that doesn't
@@ -73,6 +75,6 @@ agent makes lands on a panel as a person's would.
   from Armature's controls, which need a style.
 - Interface in the world (a health bar over a unit), gamepad focus, and laying out for
   different screen sizes.
-- In the signal panel: naming a new signal, choosing timers and comparisons, typing a
-  number, and remembering where boxes were put. The layout is by column only, so wires cross.
+- In the signal panel: naming a new signal, choosing timers and comparisons, and typing a
+  number. Boxes not yet placed are laid out by column only, so wires cross.
 - Armature's glass (backdrop blur) can't see the game behind it, so it is left off.
