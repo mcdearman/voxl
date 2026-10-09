@@ -130,6 +130,39 @@ being able to see inside.
 freezes on that frame and shows the stack; fix the line, save, and play carries on from the
 same frame without the window ever closing.
 
+## Phase 1C: Agents at the controls (M)
+
+Added at Chris's request (October 2026): an AI agent should be able to drive the engine for
+development as fully as a person at an editor: see the scene, know everything about the
+game's state, change it, and control time and code. The means is the Model Context Protocol
+(MCP), on top of the debug connection of Phase 1B ([LIVE.md](LIVE.md)).
+
+- [ ] An MCP server (`voxl-mcp`, JSON-RPC over stdio) that connects to a running game by its
+      debug address, with a tool for every command of the debug connection: entities,
+      components and resources by name, spawn and despawn, systems, failures with stacks,
+      pause, step, rewind, time scale, signals, plugin reload, scene save and load
+- [ ] Seeing the scene: a screenshot tool that returns the current frame as an image; then
+      from a chosen camera or a free viewpoint, at a chosen size, with debug overlays
+      (entity ids, bounds, colliders, the signal graph)
+- [ ] The scene in words: a compact description (what is where, what is on screen, what
+      changed since last asked) for when an image is more than is needed
+- [ ] Total knowledge: the schema of every registered type, so an agent knows what it may
+      read and write and in what shape; a check that reports engine state that is not
+      reflected, and so invisible
+- [ ] Events pushed, not polled: failures, signal changes, log lines, a plugin reloading
+- [ ] Launching and owning a game: start it headless or windowed, step it deterministically
+      (fixed timestep, seeded), run to a condition ("until this signal is true"), shut it down
+- [ ] Input from the agent: keys, mouse and gamepad injected as if played, so an agent can
+      play-test what it built
+- [ ] Editing through the same door: write a prefab or a scene, define signals, build and
+      reload a plugin, and see the result, without leaving the conversation
+- [ ] The same tools from inside the editor (Phase 5), so a person and an agent can work on
+      one running game
+
+**Exit test:** an agent with only the MCP tools is asked to "make the red team win faster in
+the sacred-site game and show me": it finds the rule in the signal graph, changes it, steps
+the game until `red.wins`, and returns a screenshot of the moment.
+
 ## Phase 1: Data layer (L)
 
 The layer Unreal's editor, saves, networking and Blueprints all stand on.
@@ -341,5 +374,5 @@ project grows.
    seen in screenshots to fix alongside: the built-in sky is dull next to the sun it comes
    with; and objects that move every frame smear under temporal anti-aliasing (it has no
    motion vectors).
-3. The parallel scheduler, on the ordering constraints and access sets that are now there
+3. The MCP server over the debug connection (Phase 1C), then the parallel executor
    (Phase 2).
