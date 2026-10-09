@@ -230,7 +230,11 @@ and see it change in the running scene.
 - [x] Hooks: run code when a component is added or removed (`on_add`, `on_remove`)
 - [ ] Observers for other events (a component changing, custom events aimed at an entity);
       hooks from plugins
-- [ ] Relations: `(ChildOf, e)`-style pairs, replacing `Parent`
+- [x] Relations: any component that names another entity, with the way back kept by the
+      engine (`Relation`, `Related<R>`); `Parent` and `Children` are one of them. See
+      [RELATIONS.md](RELATIONS.md)
+- [ ] Relations with many targets of one kind; cleaning up when a target is despawned;
+      relations from plugins
 - [ ] One job system for systems, asset loading and voxel work
 
 **Exit test:** the Napoleonic demo's update time drops in proportion to cores used, with Miri
