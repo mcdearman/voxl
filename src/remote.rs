@@ -1275,6 +1275,11 @@ impl App {
         Ok(address)
     }
 
+    /// Where the game is listening for debuggers, if it is.
+    pub fn debugger_address(&self) -> Option<SocketAddr> {
+        self.debug.as_ref()?.listener.local_addr().ok()
+    }
+
     /// Listens where `MIRA_DEBUG` says (`MIRA_DEBUG=127.0.0.1:7878`), if it is set.
     pub fn listen_for_debugger_from_env(&mut self) -> &mut Self {
         if let Ok(address) = std::env::var("MIRA_DEBUG") {
