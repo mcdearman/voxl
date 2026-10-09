@@ -1,4 +1,4 @@
-//! An example voxl plugin in Rust: makes everything with a `demo.Cell` ride a travelling wave.
+//! An example mira plugin in Rust: makes everything with a `demo.Cell` ride a travelling wave.
 //!
 //! Run `cargo run --example plugins`, then change a number below and run
 //! `cargo build -p wave` in another terminal. The running app picks the new code up, and each
@@ -6,7 +6,7 @@
 
 use std::sync::OnceLock;
 
-use voxl_plugin::{App, Component, Error, Plain, Stage, System, Transform};
+use mira_plugin::{App, Component, Error, Plain, Stage, System, Transform};
 
 const HEIGHT: f32 = 1.0;
 const SPEED: f32 = 2.0;
@@ -49,7 +49,7 @@ unsafe impl Sync for Handles {}
 static HANDLES: OnceLock<Handles> = OnceLock::new();
 
 fn load(app: &mut App) -> Result<(), Error> {
-    let transform = app.lookup::<Transform>("voxl.Transform")?;
+    let transform = app.lookup::<Transform>("mira.Transform")?;
     let cell = app.lookup::<Cell>("demo.Cell")?;
     let rider = app.register::<Rider>("wave.Rider")?;
 
@@ -59,7 +59,7 @@ fn load(app: &mut App) -> Result<(), Error> {
         (*state).loads += 1;
         (*state).loads
     };
-    voxl_plugin::info!("wave loaded ({loads} time(s) this run)");
+    mira_plugin::info!("wave loaded ({loads} time(s) this run)");
     let _ = HANDLES.set(Handles { rider, state });
 
     app.add_system(
@@ -108,4 +108,4 @@ fn ride(system: &mut System) {
     }
 }
 
-voxl_plugin::export_plugin!(load);
+mira_plugin::export_plugin!(load);

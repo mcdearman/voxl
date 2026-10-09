@@ -7,14 +7,14 @@ set -eu
 cd "$(dirname "$0")/.."
 version=$1
 target=$2
-name="voxl-$version-$target"
+name="mira-$version-$target"
 stage="dist/$name"
 
 rm -rf "$stage"
 mkdir -p "$stage/bin" "$stage/crates"
-cp target/release/examples/host "$stage/bin/voxl-host"
+cp target/release/examples/host "$stage/bin/mira-host"
 cp -R include bindings plugins "$stage/"
-cp -R crates/voxl_plugin "$stage/crates/"
+cp -R crates/mira_plugin "$stage/crates/"
 cp README.md LICENSE docs/PLUGINS.md "$stage/"
 # The example plugins expect to be built from a checkout; say so rather than ship scripts
 # that point at paths the package doesn't have.

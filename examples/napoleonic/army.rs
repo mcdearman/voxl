@@ -3,7 +3,7 @@
 
 use std::f32::consts::PI;
 
-use voxl::{
+use mira::{
     glam::{Vec2, Vec3},
     prelude::*,
     render::{GltfScene, Image},

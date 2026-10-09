@@ -4,7 +4,7 @@
 
 use std::f32::consts::{PI, TAU};
 
-use voxl::{glam::Vec2, prelude::*};
+use mira::{glam::Vec2, prelude::*};
 
 use crate::{crowd::Person, square::ROUTE};
 

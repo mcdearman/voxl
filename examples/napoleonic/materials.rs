@@ -6,7 +6,7 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::Context;
-use voxl::render::Image;
+use mira::render::Image;
 
 pub const ASSETS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/res/napoleonic");
 
@@ -165,7 +165,7 @@ fn canvas() -> (Image, Image) {
     let n = SIZE as usize;
     let mut albedo = Vec::with_capacity(n * n * 4);
     let mut normal = Vec::with_capacity(n * n * 4);
-    let noise = |x: f32, y: f32, s: f32| voxl::voxel::fbm(91, voxl::glam::Vec3::new(x * s, y * s, 0.0), 4);
+    let noise = |x: f32, y: f32, s: f32| mira::voxel::fbm(91, mira::glam::Vec3::new(x * s, y * s, 0.0), 4);
     for y in 0..n {
         for x in 0..n {
             let (fx, fy) = (x as f32, y as f32);

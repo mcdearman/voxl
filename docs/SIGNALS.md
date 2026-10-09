@@ -110,7 +110,7 @@ example to try it on (it has no window; it only runs and listens):
 
 ```sh
 cargo run --example sacred_sites        # the game
-cargo run --bin voxl-debug -- watch     # in another terminal
+cargo run --bin mira-debug -- watch     # in another terminal
 ```
 
 ```text
@@ -132,10 +132,10 @@ not zero), `*` changed on the last update, `!` is forced. Change the graph from 
 terminal and watch it follow:
 
 ```sh
-cargo run --bin voxl-debug -- signal_set name=win_after value=30
-cargo run --bin voxl-debug -- signal_force name=blue.contesting value=false
-cargo run --bin voxl-debug -- signal_connect name=red.clock.running input=1 to=always
-cargo run --bin voxl-debug -- signal_define name=blue.calm op=held_for seconds=3 inputs='["blue.away"]'
+cargo run --bin mira-debug -- signal_set name=win_after value=30
+cargo run --bin mira-debug -- signal_force name=blue.contesting value=false
+cargo run --bin mira-debug -- signal_connect name=red.clock.running input=1 to=always
+cargo run --bin mira-debug -- signal_define name=blue.calm op=held_for seconds=3 inputs='["blue.away"]'
 ```
 
 ## From a plugin
@@ -160,7 +160,7 @@ comparisons (`.<.`, `.>=.`, …) combine them, `+` adds, and `timer`, `timerRese
 parts after the rule (`red.clock#1`, …), so the whole of it shows in the graph and can be
 rewired there. `defineSignal` defines one node at a time, as the other languages do.
 
-In C these are `signal_set`, `signal_get` and `signal_define` in `include/voxl.h`; in Rust,
+In C these are `signal_set`, `signal_get` and `signal_define` in `include/mira.h`; in Rust,
 `System::set_signal`, `signal`, `define_signal`. What a plugin sets in one frame the graph has
 in the next. Defining the same rule again changes nothing, so a plugin can define its rules
 every frame or once; either way they are there again after a reload, with their clocks intact.

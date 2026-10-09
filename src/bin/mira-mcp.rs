@@ -1,13 +1,13 @@
-//! An MCP server for a running voxl game: lets an AI agent see the scene and read and change
+//! An MCP server for a running mira game: lets an AI agent see the scene and read and change
 //! the game's state. An MCP client starts this and talks to it over standard input and
 //! output; this talks to the game over its debug connection.
 //!
 //! ```sh
-//! VOXL_DEBUG=127.0.0.1:7878 cargo run --example host -- chase     # the game
-//! claude mcp add voxl -- cargo run --quiet --bin voxl-mcp          # tell an agent about it
+//! MIRA_DEBUG=127.0.0.1:7878 cargo run --example host -- chase     # the game
+//! claude mcp add mira -- cargo run --quiet --bin mira-mcp          # tell an agent about it
 //! ```
 //!
-//! The game is found at `--at address`, else at `VOXL_DEBUG`, else at 127.0.0.1:7878. It
+//! The game is found at `--at address`, else at `MIRA_DEBUG`, else at 127.0.0.1:7878. It
 //! doesn't have to be running when this starts: each tool call connects afresh, and says so
 //! if nothing answers. See `docs/MCP.md`.
 
@@ -18,7 +18,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use voxl::{
+use mira::{
     mcp::{handle_message, Game},
     reflect::{json, Value},
 };
@@ -41,7 +41,7 @@ impl Game for Remote {
         };
         let line = exchange().map_err(|err| {
             format!(
-                "no game answered at {}: {err}. Start one with VOXL_DEBUG={} set.",
+                "no game answered at {}: {err}. Start one with MIRA_DEBUG={} set.",
                 self.address, self.address
             )
         })?;
@@ -57,7 +57,7 @@ impl Game for Remote {
     fn screenshot(&mut self, width: u32) -> Result<Vec<u8>, String> {
         self.shots += 1;
         let path: PathBuf = std::env::temp_dir().join(format!(
-            "voxl-mcp-{}-{}.png",
+            "mira-mcp-{}-{}.png",
             std::process::id(),
             self.shots
         ));
@@ -106,7 +106,7 @@ fn shrink(frame: image::DynamicImage, width: u32) -> Result<Vec<u8>, String> {
 
 fn main() {
     let mut args = std::env::args().skip(1);
-    let mut address = std::env::var("VOXL_DEBUG").unwrap_or_else(|_| "127.0.0.1:7878".to_owned());
+    let mut address = std::env::var("MIRA_DEBUG").unwrap_or_else(|_| "127.0.0.1:7878".to_owned());
     while let Some(arg) = args.next() {
         if arg == "--at" {
             address = args.next().unwrap_or(address);

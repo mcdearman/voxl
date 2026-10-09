@@ -1,7 +1,0 @@
-[package]
-name = "voxl_plugin"
-version = "0.1.0"
-edition = "2021"
-description = "Rust bindings for writing voxl native plugins (mirrors include/voxl.h)"
-
-[dependencies]

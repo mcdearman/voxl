@@ -1,6 +1,6 @@
-# voxl roadmap
+# mira roadmap
 
-Where voxl is going: a general-purpose engine in the class of Unreal, with voxel worlds as the
+Where mira is going: a general-purpose engine in the class of Unreal, with voxel worlds as the
 thing it does better than anyone. This is a long road. The plan is ordered so that every phase
 leaves the engine more usable than before, and so that later phases stand on earlier ones
 instead of being rewritten.
@@ -23,7 +23,7 @@ A phase is not done until its exit test passes. Tick items off here as they land
 | Simulation | Rigid bodies with sleeping, joints, character controller, fluids; shapes: sphere, box, capsule, plane, static triangle mesh | Convex hulls, continuous collision, ragdolls, vehicles, cloth, destruction |
 | Animation | Clips, cross-fades, masks, two-bone IK, procedural gait | State machines, blend trees, retargeting, skins loaded from glTF, compression |
 | Runtime | Keyboard and mouse | UI, text, audio, gamepad, input mapping, navigation, AI, networking, scripting, save games |
-| Plugins | Native plugins over a C interface (`include/voxl.h`) in any language, hot-reloaded with their data intact; Rust bindings | Most of the engine is not reachable from a plugin yet (see Phase 1A) |
+| Plugins | Native plugins over a C interface (`include/mira.h`) in any language, hot-reloaded with their data intact; Rust bindings | Most of the engine is not reachable from a plugin yet (see Phase 1A) |
 | Tools | Screenshot capture, 62 tests, CI on Linux and macOS with clippy and Miri | Editor, profiler, image-diff tests |
 
 ## Principles
@@ -43,12 +43,12 @@ A phase is not done until its exit test passes. Tick items off here as they land
 
 Make the project safe to change quickly.
 
-- [ ] Split into a workspace: `voxl_ecs`, `voxl_core`, `voxl_render`, `voxl_voxel`, `voxl_physics`
-      (the workspace exists, with `voxl_plugin` and the example plugins as members; the engine
+- [ ] Split into a workspace: `mira_ecs`, `mira_core`, `mira_render`, `mira_voxel`, `mira_physics`
+      (the workspace exists, with `mira_plugin` and the example plugins as members; the engine
       itself is still one crate)
 - [x] CI on macOS and Linux: build, test, clippy, Miri on the ECS (written; not yet seen to
       pass on GitHub)
-- [ ] Image-diff tests: render fixed scenes with `VOXL_SCREENSHOT` and compare to stored frames
+- [ ] Image-diff tests: render fixed scenes with `MIRA_SCREENSHOT` and compare to stored frames
 - [ ] CPU and GPU frame profiler (spans per system, timestamp queries per pass), on screen
 - [ ] Benchmarks for ECS iteration, chunk meshing and a standard frame
 
@@ -58,7 +58,7 @@ Make the project safe to change quickly.
 
 Pulled forward from Phase 9 at Chris's request (October 2026): hot reload and plugins are a
 priority, and plugins may be written in any language that can speak a C interface. The
-contract is `include/voxl.h`; see [PLUGINS.md](PLUGINS.md).
+contract is `include/mira.h`; see [PLUGINS.md](PLUGINS.md).
 
 - [x] Components defined at runtime by name, size and alignment, checked by the same access
       rules as Rust components
@@ -67,7 +67,7 @@ contract is `include/voxl.h`; see [PLUGINS.md](PLUGINS.md).
 - [x] Loading shared libraries, with interface-version checking
 - [x] Hot reload: a rebuilt plugin replaces itself in the running app, keeping component data,
       state and system order; a broken rebuild leaves the old version running
-- [x] Rust bindings (`crates/voxl_plugin`) and example plugins in Rust and C
+- [x] Rust bindings (`crates/mira_plugin`) and example plugins in Rust and C
 - [x] Haskell as the default plugin language: typed bindings (`bindings/haskell`), an example
       plugin, and hot reload that survives garbage collection. Meadow is meant to take over
       this role when it is ready.
@@ -113,7 +113,7 @@ being able to see inside.
       entities, read and change any registered component or resource by name, spawn and
       despawn, save the scene, pause and step, see failures with their stacks, reload
       plugins, read and rewire the signal graph
-- [x] A command-line client for it (`voxl-debug`)
+- [x] A command-line client for it (`mira-debug`)
 - [ ] The same protocol under the editor (Phase 5); pushing changes to a client that is
       watching, instead of being asked
 - [ ] Hot reload of the host's own Rust systems, not only plugins (the engine as a library the
@@ -137,7 +137,7 @@ development as fully as a person at an editor: see the scene, know everything ab
 game's state, change it, and control time and code. The means is the Model Context Protocol
 (MCP), on top of the debug connection of Phase 1B ([LIVE.md](LIVE.md)).
 
-- [x] An MCP server (`voxl-mcp`, JSON-RPC over stdio) that connects to a running game by its
+- [x] An MCP server (`mira-mcp`, JSON-RPC over stdio) that connects to a running game by its
       debug address, with a tool for every command of the debug connection: entities,
       components and resources by name, spawn and despawn, systems, failures with stacks,
       pause, step, rewind, time scale, signals, plugin reload, scene save; see
@@ -246,7 +246,7 @@ derived from other values, which the engine keeps true.
 - [ ] Saving and loading a signal graph; signals carrying entities
 - [x] The signal graph over the debug connection: read every node and its value, set
       constants, connect inputs, force outputs, define and remove nodes, while the game runs
-- [x] A signal graph viewer in the terminal (`voxl-debug watch`): which signals are active as
+- [x] A signal graph viewer in the terminal (`mira-debug watch`): which signals are active as
       you play, what feeds what, what just changed; edited live from a second terminal
 - [ ] When there is a GUI (Chris, October 2026): `examples/sacred_sites` as a 3D game under an
       orthographic camera, with the signal graph shown live inside it. Needs an orthographic
@@ -306,7 +306,7 @@ editor needs from it.
 
 ## Phase 6: Dynamic global illumination (XL)
 
-voxl's answer to Lumen. The voxel grid is the advantage: rays can step through it on any GPU.
+mira's answer to Lumen. The voxel grid is the advantage: rays can step through it on any GPU.
 
 - [ ] Block occupancy as a 3D texture clipmap, with a distance field for fast stepping
 - [ ] Meshes join the same scene through per-mesh distance fields
@@ -320,7 +320,7 @@ second, on Metal.
 
 ## Phase 7: Virtualized geometry and textures (XL)
 
-voxl's answer to Nanite.
+mira's answer to Nanite.
 
 - [ ] Meshlets and a cluster hierarchy built at import (meshoptimizer)
 - [ ] Per-cluster LOD selection and two-pass occlusion culling on the GPU
@@ -353,7 +353,7 @@ depends on resolution rather than scene size.
 - [ ] Pipeline caching, crash reports, localization, accessibility settings
 - [ ] Documentation, a book, and sample projects
 
-**Exit test:** someone who has never seen voxl builds and ships a game with it from the docs.
+**Exit test:** someone who has never seen mira builds and ships a game with it from the docs.
 
 ## What can run alongside
 

@@ -1,6 +1,6 @@
 {-# LANGUAGE ForeignFunctionInterface #-}
 
--- | An example voxl plugin in Haskell: turns the grid of cubes in the `plugins` example
+-- | An example mira plugin in Haskell: turns the grid of cubes in the `plugins` example
 -- about its centre, a ring at a time.
 --
 -- Build it with @plugins/swirl/build.sh@, run @cargo run --example plugins@, then change a
@@ -10,7 +10,7 @@ module Swirl where
 
 import Foreign (Ptr, Storable (..), castPtr, peekElemOff, pokeElemOff)
 import Foreign.C.Types (CInt (..))
-import Voxl
+import Mira
 
 -- | Turns per second at the centre; rings further out lag behind.
 speed :: Float
@@ -35,11 +35,11 @@ instance Storable Orbit where
   peek ptr = Orbit <$> peek (castPtr ptr)
   poke ptr (Orbit angle) = poke (castPtr ptr) angle
 
-foreign export ccall "voxl_hs_main" pluginMain :: Ptr () -> IO CInt
+foreign export ccall "mira_hs_main" pluginMain :: Ptr () -> IO CInt
 
 pluginMain :: Ptr () -> IO CInt
 pluginMain = plugin $ \app -> do
-  transform <- lookupComponent app "voxl.Transform"
+  transform <- lookupComponent app "mira.Transform"
   cell <- lookupComponent app "demo.Cell"
   orbit <- registerComponent app "swirl.Orbit"
 

@@ -12,7 +12,7 @@
 
 use std::path::PathBuf;
 
-use voxl::{plugin::cargo_library_path, prelude::*, render::Screenshot};
+use mira::{plugin::cargo_library_path, prelude::*, render::Screenshot};
 
 fn main() -> anyhow::Result<()> {
     let plugins: Vec<String> = std::env::args().skip(1).collect();
@@ -24,7 +24,7 @@ fn main() -> anyhow::Result<()> {
     app.add_plugins(DefaultPlugins)
         .add_plugins(PhysicsPlugin)
         .insert_resource(WindowSettings {
-            title: format!("voxl: {}", plugins.join(", ")),
+            title: format!("mira: {}", plugins.join(", ")),
             ..Default::default()
         })
         .add_systems(Stage::Update, (quit, screenshot));
@@ -46,7 +46,7 @@ fn quit(keys: Res<ButtonInput<KeyCode>>, mut exit: EventWriter<AppExit>) {
     }
 }
 
-/// `VOXL_SCREENSHOT=<path>` saves a frame a few seconds in and quits, for checking a plugin
+/// `MIRA_SCREENSHOT=<path>` saves a frame a few seconds in and quits, for checking a plugin
 /// from a script.
 fn screenshot(
     time: Res<Time>,
@@ -54,7 +54,7 @@ fn screenshot(
     mut exit: EventWriter<AppExit>,
     mut requested: Local<bool>,
 ) {
-    let Ok(path) = std::env::var("VOXL_SCREENSHOT") else {
+    let Ok(path) = std::env::var("MIRA_SCREENSHOT") else {
         return;
     };
     if !*requested && time.elapsed_secs() > 3.0 {

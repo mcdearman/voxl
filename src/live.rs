@@ -48,7 +48,7 @@ impl std::fmt::Display for Failure {
 #[derive(Debug)]
 pub struct Live {
     /// Whether a system that panics is caught, suspended and reported, instead of taking the
-    /// game down. On in debug builds; `VOXL_LIVE=1` or `=0` overrides.
+    /// game down. On in debug builds; `MIRA_LIVE=1` or `=0` overrides.
     pub catch_failures: bool,
     /// Whether a caught failure also pauses the game. The game resumes by itself when the
     /// code that failed has been replaced (a plugin reloaded), or when told to.
@@ -66,7 +66,7 @@ pub struct Live {
 
 impl Default for Live {
     fn default() -> Self {
-        let catch_failures = match std::env::var("VOXL_LIVE").as_deref() {
+        let catch_failures = match std::env::var("MIRA_LIVE").as_deref() {
             Ok("0") => false,
             Ok(_) => true,
             Err(_) => cfg!(debug_assertions),

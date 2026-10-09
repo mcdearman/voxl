@@ -6,7 +6,7 @@
 //! doesn't compile, or no longer fits its pipeline, the error is logged and the old pipelines
 //! stay.
 //!
-//! Reading from disk is on in debug builds and off in release builds; `VOXL_HOT_SHADERS=1`
+//! Reading from disk is on in debug builds and off in release builds; `MIRA_HOT_SHADERS=1`
 //! or `=0` overrides either way.
 
 use std::{
@@ -34,7 +34,7 @@ pub struct Shader {
 /// be reloaded while the app runs.
 ///
 /// ```ignore
-/// let module = voxl::shader!("water.wgsl").module(&gpu.device);
+/// let module = mira::shader!("water.wgsl").module(&gpu.device);
 /// ```
 #[macro_export]
 macro_rules! shader {
@@ -50,7 +50,7 @@ macro_rules! shader {
 
 fn enabled() -> bool {
     static ENABLED: OnceLock<bool> = OnceLock::new();
-    *ENABLED.get_or_init(|| match std::env::var("VOXL_HOT_SHADERS").as_deref() {
+    *ENABLED.get_or_init(|| match std::env::var("MIRA_HOT_SHADERS").as_deref() {
         Ok("1") => true,
         Ok("0") => false,
         _ => cfg!(debug_assertions),

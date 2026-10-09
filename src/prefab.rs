@@ -167,11 +167,11 @@ fn read(path: &std::path::Path) -> Option<Arc<Scene>> {
 /// One difference between an instance and its prefab: a field of a component of one of the
 /// prefab's entities, set to another value.
 #[derive(Clone, Debug, PartialEq, Reflect)]
-#[reflect(name = "voxl.PrefabOverride")]
+#[reflect(name = "mira.PrefabOverride")]
 pub struct PrefabOverride {
     /// Which of the prefab's entities, counting from 0 in the prefab's order.
     pub entity: u32,
-    /// The component's name, as in a scene file: `voxl.Transform`.
+    /// The component's name, as in a scene file: `mira.Transform`.
     pub component: String,
     /// The field to set, as a path (`translation.1`, `color.r`); empty for the whole
     /// component, which also adds a component the prefab's entity doesn't have.
@@ -181,7 +181,7 @@ pub struct PrefabOverride {
 
 /// Puts a prefab's entities below this entity. Give the entity a `Transform` to place them.
 #[derive(Clone, Debug, Default, Reflect)]
-#[reflect(name = "voxl.PrefabInstance")]
+#[reflect(name = "mira.PrefabInstance")]
 pub struct PrefabInstance {
     /// The prefab's name: a file, relative to the asset server's root, or a name given to
     /// [`Prefabs::insert`].
@@ -511,11 +511,11 @@ mod tests {
         let odd = world.spawn((
             Transform::IDENTITY,
             PrefabInstance::new("lamp")
-                .with_override(1, "voxl.Transform", "scale.0", 2.0f32)
+                .with_override(1, "mira.Transform", "scale.0", 2.0f32)
                 // Three that can't be applied are reported and change nothing else.
-                .with_override(1, "voxl.Transform", "colour", 1.0f32)
-                .with_override(7, "voxl.Transform", "scale.0", 2.0f32)
-                .with_override(0, "voxl.Transform", "scale", "wide".to_owned()),
+                .with_override(1, "mira.Transform", "colour", 1.0f32)
+                .with_override(7, "mira.Transform", "scale.0", 2.0f32)
+                .with_override(0, "mira.Transform", "scale", "wide".to_owned()),
         ));
         update_prefabs(&mut world);
         let light = |world: &World, instance| {
@@ -535,7 +535,7 @@ mod tests {
         // A difference added later rebuilds the instance, and it is saved with the level.
         world.get_mut::<PrefabInstance>(odd).unwrap().set_override(
             0,
-            "voxl.PrefabInstance",
+            "mira.PrefabInstance",
             "",
             PrefabInstance::new("lamp"),
         );
@@ -558,7 +558,7 @@ mod tests {
         let (_, instance) = saved
             .components
             .iter()
-            .find(|(name, _)| name == "voxl.PrefabInstance")
+            .find(|(name, _)| name == "mira.PrefabInstance")
             .unwrap();
         assert_eq!(
             instance.get_path("overrides.0.value"),
@@ -615,7 +615,7 @@ mod tests {
 
     #[test]
     fn a_prefab_file_is_made_from_a_subtree_and_reloads_when_saved() {
-        let dir = std::env::temp_dir().join(format!("voxl-prefab-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("mira-prefab-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
 
@@ -632,7 +632,7 @@ mod tests {
                 assert!(scene.entities[0]
                     .components
                     .iter()
-                    .all(|(name, _)| name != "voxl.Parent"));
+                    .all(|(name, _)| name != "mira.Parent"));
                 scene.save(dir.join("lamp.json")).unwrap();
             });
         };

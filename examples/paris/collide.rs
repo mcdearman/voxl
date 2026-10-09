@@ -5,7 +5,7 @@
 //! The crowd and the animals steer round each other, but steering is a wish, not a wall; this
 //! runs first each frame and settles whatever overlaps remain.
 
-use voxl::{glam::Vec2, prelude::*};
+use mira::{glam::Vec2, prelude::*};
 
 use crate::{
     animals::{Beast, Kind},

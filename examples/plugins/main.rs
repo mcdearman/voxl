@@ -12,7 +12,7 @@
 //! plugins/swirl/build.sh
 //! ```
 
-use voxl::{plugin::cargo_library_path, prelude::*, render::Screenshot};
+use mira::{plugin::cargo_library_path, prelude::*, render::Screenshot};
 
 /// Where a cube sits on the grid. Exported to plugins as `demo.Cell`, so its layout is part
 /// of the contract with them: `#[repr(C)]`, two floats.
@@ -28,7 +28,7 @@ fn main() -> anyhow::Result<()> {
     let mut app = App::new();
     app.add_plugins(DefaultPlugins)
         .insert_resource(WindowSettings {
-            title: "voxl plugins: edit a plugin in plugins/ and rebuild it".into(),
+            title: "mira plugins: edit a plugin in plugins/ and rebuild it".into(),
             ..Default::default()
         })
         .add_systems(Stage::Startup, setup)
@@ -90,7 +90,7 @@ fn quit(keys: Res<ButtonInput<KeyCode>>, mut exit: EventWriter<AppExit>) {
     }
 }
 
-/// `VOXL_SCREENSHOT=<path>` saves a frame a few seconds in and quits, for checking the
+/// `MIRA_SCREENSHOT=<path>` saves a frame a few seconds in and quits, for checking the
 /// example from a script.
 fn screenshot(
     time: Res<Time>,
@@ -98,7 +98,7 @@ fn screenshot(
     mut exit: EventWriter<AppExit>,
     mut requested: Local<bool>,
 ) {
-    let Ok(path) = std::env::var("VOXL_SCREENSHOT") else {
+    let Ok(path) = std::env::var("MIRA_SCREENSHOT") else {
         return;
     };
     if !*requested && time.elapsed_secs() > 3.0 {

@@ -1,20 +1,20 @@
 # Hot reload
 
-Three kinds of thing can be changed while a voxl app is running. Each is watched on disk,
+Three kinds of thing can be changed while a mira app is running. Each is watched on disk,
 reloaded a moment after it is saved, and left as it was if the new version is broken.
 
 | What | How to use it | When it is on |
 |---|---|---|
 | Gameplay code | Write it as a [native plugin](PLUGINS.md) | Always, unless `app.native_plugins().hot_reload = false` |
-| Shaders | Name them with `shader!` instead of `include_str!` | Debug builds; `VOXL_HOT_SHADERS=1` or `=0` overrides |
+| Shaders | Name them with `shader!` instead of `include_str!` | Debug builds; `MIRA_HOT_SHADERS=1` or `=0` overrides |
 | Textures | Load them through the `AssetServer` | Debug builds; `AssetServer::hot_reload` overrides |
 
 ## Shaders
 
 ```rust
-let module = voxl::shader!("water.wgsl").module(&gpu.device);
+let module = mira::shader!("water.wgsl").module(&gpu.device);
 // or, to prepend the engine's lighting code:
-let source = format!("{}\n{}", gpu.pbr_wgsl(), voxl::shader!("water.wgsl").source());
+let source = format!("{}\n{}", gpu.pbr_wgsl(), mira::shader!("water.wgsl").source());
 ```
 
 `shader!` names a WGSL file beside the current source file, like `include_str!`. The file is

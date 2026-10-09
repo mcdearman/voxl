@@ -1,7 +1,7 @@
 //! Woodsmoke from the chimneys, as soft, lit, semi-transparent billboards (from the Napoleonic
 //! demo's smoke).
 
-use voxl::{
+use mira::{
     glam::{Vec2, Vec3},
     prelude::*,
     render::{

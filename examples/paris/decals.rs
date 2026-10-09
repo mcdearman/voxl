@@ -3,7 +3,7 @@
 //! dung and straw of a city that runs on horses. Each is a colour texture whose alpha says how
 //! much of it covers the surface beneath.
 
-use voxl::{glam::Vec3, prelude::*, render::Image, voxel::value_noise};
+use mira::{glam::Vec3, prelude::*, render::Image, voxel::value_noise};
 
 const SIZE: usize = 512;
 

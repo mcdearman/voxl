@@ -1,10 +1,10 @@
 //! Native plugins: shared libraries, in any language that can export C functions, that add
 //! components and systems to a running app and are reloaded when they are rebuilt.
 //!
-//! The contract is `include/voxl.h`. A plugin exports `voxl_plugin_abi_version`,
-//! `voxl_plugin_load` and (optionally) `voxl_plugin_unload`; the engine hands it a table of
+//! The contract is `include/mira.h`. A plugin exports `mira_plugin_abi_version`,
+//! `mira_plugin_load` and (optionally) `mira_plugin_unload`; the engine hands it a table of
 //! functions for defining components, adding systems and, inside a system, walking a query
-//! and queueing changes. Rust plugins use the `voxl_plugin` crate over the same interface.
+//! and queueing changes. Rust plugins use the `mira_plugin` crate over the same interface.
 //!
 //! # Hot reload
 //!
@@ -44,7 +44,7 @@ use std::{
 
 use anyhow::{bail, Context as _};
 use libloading::Library;
-use voxl_plugin::sys::{self, VoxlApi, VoxlApp};
+use mira_plugin::sys::{self, MiraApi, MiraApp};
 
 use self::api::{Registrar, StateBlock};
 use crate::{
@@ -63,7 +63,7 @@ const STAGES: [Stage; 7] = [
     Stage::Last,
 ];
 
-type LoadFn = unsafe extern "C" fn(*const VoxlApi, *mut VoxlApp) -> i32;
+type LoadFn = unsafe extern "C" fn(*const MiraApi, *mut MiraApp) -> i32;
 
 /// A file's modification time and size: enough to tell that it was rebuilt.
 type Stamp = (SystemTime, u64);
@@ -144,7 +144,7 @@ struct Loaded {
     /// Runtime-defined components whose destructors live in `library`.
     components: Vec<u32>,
     generation: u32,
-    /// The plugin asked never to be unmapped (`VOXL_PLUGIN_KEEP_LOADED`).
+    /// The plugin asked never to be unmapped (`MIRA_PLUGIN_KEEP_LOADED`).
     keep_loaded: bool,
 }
 
@@ -310,7 +310,7 @@ fn install(app: &mut App, plugin: &mut Loaded) -> anyhow::Result<()> {
     let version =
         stamp(&plugin.source).with_context(|| format!("can't read {}", plugin.source.display()))?;
 
-    let dir = std::env::temp_dir().join("voxl-plugins");
+    let dir = std::env::temp_dir().join("mira-plugins");
     std::fs::create_dir_all(&dir)?;
     static SWEEP: std::sync::Once = std::sync::Once::new();
     SWEEP.call_once(|| sweep_stale_copies(&dir));
@@ -343,21 +343,21 @@ fn install(app: &mut App, plugin: &mut Loaded) -> anyhow::Result<()> {
         let library = Library::new(copy.0.as_ref().unwrap())
             .with_context(|| format!("can't open {}", plugin.source.display()))?;
         let abi = *library
-            .get::<unsafe extern "C" fn() -> u32>(b"voxl_plugin_abi_version\0")
-            .context("it doesn't export `voxl_plugin_abi_version`")?;
+            .get::<unsafe extern "C" fn() -> u32>(b"mira_plugin_abi_version\0")
+            .context("it doesn't export `mira_plugin_abi_version`")?;
         let abi = abi();
-        if abi != sys::VOXL_ABI_VERSION {
+        if abi != sys::MIRA_ABI_VERSION {
             bail!(
                 "it was built for plugin interface version {abi}, and this engine speaks \
                  version {}",
-                sys::VOXL_ABI_VERSION
+                sys::MIRA_ABI_VERSION
             );
         }
         let load = *library
-            .get::<LoadFn>(b"voxl_plugin_load\0")
-            .context("it doesn't export `voxl_plugin_load`")?;
+            .get::<LoadFn>(b"mira_plugin_load\0")
+            .context("it doesn't export `mira_plugin_load`")?;
         let flags = library
-            .get::<unsafe extern "C" fn() -> u32>(b"voxl_plugin_flags\0")
+            .get::<unsafe extern "C" fn() -> u32>(b"mira_plugin_flags\0")
             .map_or(0, |flags| flags());
         (library, load, flags)
     };
@@ -365,7 +365,7 @@ fn install(app: &mut App, plugin: &mut Loaded) -> anyhow::Result<()> {
     // From here on the old version is being replaced.
     let first_load = plugin.generation == 0;
     retire(app, plugin);
-    plugin.keep_loaded = flags & sys::VOXL_PLUGIN_KEEP_LOADED != 0;
+    plugin.keep_loaded = flags & sys::MIRA_PLUGIN_KEEP_LOADED != 0;
     plugin.generation += 1;
     plugin.current = Some(version);
     plugin.rejected = None;
@@ -439,7 +439,7 @@ fn retire(app: &mut App, plugin: &mut Loaded) {
     }
     // SAFETY: calling into the plugin, as trusted as when it was loaded.
     unsafe {
-        if let Ok(unload) = library.get::<unsafe extern "C" fn()>(b"voxl_plugin_unload\0") {
+        if let Ok(unload) = library.get::<unsafe extern "C" fn()>(b"mira_plugin_unload\0") {
             unload();
         }
     }

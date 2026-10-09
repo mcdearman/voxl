@@ -1,5 +1,5 @@
-// Lets the derive macros name this crate as `::voxl` from inside it too.
-extern crate self as voxl;
+// Lets the derive macros name this crate as `::mira` from inside it too.
+extern crate self as mira;
 
 pub mod app;
 pub mod asset_server;

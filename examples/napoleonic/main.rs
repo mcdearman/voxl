@@ -22,7 +22,7 @@ mod terrain;
 mod vegetation;
 mod world;
 
-use voxl::{glam::Vec2, prelude::*, render::Screenshot};
+use mira::{glam::Vec2, prelude::*, render::Screenshot};
 
 fn main() -> anyhow::Result<()> {
     let sky = std::fs::read(materials::asset("sky/sky_4k.hdr"))?;
@@ -31,7 +31,7 @@ fn main() -> anyhow::Result<()> {
     let environment = Environment::from_hdr_with_sun(&sky, Vec3::new(-0.55, 0.0, 0.56))?;
     App::new()
         .insert_resource(WindowSettings {
-            title: "voxl — France, 1813".into(),
+            title: "mira — France, 1813".into(),
             ..Default::default()
         })
         .insert_resource(environment)
@@ -149,18 +149,18 @@ fn setup(mut commands: Commands, environment: Res<Environment>) {
 }
 
 /// Where the player starts, which way they look, and whether they're flying.
-/// `VOXL_VIEW=x,height,z,yaw_degrees,pitch_degrees` starts in the air somewhere else (height
+/// `MIRA_VIEW=x,height,z,yaw_degrees,pitch_degrees` starts in the air somewhere else (height
 /// above the ground), which is handy
 /// for scripted screenshots.
 fn start_view() -> (Vec3, Vec3, bool) {
-    if let Ok(view) = std::env::var("VOXL_VIEW") {
+    if let Ok(view) = std::env::var("MIRA_VIEW") {
         let v: Vec<f32> = view.split(',').filter_map(|s| s.trim().parse().ok()).collect();
         if let [x, y, z, yaw, pitch] = v[..] {
             let rotation =
                 Quat::from_euler(EulerRot::YXZ, yaw.to_radians(), pitch.to_radians(), 0.0);
             return (Vec3::new(x, terrain::walk_height(x, z) + y, z), rotation * Vec3::NEG_Z, true);
         }
-        log::warn!("VOXL_VIEW should be x,y,z,yaw,pitch");
+        log::warn!("MIRA_VIEW should be x,y,z,yaw,pitch");
     }
     // Among the guns of the battery, looking east toward the butts; the battalion is off to
     // the left and the Emperor's knoll behind.
@@ -200,7 +200,7 @@ fn move_player(
 ) {
     let dt = time.delta_secs();
     // Scripted screenshots hold the view still, whatever the mouse does.
-    if std::env::var("VOXL_SCREENSHOT").is_ok() {
+    if std::env::var("MIRA_SCREENSHOT").is_ok() {
         return;
     }
     for (mut transform, mut player) in &mut players {
@@ -284,15 +284,15 @@ fn show_stats(
             .map_or("", |p| if p.flying { "flying" } else { "walking" });
         log::debug!("{:.0} fps", counter.frames as f32 / counter.elapsed);
         window.set_title(&format!(
-            "voxl — France, summer 1813 — {:.0} fps — {mode} (Tab to switch)",
+            "mira — France, summer 1813 — {:.0} fps — {mode} (Tab to switch)",
             counter.frames as f32 / counter.elapsed,
         ));
         *counter = FpsCounter::default();
     }
 }
 
-/// F2 saves a screenshot. `VOXL_SCREENSHOT=<path>` saves one after a few seconds and quits;
-/// `VOXL_SCREENSHOT_DELAY` sets how many.
+/// F2 saves a screenshot. `MIRA_SCREENSHOT=<path>` saves one after a few seconds and quits;
+/// `MIRA_SCREENSHOT_DELAY` sets how many.
 fn take_screenshot(
     time: Res<Time>,
     keys: Res<ButtonInput<KeyCode>>,
@@ -303,8 +303,8 @@ fn take_screenshot(
     if keys.just_pressed(KeyCode::F2) {
         screenshot.request(format!("screenshot-{}.png", time.frame_count()));
     }
-    if let Ok(path) = std::env::var("VOXL_SCREENSHOT") {
-        let delay = std::env::var("VOXL_SCREENSHOT_DELAY")
+    if let Ok(path) = std::env::var("MIRA_SCREENSHOT") {
+        let delay = std::env::var("MIRA_SCREENSHOT_DELAY")
             .ok()
             .and_then(|s| s.parse().ok())
             .unwrap_or(6.0);

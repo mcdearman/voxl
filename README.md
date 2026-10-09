@@ -1,4 +1,4 @@
-# voxl
+# mira
 
 A small game engine in Rust, built from scratch on winit and wgpu around a Bevy-style ECS,
 with voxel terrain.
@@ -43,7 +43,7 @@ Blender scripts in `examples/paris/tools`.
 
 Gameplay can live in native plugins: shared libraries in any language that can export C
 functions, reloaded while the app runs with the world's data intact. The contract is one
-header, `include/voxl.h`. See [docs/PLUGINS.md](docs/PLUGINS.md).
+header, `include/mira.h`. See [docs/PLUGINS.md](docs/PLUGINS.md).
 
 ```
 plugins/swirl/build.sh && cargo build -p wave && plugins/pulse/build.sh
@@ -100,5 +100,5 @@ Where the engine is headed: [docs/ROADMAP.md](docs/ROADMAP.md).
 ```
 cargo test
 cargo +nightly miri test --lib -- ecs::     # the ECS's unsafe code
-VOXL_SCREENSHOT=frame.png cargo run --release   # render a frame to a file and quit
+MIRA_SCREENSHOT=frame.png cargo run --release   # render a frame to a file and quit
 ```

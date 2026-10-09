@@ -1,8 +1,8 @@
 [package]
-name = "voxl_derive"
+name = "mira_derive"
 version = "0.1.0"
 edition = "2021"
-description = "Derive macros for voxl: Component and Reflect"
+description = "Derive macros for mira: Component and Reflect"
 
 [lib]
 proc-macro = true

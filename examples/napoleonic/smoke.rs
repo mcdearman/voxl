@@ -1,7 +1,7 @@
 //! Powder smoke, dust and woodsmoke as soft, lit, semi-transparent billboards; muzzle flashes
 //! as brief additive ones.
 
-use voxl::{
+use mira::{
     glam::{Vec2, Vec3},
     prelude::*,
     render::{

@@ -5,7 +5,7 @@
 #     scripts/check.sh --miri    also run the ECS tests under Miri (needs nightly + miri)
 #     scripts/check.sh --miri-only
 #
-# The Haskell plugin tests skip themselves when GHC isn't installed. Set VOXL_REQUIRE_GHC=1
+# The Haskell plugin tests skip themselves when GHC isn't installed. Set MIRA_REQUIRE_GHC=1
 # (as CI does) to make a missing GHC a failure instead.
 set -eu
 cd "$(dirname "$0")/.."
@@ -47,8 +47,8 @@ if command -v ghc >/dev/null 2>&1; then
         step "hlint"
         hlint bindings plugins
     fi
-elif [ "${VOXL_REQUIRE_GHC:-0}" = 1 ]; then
-    echo "GHC is required (VOXL_REQUIRE_GHC=1) but not installed" >&2
+elif [ "${MIRA_REQUIRE_GHC:-0}" = 1 ]; then
+    echo "GHC is required (MIRA_REQUIRE_GHC=1) but not installed" >&2
     exit 1
 else
     echo "GHC not installed: the Haskell plugins were not built"

@@ -10,23 +10,23 @@
 
 #include <stdlib.h>
 
-#include "voxl.h"
+#include "mira.h"
 
-/* Exported from Haskell: the plugin's own entry point, and two from the Voxl module. */
-extern int32_t voxl_hs_main(VoxlApp *app);
-extern void voxl_hs_dispatch(VoxlSystem *system, void *user);
-extern void voxl_hs_unload(void);
+/* Exported from Haskell: the plugin's own entry point, and two from the Mira module. */
+extern int32_t mira_hs_main(MiraApp *app);
+extern void mira_hs_dispatch(MiraSystem *system, void *user);
+extern void mira_hs_unload(void);
 
-static const VoxlApi *api;
+static const MiraApi *api;
 static int runtime_started;
 
-VOXL_EXPORT uint32_t voxl_plugin_abi_version(void) { return VOXL_ABI_VERSION; }
+MIRA_EXPORT uint32_t mira_plugin_abi_version(void) { return MIRA_ABI_VERSION; }
 
 /* The GHC runtime's garbage collector keeps pointers into every Haskell library it has run,
  * so an old version of the plugin must stay mapped after a reload. */
-VOXL_EXPORT uint32_t voxl_plugin_flags(void) { return VOXL_PLUGIN_KEEP_LOADED; }
+MIRA_EXPORT uint32_t mira_plugin_flags(void) { return MIRA_PLUGIN_KEEP_LOADED; }
 
-VOXL_EXPORT int32_t voxl_plugin_load(const VoxlApi *engine, VoxlApp *app) {
+MIRA_EXPORT int32_t mira_plugin_load(const MiraApi *engine, MiraApp *app) {
     api = engine;
     if (!runtime_started) {
         /* The runtime is shared by every Haskell plugin and every reloaded version (they link
@@ -47,41 +47,41 @@ VOXL_EXPORT int32_t voxl_plugin_load(const VoxlApi *engine, VoxlApp *app) {
         hs_init_ghc(NULL, NULL, config);
         runtime_started = 1;
     }
-    return voxl_hs_main(app);
+    return mira_hs_main(app);
 }
 
-VOXL_EXPORT void voxl_plugin_unload(void) { voxl_hs_unload(); }
+MIRA_EXPORT void mira_plugin_unload(void) { mira_hs_unload(); }
 
 /* Whether the old generation is being collected by the non-moving collector, for tests. */
-int32_t voxl_hs_nonmoving_gc(void) { return RtsFlags.GcFlags.useNonmoving ? 1 : 0; }
+int32_t mira_hs_nonmoving_gc(void) { return RtsFlags.GcFlags.useNonmoving ? 1 : 0; }
 
-void voxl_hs_log(uint32_t level, const char *message, size_t len) {
+void mira_hs_log(uint32_t level, const char *message, size_t len) {
     api->log(level, message, len);
 }
 
-uint32_t voxl_hs_component_register(VoxlApp *app, const char *name, size_t name_len, size_t size,
+uint32_t mira_hs_component_register(MiraApp *app, const char *name, size_t name_len, size_t size,
                                     size_t align) {
     return api->component_register(app, name, name_len, size, align, NULL);
 }
 
-uint32_t voxl_hs_component_lookup(VoxlApp *app, const char *name, size_t name_len, size_t *size,
+uint32_t mira_hs_component_lookup(MiraApp *app, const char *name, size_t name_len, size_t *size,
                                   size_t *align) {
     return api->component_lookup(app, name, name_len, size, align);
 }
 
-void *voxl_hs_state(VoxlApp *app, const char *name, size_t name_len, size_t size, size_t align) {
+void *mira_hs_state(MiraApp *app, const char *name, size_t name_len, size_t size, size_t align) {
     return api->state(app, name, name_len, size, align);
 }
 
 /* `closure` is a stable pointer to the Haskell function; every system runs through the one
  * dispatcher, which looks it up and calls it. */
-int32_t voxl_hs_system_add(VoxlApp *app, const char *name, size_t name_len, uint32_t stage,
-                           void *closure, const VoxlTerm *terms, size_t term_count) {
-    VoxlSystemDesc desc = {
+int32_t mira_hs_system_add(MiraApp *app, const char *name, size_t name_len, uint32_t stage,
+                           void *closure, const MiraTerm *terms, size_t term_count) {
+    MiraSystemDesc desc = {
         .name = name,
         .name_len = name_len,
         .stage = stage,
-        .run = voxl_hs_dispatch,
+        .run = mira_hs_dispatch,
         .user = closure,
         .terms = terms,
         .term_count = term_count,
@@ -89,34 +89,34 @@ int32_t voxl_hs_system_add(VoxlApp *app, const char *name, size_t name_len, uint
     return api->system_add(app, &desc);
 }
 
-float voxl_hs_delta_seconds(VoxlSystem *system) { return api->delta_seconds(system); }
-double voxl_hs_elapsed_seconds(VoxlSystem *system) { return api->elapsed_seconds(system); }
+float mira_hs_delta_seconds(MiraSystem *system) { return api->delta_seconds(system); }
+double mira_hs_elapsed_seconds(MiraSystem *system) { return api->elapsed_seconds(system); }
 
-uint8_t voxl_hs_query_next(VoxlSystem *system, VoxlEntity *entity, void **components) {
+uint8_t mira_hs_query_next(MiraSystem *system, MiraEntity *entity, void **components) {
     return api->query_next(system, entity, components);
 }
 
-uint8_t voxl_hs_query_get(VoxlSystem *system, VoxlEntity entity, void **components) {
+uint8_t mira_hs_query_get(MiraSystem *system, MiraEntity entity, void **components) {
     return api->query_get(system, entity, components);
 }
 
-VoxlEntity voxl_hs_spawn(VoxlSystem *system) { return api->spawn(system); }
-void voxl_hs_despawn(VoxlSystem *system, VoxlEntity entity) { api->despawn(system, entity); }
+MiraEntity mira_hs_spawn(MiraSystem *system) { return api->spawn(system); }
+void mira_hs_despawn(MiraSystem *system, MiraEntity entity) { api->despawn(system, entity); }
 
-void voxl_hs_insert(VoxlSystem *system, VoxlEntity entity, uint32_t component, const void *value) {
+void mira_hs_insert(MiraSystem *system, MiraEntity entity, uint32_t component, const void *value) {
     api->insert(system, entity, component, value);
 }
 
-void voxl_hs_remove(VoxlSystem *system, VoxlEntity entity, uint32_t component) {
+void mira_hs_remove(MiraSystem *system, MiraEntity entity, uint32_t component) {
     api->remove(system, entity, component);
 }
 
 /* Adds a system with any number of queries: `counts[i]` terms for query i, laid end to end in
  * `terms`. Query 0 is the system's own; the rest are added after it. */
-int32_t voxl_hs_system_add_queries(VoxlApp *app, const char *name, size_t name_len, uint32_t stage,
-                                   void *closure, const VoxlTerm *terms, const size_t *counts,
+int32_t mira_hs_system_add_queries(MiraApp *app, const char *name, size_t name_len, uint32_t stage,
+                                   void *closure, const MiraTerm *terms, const size_t *counts,
                                    size_t query_count) {
-    int32_t status = voxl_hs_system_add(app, name, name_len, stage, closure, terms,
+    int32_t status = mira_hs_system_add(app, name, name_len, stage, closure, terms,
                                         query_count ? counts[0] : 0);
     if (status != 0) return status;
     for (size_t query = 1; query < query_count; query++) {
@@ -127,117 +127,117 @@ int32_t voxl_hs_system_add_queries(VoxlApp *app, const char *name, size_t name_l
     return 0;
 }
 
-uint8_t voxl_hs_query_next_in(VoxlSystem *system, uint32_t query, VoxlEntity *entity,
+uint8_t mira_hs_query_next_in(MiraSystem *system, uint32_t query, MiraEntity *entity,
                               void **components) {
     return api->query_next_in(system, query, entity, components);
 }
 
-uint8_t voxl_hs_query_get_in(VoxlSystem *system, uint32_t query, VoxlEntity entity,
+uint8_t mira_hs_query_get_in(MiraSystem *system, uint32_t query, MiraEntity entity,
                              void **components) {
     return api->query_get_in(system, query, entity, components);
 }
 
-void voxl_hs_query_rewind(VoxlSystem *system, uint32_t query) { api->query_rewind(system, query); }
+void mira_hs_query_rewind(MiraSystem *system, uint32_t query) { api->query_rewind(system, query); }
 
-uint8_t voxl_hs_key_down(VoxlSystem *system, uint32_t key) { return api->key_down(system, key); }
-uint8_t voxl_hs_key_pressed(VoxlSystem *system, uint32_t key) {
+uint8_t mira_hs_key_down(MiraSystem *system, uint32_t key) { return api->key_down(system, key); }
+uint8_t mira_hs_key_pressed(MiraSystem *system, uint32_t key) {
     return api->key_pressed(system, key);
 }
-uint8_t voxl_hs_key_released(VoxlSystem *system, uint32_t key) {
+uint8_t mira_hs_key_released(MiraSystem *system, uint32_t key) {
     return api->key_released(system, key);
 }
-uint8_t voxl_hs_mouse_down(VoxlSystem *system, uint32_t button) {
+uint8_t mira_hs_mouse_down(MiraSystem *system, uint32_t button) {
     return api->mouse_down(system, button);
 }
-uint8_t voxl_hs_mouse_pressed(VoxlSystem *system, uint32_t button) {
+uint8_t mira_hs_mouse_pressed(MiraSystem *system, uint32_t button) {
     return api->mouse_pressed(system, button);
 }
-void voxl_hs_mouse_motion(VoxlSystem *system, float *delta) { api->mouse_motion(system, delta); }
+void mira_hs_mouse_motion(MiraSystem *system, float *delta) { api->mouse_motion(system, delta); }
 
-VoxlMesh voxl_hs_mesh_shape(VoxlSystem *system, uint32_t shape, float a) {
+MiraMesh mira_hs_mesh_shape(MiraSystem *system, uint32_t shape, float a) {
     return api->mesh_shape(system, shape, a);
 }
 
-VoxlMesh voxl_hs_mesh_create(VoxlSystem *system, const VoxlVertex *vertices, size_t vertex_count,
+MiraMesh mira_hs_mesh_create(MiraSystem *system, const MiraVertex *vertices, size_t vertex_count,
                              const uint32_t *indices, size_t index_count) {
     return api->mesh_create(system, vertices, vertex_count, indices, index_count);
 }
 
-void voxl_hs_set_mesh(VoxlSystem *system, VoxlEntity entity, VoxlMesh mesh) {
+void mira_hs_set_mesh(MiraSystem *system, MiraEntity entity, MiraMesh mesh) {
     api->set_mesh(system, entity, mesh);
 }
 
-void voxl_hs_set_material(VoxlSystem *system, VoxlEntity entity, const VoxlMaterial *material) {
+void mira_hs_set_material(MiraSystem *system, MiraEntity entity, const MiraMaterial *material) {
     api->set_material(system, entity, material);
 }
 
-uint32_t voxl_hs_event_register(VoxlApp *app, const char *name, size_t name_len, size_t size) {
+uint32_t mira_hs_event_register(MiraApp *app, const char *name, size_t name_len, size_t size) {
     return api->event_register(app, name, name_len, size);
 }
 
-void voxl_hs_event_send(VoxlSystem *system, uint32_t event, const void *value) {
+void mira_hs_event_send(MiraSystem *system, uint32_t event, const void *value) {
     api->event_send(system, event, value);
 }
 
-uint8_t voxl_hs_event_next(VoxlSystem *system, uint32_t event, void *value) {
+uint8_t mira_hs_event_next(MiraSystem *system, uint32_t event, void *value) {
     return api->event_next(system, event, value);
 }
 
 /* The structures below are small, so Haskell passes their fields and they are assembled here:
  * one definition of each layout (the header's) instead of a second one in Haskell. */
 
-void voxl_hs_set_camera(VoxlSystem *system, VoxlEntity entity, float fov_y, float near,
+void mira_hs_set_camera(MiraSystem *system, MiraEntity entity, float fov_y, float near,
                         uint32_t active) {
-    VoxlCamera camera = {fov_y, near, active};
+    MiraCamera camera = {fov_y, near, active};
     api->set_camera(system, entity, &camera);
 }
 
-void voxl_hs_set_light(VoxlSystem *system, VoxlEntity entity, float r, float g, float b,
+void mira_hs_set_light(MiraSystem *system, MiraEntity entity, float r, float g, float b,
                        float intensity, uint32_t shadows) {
-    VoxlLight light = {{r, g, b}, intensity, shadows};
+    MiraLight light = {{r, g, b}, intensity, shadows};
     api->set_light(system, entity, &light);
 }
 
-void voxl_hs_set_ambient(VoxlSystem *system, float r, float g, float b, float intensity) {
+void mira_hs_set_ambient(MiraSystem *system, float r, float g, float b, float intensity) {
     float color[3] = {r, g, b};
     api->set_ambient(system, color, intensity);
 }
 
-void voxl_hs_set_window_title(VoxlSystem *system, const char *title, size_t len) {
+void mira_hs_set_window_title(MiraSystem *system, const char *title, size_t len) {
     api->set_window_title(system, title, len);
 }
 
-void voxl_hs_set_collider(VoxlSystem *system, VoxlEntity entity, uint32_t shape, float x, float y,
+void mira_hs_set_collider(MiraSystem *system, MiraEntity entity, uint32_t shape, float x, float y,
                           float z, float friction, float restitution, uint32_t sensor) {
-    VoxlCollider collider = {shape, {x, y, z}, friction, restitution, sensor};
+    MiraCollider collider = {shape, {x, y, z}, friction, restitution, sensor};
     api->set_collider(system, entity, &collider);
 }
 
-void voxl_hs_set_body(VoxlSystem *system, VoxlEntity entity, uint32_t kind, float mass, float vx,
+void mira_hs_set_body(MiraSystem *system, MiraEntity entity, uint32_t kind, float mass, float vx,
                       float vy, float vz, uint32_t lock_rotation) {
-    VoxlBody body = {kind, mass, {vx, vy, vz}, lock_rotation};
+    MiraBody body = {kind, mass, {vx, vy, vz}, lock_rotation};
     api->set_body(system, entity, &body);
 }
 
-void voxl_hs_apply_impulse(VoxlSystem *system, VoxlEntity entity, float x, float y, float z) {
+void mira_hs_apply_impulse(MiraSystem *system, MiraEntity entity, float x, float y, float z) {
     float impulse[3] = {x, y, z};
     api->apply_impulse(system, entity, impulse);
 }
 
-void voxl_hs_set_velocity(VoxlSystem *system, VoxlEntity entity, float x, float y, float z) {
+void mira_hs_set_velocity(MiraSystem *system, MiraEntity entity, float x, float y, float z) {
     float velocity[3] = {x, y, z};
     api->set_velocity(system, entity, velocity);
 }
 
-uint8_t voxl_hs_velocity(VoxlSystem *system, VoxlEntity entity, float *velocity) {
+uint8_t mira_hs_velocity(MiraSystem *system, MiraEntity entity, float *velocity) {
     return api->velocity(system, entity, velocity);
 }
 
 /* `out` receives seven floats: the point, the normal, and the distance. */
-uint8_t voxl_hs_raycast(VoxlSystem *system, float ox, float oy, float oz, float dx, float dy,
-                        float dz, float max_distance, VoxlEntity *entity, float *out) {
+uint8_t mira_hs_raycast(MiraSystem *system, float ox, float oy, float oz, float dx, float dy,
+                        float dz, float max_distance, MiraEntity *entity, float *out) {
     float origin[3] = {ox, oy, oz}, direction[3] = {dx, dy, dz};
-    VoxlRayHit hit;
+    MiraRayHit hit;
     if (!api->raycast(system, origin, direction, max_distance, &hit)) return 0;
     *entity = hit.entity;
     for (int i = 0; i < 3; i++) {
@@ -249,10 +249,10 @@ uint8_t voxl_hs_raycast(VoxlSystem *system, float ox, float oy, float oz, float 
 }
 
 /* Field names arrive end to end in `names`, with their lengths alongside. */
-int32_t voxl_hs_component_describe(VoxlApp *app, uint32_t component, const char *names,
+int32_t mira_hs_component_describe(MiraApp *app, uint32_t component, const char *names,
                                    const size_t *name_lens, const uint32_t *types,
                                    const uint32_t *counts, const size_t *offsets, size_t count) {
-    VoxlField *fields = calloc(count ? count : 1, sizeof(VoxlField));
+    MiraField *fields = calloc(count ? count : 1, sizeof(MiraField));
     if (!fields) return -1;
     for (size_t i = 0; i < count; i++) {
         fields[i].name = names;
@@ -267,47 +267,47 @@ int32_t voxl_hs_component_describe(VoxlApp *app, uint32_t component, const char 
     return status;
 }
 
-uint32_t voxl_hs_image_load(VoxlSystem *system, const char *name, size_t len) {
+uint32_t mira_hs_image_load(MiraSystem *system, const char *name, size_t len) {
     return api->image_load(system, name, len);
 }
 
-void voxl_hs_set_textures(VoxlSystem *system, VoxlEntity entity, uint32_t base_color,
+void mira_hs_set_textures(MiraSystem *system, MiraEntity entity, uint32_t base_color,
                           uint32_t normal, uint32_t metallic_roughness) {
     api->set_textures(system, entity, base_color, normal, metallic_roughness);
 }
 
-VoxlEntity voxl_hs_spawn_model(VoxlSystem *system, const char *name, size_t len,
-                               const VoxlTransform *transform) {
+MiraEntity mira_hs_spawn_model(MiraSystem *system, const char *name, size_t len,
+                               const MiraTransform *transform) {
     return api->spawn_model(system, name, len, transform);
 }
 
-void voxl_hs_set_parent(VoxlSystem *system, VoxlEntity child, VoxlEntity parent) {
+void mira_hs_set_parent(MiraSystem *system, MiraEntity child, MiraEntity parent) {
     api->set_parent(system, child, parent);
 }
 
-void voxl_hs_despawn_tree(VoxlSystem *system, VoxlEntity entity) {
+void mira_hs_despawn_tree(MiraSystem *system, MiraEntity entity) {
     api->despawn_tree(system, entity);
 }
 
-VoxlEntity voxl_hs_spawn_prefab(VoxlSystem *system, const char *name, size_t len,
-                                const VoxlTransform *transform) {
+MiraEntity mira_hs_spawn_prefab(MiraSystem *system, const char *name, size_t len,
+                                const MiraTransform *transform) {
     return api->spawn_prefab(system, name, len, transform);
 }
 
-void voxl_hs_system_fail(VoxlSystem *system, const char *message, size_t len) {
+void mira_hs_system_fail(MiraSystem *system, const char *message, size_t len) {
     api->system_fail(system, message, len, "", 0);
 }
 
-void voxl_hs_signal_set(VoxlSystem *system, const char *name, size_t len, double value,
+void mira_hs_signal_set(MiraSystem *system, const char *name, size_t len, double value,
                         uint32_t number) {
     api->signal_set(system, name, len, value, number);
 }
 
-uint32_t voxl_hs_signal_get(VoxlSystem *system, const char *name, size_t len, double *out) {
+uint32_t mira_hs_signal_get(MiraSystem *system, const char *name, size_t len, double *out) {
     return api->signal_get(system, name, len, out);
 }
 
-void voxl_hs_signal_define(VoxlSystem *system, const char *name, size_t len, uint32_t op,
+void mira_hs_signal_define(MiraSystem *system, const char *name, size_t len, uint32_t op,
                            double param, const char *inputs, size_t inputs_len) {
     api->signal_define(system, name, len, op, param, inputs, inputs_len);
 }

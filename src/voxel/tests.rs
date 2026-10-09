@@ -386,7 +386,7 @@ fn edited_world(stone: BlockId) -> (VoxelWorld, [IVec3; 3]) {
 fn saved_edits_load_into_a_fresh_world_with_the_same_blocks() {
     let (_, stone) = registry();
     let (saved, blocks) = edited_world(stone);
-    let path = std::env::temp_dir().join(format!("voxl-edits-{}.vxle", std::process::id()));
+    let path = std::env::temp_dir().join(format!("mira-edits-{}.vxle", std::process::id()));
     assert_eq!(saved.save_edits(&path).unwrap(), 2);
 
     // One of the edited chunks is already loaded in the new world, the other is not.
@@ -522,7 +522,7 @@ fn truncated_or_garbage_edits_are_refused_and_change_nothing() {
     ));
 
     assert!(matches!(
-        world.load_edits(std::env::temp_dir().join("voxl-no-such-edits.vxle")),
+        world.load_edits(std::env::temp_dir().join("mira-no-such-edits.vxle")),
         Err(EditsError::Io(_))
     ));
     // And the untouched data still loads.

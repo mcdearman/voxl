@@ -195,7 +195,7 @@ fn schemas_describe_shapes() {
     assert_eq!(
         Transform::schema(),
         Schema::Struct {
-            name: "voxl.Transform",
+            name: "mira.Transform",
             fields: Box::new(Schema::Fields(vec![
                 ("translation", Schema::Array(Box::new(Schema::Float), 3)),
                 ("rotation", Schema::Array(Box::new(Schema::Float), 4)),
@@ -228,7 +228,7 @@ fn an_inspector_can_edit_a_component_by_name() {
     let mut world = World::new();
     let entity = world.spawn(Transform::IDENTITY);
 
-    let transform = registry.get("voxl.Transform").unwrap();
+    let transform = registry.get("mira.Transform").unwrap();
     let mut value = (transform.get)(&world, entity).unwrap();
     value.set_path("scale.0", Value::Float(4.0));
     (transform.insert)(&mut world, entity, &value).unwrap();
@@ -337,7 +337,7 @@ fn a_scene_survives_being_written_and_read_into_another_world() {
             .iter()
             .map(|(n, _)| n.as_str())
             .collect::<Vec<_>>(),
-        ["voxl.Transform", "test.Health"]
+        ["mira.Transform", "test.Health"]
     );
 }
 
@@ -348,9 +348,9 @@ fn what_cannot_be_restored_is_skipped_and_reported() {
       "version": 1,
       "entities": [
         {"id": 1, "components": {
-          "voxl.Transform": {"translation": [1, 2, 3]},
+          "mira.Transform": {"translation": [1, 2, 3]},
           "game.FromANewerVersion": {"x": 1},
-          "voxl.Parent": {"$entity": 999},
+          "mira.Parent": {"$entity": 999},
           "test.Health": {"current": "lots"}
         }}
       ]
@@ -387,9 +387,9 @@ fn engine_plugins_register_their_components() {
     assert_eq!(
         names,
         [
-            "voxl.Transform",
-            "voxl.Parent",
-            "voxl.Interpolate",
+            "mira.Transform",
+            "mira.Parent",
+            "mira.Interpolate",
             "test.Health"
         ]
     );
@@ -397,7 +397,7 @@ fn engine_plugins_register_their_components() {
 
 #[test]
 fn scenes_save_to_and_load_from_files_through_an_app() {
-    let dir = std::env::temp_dir().join(format!("voxl-scene-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("mira-scene-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("level.json");
 
@@ -444,7 +444,7 @@ fn a_level_keeps_its_settings() {
     let scene = Scene::capture(&world, &registry);
     assert_eq!(scene.resources.len(), 1);
     let text = scene.to_json();
-    assert!(text.contains("voxl.Fog") && !text.contains("voxl.AmbientLight"));
+    assert!(text.contains("mira.Fog") && !text.contains("mira.AmbientLight"));
     assert!(!Scene::capture(&World::new(), &registry)
         .to_json()
         .contains("resources"));
@@ -455,7 +455,7 @@ fn a_level_keeps_its_settings() {
     scene.resources.push(("game.Weather".into(), Value::Null));
     scene
         .resources
-        .push(("voxl.AmbientLight".into(), Value::Int(3)));
+        .push(("mira.AmbientLight".into(), Value::Int(3)));
     let spawned = scene.spawn(&mut other, &registry);
     assert_eq!(other.get_resource::<Fog>(), Some(&fog));
     assert_eq!(spawned.skipped.len(), 2, "{:?}", spawned.skipped);

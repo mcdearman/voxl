@@ -40,7 +40,7 @@ fn show_failures(live: Res<Live>) {
 ```
 
 - `live.catch_failures` turns this on and off. It is on in debug builds and off in release
-  builds, where a panic is a panic; `VOXL_LIVE=1` or `VOXL_LIVE=0` overrides either.
+  builds, where a panic is a panic; `MIRA_LIVE=1` or `MIRA_LIVE=0` overrides either.
 - `live.pause_on_failure = false` keeps the game running without the failed system.
 - A system that fails does so once, not once a frame.
 
@@ -85,7 +85,7 @@ can look, change the code or the world, and play forward again from that moment.
 - Snapshots after the one gone back to are forgotten: that future didn't happen.
 - Recording is off by default, because each snapshot is the whole scene.
 
-From outside: `voxl-debug record on=true`, `voxl-debug history`, `voxl-debug rewind frames=300`.
+From outside: `mira-debug record on=true`, `mira-debug history`, `mira-debug rewind frames=300`.
 
 ## Looking at the systems
 
@@ -105,18 +105,18 @@ them.
 A running game can be questioned and changed from outside, over a local socket:
 
 ```sh
-VOXL_DEBUG=127.0.0.1:7878 cargo run --example host -- chase   # the game
-cargo run --bin voxl-debug -- status                           # from another terminal
-cargo run --bin voxl-debug -- entities with=voxl.Camera
-cargo run --bin voxl-debug -- get entity=4294967297
-cargo run --bin voxl-debug -- set entity=4294967297 component=voxl.Transform path=translation.1 value=3.5
-cargo run --bin voxl-debug -- pause
-cargo run --bin voxl-debug -- step frames=10
-cargo run --bin voxl-debug -- signals
-cargo run --bin voxl-debug -- signal_force name=blue.contesting value=false
+MIRA_DEBUG=127.0.0.1:7878 cargo run --example host -- chase   # the game
+cargo run --bin mira-debug -- status                           # from another terminal
+cargo run --bin mira-debug -- entities with=mira.Camera
+cargo run --bin mira-debug -- get entity=4294967297
+cargo run --bin mira-debug -- set entity=4294967297 component=mira.Transform path=translation.1 value=3.5
+cargo run --bin mira-debug -- pause
+cargo run --bin mira-debug -- step frames=10
+cargo run --bin mira-debug -- signals
+cargo run --bin mira-debug -- signal_force name=blue.contesting value=false
 ```
 
-Any app with `DefaultPlugins` listens where `VOXL_DEBUG` says, if it is set; any app at all
+Any app with `DefaultPlugins` listens where `MIRA_DEBUG` says, if it is set; any app at all
 can call `app.listen_for_debugger("127.0.0.1:7878")`. Listen only on the machine itself:
 whoever can connect can change the game.
 

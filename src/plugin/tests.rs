@@ -17,40 +17,40 @@ use crate::{
 };
 
 const PRELUDE: &str = r#"
-#include "voxl.h"
-static const VoxlApi *api;
-VOXL_EXPORT uint32_t voxl_plugin_abi_version(void) { return ABI; }
+#include "mira.h"
+static const MiraApi *api;
+MIRA_EXPORT uint32_t mira_plugin_abi_version(void) { return ABI; }
 "#;
 
 /// Counts frames on every entity with a transform and moves it `STEP` along X each frame.
 /// Writes the number of times the plugin has been loaded into Z.
 const COUNTER: &str = r#"
 typedef struct { int32_t frames; } Counter;
-static VoxlComponent transform_c, counter_c;
+static MiraComponent transform_c, counter_c;
 static int32_t *loads;
 
-static void boot(VoxlSystem *s, void *user) {
+static void boot(MiraSystem *s, void *user) {
     Counter c = {100};
     api->insert(s, api->spawn(s), counter_c, &c);
 }
 
-static void adopt(VoxlSystem *s, void *user) {
-    VoxlEntity e;
+static void adopt(MiraSystem *s, void *user) {
+    MiraEntity e;
     while (api->query_next(s, &e, NULL)) {
         Counter c = {0};
         api->insert(s, e, counter_c, &c);
     }
 }
 
-static void step(VoxlSystem *s, void *user) {
-    VoxlEntity e;
+static void step(MiraSystem *s, void *user) {
+    MiraEntity e;
     void *found[2];
     while (api->query_next(s, &e, found)) {
-        VoxlTransform *t = found[0];
+        MiraTransform *t = found[0];
         Counter *c = found[1];
 #ifdef LIMIT
         if (t->translation[0] >= LIMIT) {
-            api->system_fail(s, VOXL_STR("ran off the edge"), VOXL_STR("counter.c: step"));
+            api->system_fail(s, MIRA_STR("ran off the edge"), MIRA_STR("counter.c: step"));
             api->spawn(s); /* dropped with the rest of this run */
             return;
         }
@@ -61,23 +61,23 @@ static void step(VoxlSystem *s, void *user) {
     }
 }
 
-VOXL_EXPORT int32_t voxl_plugin_load(const VoxlApi *a, VoxlApp *app) {
+MIRA_EXPORT int32_t mira_plugin_load(const MiraApi *a, MiraApp *app) {
     api = a;
     size_t size = 0, align = 0;
-    transform_c = api->component_lookup(app, VOXL_STR("voxl.Transform"), &size, &align);
-    if (!transform_c || size != sizeof(VoxlTransform) || align != _Alignof(VoxlTransform))
+    transform_c = api->component_lookup(app, MIRA_STR("mira.Transform"), &size, &align);
+    if (!transform_c || size != sizeof(MiraTransform) || align != _Alignof(MiraTransform))
         return -2;
-    counter_c = api->component_register(app, VOXL_STR("test.Counter"), sizeof(Counter),
+    counter_c = api->component_register(app, MIRA_STR("test.Counter"), sizeof(Counter),
                                         _Alignof(Counter), NULL);
-    loads = api->state(app, VOXL_STR("test.loads"), sizeof(int32_t), _Alignof(int32_t));
+    loads = api->state(app, MIRA_STR("test.loads"), sizeof(int32_t), _Alignof(int32_t));
     *loads += 1;
 
-    VoxlTerm adopt_terms[] = {{transform_c, VOXL_WITH}, {counter_c, VOXL_WITHOUT}};
-    VoxlTerm step_terms[] = {{transform_c, VOXL_WRITE}, {counter_c, VOXL_WRITE}};
-    VoxlSystemDesc systems[] = {
-        {VOXL_STR("boot"), VOXL_STAGE_STARTUP, 0, boot, NULL, NULL, 0},
-        {VOXL_STR("adopt"), VOXL_STAGE_UPDATE, 0, adopt, NULL, adopt_terms, 2},
-        {VOXL_STR("step"), VOXL_STAGE_UPDATE, 0, step, NULL, step_terms, 2},
+    MiraTerm adopt_terms[] = {{transform_c, MIRA_WITH}, {counter_c, MIRA_WITHOUT}};
+    MiraTerm step_terms[] = {{transform_c, MIRA_WRITE}, {counter_c, MIRA_WRITE}};
+    MiraSystemDesc systems[] = {
+        {MIRA_STR("boot"), MIRA_STAGE_STARTUP, 0, boot, NULL, NULL, 0},
+        {MIRA_STR("adopt"), MIRA_STAGE_UPDATE, 0, adopt, NULL, adopt_terms, 2},
+        {MIRA_STR("step"), MIRA_STAGE_UPDATE, 0, step, NULL, step_terms, 2},
     };
     for (int i = 0; i < 3; i++)
         if (api->system_add(app, &systems[i]) != 0) return -3;
@@ -87,12 +87,12 @@ VOXL_EXPORT int32_t voxl_plugin_load(const VoxlApi *a, VoxlApp *app) {
 
 /// Asks for the same component mutably and immutably, which the engine must refuse.
 const CONFLICTING: &str = r#"
-static void run(VoxlSystem *s, void *user) {}
-VOXL_EXPORT int32_t voxl_plugin_load(const VoxlApi *a, VoxlApp *app) {
+static void run(MiraSystem *s, void *user) {}
+MIRA_EXPORT int32_t mira_plugin_load(const MiraApi *a, MiraApp *app) {
     api = a;
-    VoxlComponent t = api->component_lookup(app, VOXL_STR("voxl.Transform"), NULL, NULL);
-    VoxlTerm terms[] = {{t, VOXL_WRITE}, {t, VOXL_READ}};
-    VoxlSystemDesc desc = {VOXL_STR("bad"), VOXL_STAGE_UPDATE, 0, run, NULL, terms, 2};
+    MiraComponent t = api->component_lookup(app, MIRA_STR("mira.Transform"), NULL, NULL);
+    MiraTerm terms[] = {{t, MIRA_WRITE}, {t, MIRA_READ}};
+    MiraSystemDesc desc = {MIRA_STR("bad"), MIRA_STAGE_UPDATE, 0, run, NULL, terms, 2};
     return api->system_add(app, &desc);
 }
 "#;
@@ -105,35 +105,35 @@ VOXL_EXPORT int32_t voxl_plugin_load(const VoxlApi *a, VoxlApp *app) {
 /// player it finds, it marks each other entity that has a transform (query 1) by setting Z.
 const GAME: &str = r#"
 typedef struct { int32_t unused; } Player;
-static VoxlComponent transform_c, player_c;
-static VoxlMesh *cube;
+static MiraComponent transform_c, player_c;
+static MiraMesh *cube;
 
-static void setup(VoxlSystem *s, void *user) {
-    *cube = api->mesh_shape(s, VOXL_SHAPE_CUBE, 1.0f);
-    VoxlVertex corners[3] = {{{0, 0, 0}, {0, 1, 0}, {0, 0}},
+static void setup(MiraSystem *s, void *user) {
+    *cube = api->mesh_shape(s, MIRA_SHAPE_CUBE, 1.0f);
+    MiraVertex corners[3] = {{{0, 0, 0}, {0, 1, 0}, {0, 0}},
                              {{0, 0, 1}, {0, 1, 0}, {0, 1}},
                              {{1, 0, 0}, {0, 1, 0}, {1, 0}}};
     uint32_t triangle[3] = {0, 1, 2};
-    VoxlMesh custom = api->mesh_create(s, corners, 3, triangle, 3);
+    MiraMesh custom = api->mesh_create(s, corners, 3, triangle, 3);
 
-    VoxlEntity e = api->spawn(s);
-    VoxlTransform t = {{0, 0, 0}, 0, {0, 0, 0, 1}, {1, 1, 1}, 0};
+    MiraEntity e = api->spawn(s);
+    MiraTransform t = {{0, 0, 0}, 0, {0, 0, 0, 1}, {1, 1, 1}, 0};
     Player p = {0};
-    VoxlMaterial red = {{1, 0, 0, 1}, {0, 0, 0}, 0.5f, 0.0f};
+    MiraMaterial red = {{1, 0, 0, 1}, {0, 0, 0}, 0.5f, 0.0f};
     api->insert(s, e, transform_c, &t);
     api->insert(s, e, player_c, &p);
     api->set_mesh(s, e, custom ? *cube : 0);
     api->set_material(s, e, &red);
 }
 
-static void drive(VoxlSystem *s, void *user) {
-    VoxlEntity e;
+static void drive(MiraSystem *s, void *user) {
+    MiraEntity e;
     void *found[1];
     while (api->query_next(s, &e, found)) {
-        VoxlTransform *t = found[0];
-        if (api->key_down(s, VOXL_KEY_A + ('d' - 'a'))) t->translation[0] += 1.0f;
-        if (api->key_pressed(s, VOXL_KEY_SPACE)) t->translation[1] += 1.0f;
-        if (api->key_down(s, VOXL_KEY_F1 + 11) || api->mouse_down(s, VOXL_MOUSE_RIGHT))
+        MiraTransform *t = found[0];
+        if (api->key_down(s, MIRA_KEY_A + ('d' - 'a'))) t->translation[0] += 1.0f;
+        if (api->key_pressed(s, MIRA_KEY_SPACE)) t->translation[1] += 1.0f;
+        if (api->key_down(s, MIRA_KEY_F1 + 11) || api->mouse_down(s, MIRA_MOUSE_RIGHT))
             t->translation[1] = -100.0f;
         float motion[2];
         api->mouse_motion(s, motion);
@@ -141,40 +141,40 @@ static void drive(VoxlSystem *s, void *user) {
     }
 }
 
-static void tag(VoxlSystem *s, void *user) {
-    VoxlEntity player, other;
+static void tag(MiraSystem *s, void *user) {
+    MiraEntity player, other;
     void *found[1];
     while (api->query_next(s, &player, NULL)) {
         api->query_rewind(s, 1);
         while (api->query_next_in(s, 1, &other, found))
-            ((VoxlTransform *)found[0])->translation[2] += 1.0f;
+            ((MiraTransform *)found[0])->translation[2] += 1.0f;
         /* The player itself is not in query 1. */
-        if (api->query_get_in(s, 1, player, found)) ((VoxlTransform *)found[0])->translation[2] = -1;
+        if (api->query_get_in(s, 1, player, found)) ((MiraTransform *)found[0])->translation[2] = -1;
     }
 }
 
-VOXL_EXPORT int32_t voxl_plugin_load(const VoxlApi *a, VoxlApp *app) {
+MIRA_EXPORT int32_t mira_plugin_load(const MiraApi *a, MiraApp *app) {
     api = a;
-    transform_c = api->component_lookup(app, VOXL_STR("voxl.Transform"), NULL, NULL);
-    player_c = api->component_register(app, VOXL_STR("game.Player"), sizeof(Player),
+    transform_c = api->component_lookup(app, MIRA_STR("mira.Transform"), NULL, NULL);
+    player_c = api->component_register(app, MIRA_STR("game.Player"), sizeof(Player),
                                        _Alignof(Player), NULL);
-    cube = api->state(app, VOXL_STR("game.cube"), sizeof(VoxlMesh), _Alignof(VoxlMesh));
+    cube = api->state(app, MIRA_STR("game.cube"), sizeof(MiraMesh), _Alignof(MiraMesh));
 
-    VoxlTerm players_moving[] = {{transform_c, VOXL_WRITE}, {player_c, VOXL_WITH}};
-    VoxlTerm players[] = {{player_c, VOXL_WITH}};
-    VoxlTerm others[] = {{transform_c, VOXL_WRITE}, {player_c, VOXL_WITHOUT}};
-    VoxlTerm everything[] = {{transform_c, VOXL_WRITE}};
-    VoxlSystemDesc systems[] = {
-        {VOXL_STR("setup"), VOXL_STAGE_STARTUP, 0, setup, NULL, NULL, 0},
-        {VOXL_STR("drive"), VOXL_STAGE_UPDATE, 0, drive, NULL, players_moving, 2},
-        {VOXL_STR("tag"), VOXL_STAGE_UPDATE, 0, tag, NULL, players, 1},
+    MiraTerm players_moving[] = {{transform_c, MIRA_WRITE}, {player_c, MIRA_WITH}};
+    MiraTerm players[] = {{player_c, MIRA_WITH}};
+    MiraTerm others[] = {{transform_c, MIRA_WRITE}, {player_c, MIRA_WITHOUT}};
+    MiraTerm everything[] = {{transform_c, MIRA_WRITE}};
+    MiraSystemDesc systems[] = {
+        {MIRA_STR("setup"), MIRA_STAGE_STARTUP, 0, setup, NULL, NULL, 0},
+        {MIRA_STR("drive"), MIRA_STAGE_UPDATE, 0, drive, NULL, players_moving, 2},
+        {MIRA_STR("tag"), MIRA_STAGE_UPDATE, 0, tag, NULL, players, 1},
     };
     for (int i = 0; i < 3; i++)
         if (api->system_add(app, &systems[i]) != 0) return -3;
-    if (api->system_add_query(app, VOXL_STR("tag"), others, 2) != 1) return -4;
+    if (api->system_add_query(app, MIRA_STR("tag"), others, 2) != 1) return -4;
     /* A second writer of every transform would overlap `others`: must be refused. */
-    if (api->system_add_query(app, VOXL_STR("tag"), everything, 1) >= 0) return -5;
-    if (api->system_add_query(app, VOXL_STR("nobody"), others, 2) >= 0) return -6;
+    if (api->system_add_query(app, MIRA_STR("tag"), everything, 1) >= 0) return -5;
+    if (api->system_add_query(app, MIRA_STR("nobody"), others, 2) >= 0) return -6;
     return 0;
 }
 "#;
@@ -184,40 +184,40 @@ VOXL_EXPORT int32_t voxl_plugin_load(const VoxlApi *a, VoxlApp *app) {
 const SCENE: &str = r#"
 typedef struct { int32_t n; } Tick;
 typedef struct { int32_t contacts; float speed; float ray; int32_t ticks_sent; } Report;
-static VoxlComponent transform_c, report_c;
-static VoxlEvent tick_e, contact_e;
-static VoxlEntity *ball;
+static MiraComponent transform_c, report_c;
+static MiraEvent tick_e, contact_e;
+static MiraEntity *ball;
 
-static VoxlTransform at(float x, float y, float z) {
-    VoxlTransform t = {{x, y, z}, 0, {0, 0, 0, 1}, {1, 1, 1}, 0};
+static MiraTransform at(float x, float y, float z) {
+    MiraTransform t = {{x, y, z}, 0, {0, 0, 0, 1}, {1, 1, 1}, 0};
     return t;
 }
 
-static void setup(VoxlSystem *s, void *user) {
-    VoxlTransform origin = at(0, 0, 0), above = at(0, 5, 0);
+static void setup(MiraSystem *s, void *user) {
+    MiraTransform origin = at(0, 0, 0), above = at(0, 5, 0);
 
-    VoxlEntity camera = api->spawn(s);
-    VoxlCamera lens = {1.0f, 0.5f, 1};
+    MiraEntity camera = api->spawn(s);
+    MiraCamera lens = {1.0f, 0.5f, 1};
     api->insert(s, camera, transform_c, &origin);
     api->set_camera(s, camera, &lens);
 
-    VoxlEntity sun = api->spawn(s);
-    VoxlLight light = {{1.0f, 0.5f, 0.25f}, 4.0f, 0};
+    MiraEntity sun = api->spawn(s);
+    MiraLight light = {{1.0f, 0.5f, 0.25f}, 4.0f, 0};
     api->insert(s, sun, transform_c, &origin);
     api->set_light(s, sun, &light);
 
     float sky[3] = {0.1f, 0.2f, 0.3f};
     api->set_ambient(s, sky, 0.7f);
-    api->set_window_title(s, VOXL_STR("no window here; must not crash"));
+    api->set_window_title(s, MIRA_STR("no window here; must not crash"));
 
-    VoxlEntity ground = api->spawn(s);
-    VoxlCollider floor = {VOXL_COLLIDER_GROUND, {0, 0, 0}, 0.5f, 0.0f, 0};
+    MiraEntity ground = api->spawn(s);
+    MiraCollider floor = {MIRA_COLLIDER_GROUND, {0, 0, 0}, 0.5f, 0.0f, 0};
     api->insert(s, ground, transform_c, &origin);
     api->set_collider(s, ground, &floor);
 
     *ball = api->spawn(s);
-    VoxlCollider round = {VOXL_COLLIDER_SPHERE, {0.5f, 0, 0}, 0.5f, 0.0f, 0};
-    VoxlBody body = {VOXL_BODY_DYNAMIC, 2.0f, {0, 0, 0}, 0};
+    MiraCollider round = {MIRA_COLLIDER_SPHERE, {0.5f, 0, 0}, 0.5f, 0.0f, 0};
+    MiraBody body = {MIRA_BODY_DYNAMIC, 2.0f, {0, 0, 0}, 0};
     Report report = {0, 0, 0, 0};
     api->insert(s, *ball, transform_c, &above);
     api->insert(s, *ball, report_c, &report);
@@ -225,8 +225,8 @@ static void setup(VoxlSystem *s, void *user) {
     api->set_body(s, *ball, &body);
 }
 
-static void observe(VoxlSystem *s, void *user) {
-    VoxlEntity e;
+static void observe(MiraSystem *s, void *user) {
+    MiraEntity e;
     void *found[1];
     while (api->query_next(s, &e, found)) {
         Report *report = found[0];
@@ -234,7 +234,7 @@ static void observe(VoxlSystem *s, void *user) {
         Tick tick = {report->ticks_sent++};
         api->event_send(s, tick_e, &tick);
 
-        VoxlContact contact;
+        MiraContact contact;
         while (api->event_next(s, contact_e, &contact))
             if (contact.a == *ball || contact.b == *ball) report->contacts += 1;
 
@@ -242,32 +242,32 @@ static void observe(VoxlSystem *s, void *user) {
         report->speed = api->velocity(s, e, v) ? (v[1] < 0 ? -v[1] : v[1]) : -1.0f;
 
         float from[3] = {0, 10, 0}, down[3] = {0, -3, 0};
-        VoxlRayHit hit;
+        MiraRayHit hit;
         report->ray = api->raycast(s, from, down, 100.0f, &hit) && hit.entity == *ball
                           ? hit.distance : -1.0f;
-        if (api->key_pressed(s, VOXL_KEY_ENTER)) {
+        if (api->key_pressed(s, MIRA_KEY_ENTER)) {
             float up[3] = {0, 20, 0};
             api->apply_impulse(s, e, up);
         }
     }
 }
 
-VOXL_EXPORT int32_t voxl_plugin_load(const VoxlApi *a, VoxlApp *app) {
+MIRA_EXPORT int32_t mira_plugin_load(const MiraApi *a, MiraApp *app) {
     api = a;
-    transform_c = api->component_lookup(app, VOXL_STR("voxl.Transform"), NULL, NULL);
-    report_c = api->component_register(app, VOXL_STR("test.Report"), sizeof(Report),
+    transform_c = api->component_lookup(app, MIRA_STR("mira.Transform"), NULL, NULL);
+    report_c = api->component_register(app, MIRA_STR("test.Report"), sizeof(Report),
                                        _Alignof(Report), NULL);
-    ball = api->state(app, VOXL_STR("test.ball"), sizeof(VoxlEntity), _Alignof(VoxlEntity));
-    tick_e = api->event_register(app, VOXL_STR("test.Tick"), sizeof(Tick));
-    contact_e = api->event_register(app, VOXL_STR("voxl.Contact"), sizeof(VoxlContact));
+    ball = api->state(app, MIRA_STR("test.ball"), sizeof(MiraEntity), _Alignof(MiraEntity));
+    tick_e = api->event_register(app, MIRA_STR("test.Tick"), sizeof(Tick));
+    contact_e = api->event_register(app, MIRA_STR("mira.Contact"), sizeof(MiraContact));
     if (!tick_e || !contact_e) return -2;
     /* The same name with another size would make the two sides misread each other. */
-    if (api->event_register(app, VOXL_STR("test.Tick"), 64)) return -3;
+    if (api->event_register(app, MIRA_STR("test.Tick"), 64)) return -3;
 
-    VoxlTerm reports[] = {{report_c, VOXL_WRITE}};
-    VoxlSystemDesc systems[] = {
-        {VOXL_STR("setup"), VOXL_STAGE_STARTUP, 0, setup, NULL, NULL, 0},
-        {VOXL_STR("observe"), VOXL_STAGE_UPDATE, 0, observe, NULL, reports, 1},
+    MiraTerm reports[] = {{report_c, MIRA_WRITE}};
+    MiraSystemDesc systems[] = {
+        {MIRA_STR("setup"), MIRA_STAGE_STARTUP, 0, setup, NULL, NULL, 0},
+        {MIRA_STR("observe"), MIRA_STAGE_UPDATE, 0, observe, NULL, reports, 1},
     };
     for (int i = 0; i < 2; i++)
         if (api->system_add(app, &systems[i]) != 0) return -4;
@@ -279,16 +279,16 @@ VOXL_EXPORT int32_t voxl_plugin_load(const VoxlApi *a, VoxlApp *app) {
 const LISTENER: &str = r#"
 typedef struct { int32_t n; } Tick;
 typedef struct { int32_t count; int32_t sum; } Heard;
-static VoxlComponent heard_c;
-static VoxlEvent tick_e;
+static MiraComponent heard_c;
+static MiraEvent tick_e;
 
-static void setup(VoxlSystem *s, void *user) {
+static void setup(MiraSystem *s, void *user) {
     Heard heard = {0, 0};
     api->insert(s, api->spawn(s), heard_c, &heard);
 }
 
-static void listen(VoxlSystem *s, void *user) {
-    VoxlEntity e;
+static void listen(MiraSystem *s, void *user) {
+    MiraEntity e;
     void *found[1];
     while (api->query_next(s, &e, found)) {
         Heard *heard = found[0];
@@ -300,15 +300,15 @@ static void listen(VoxlSystem *s, void *user) {
     }
 }
 
-VOXL_EXPORT int32_t voxl_plugin_load(const VoxlApi *a, VoxlApp *app) {
+MIRA_EXPORT int32_t mira_plugin_load(const MiraApi *a, MiraApp *app) {
     api = a;
-    heard_c = api->component_register(app, VOXL_STR("test.Heard"), sizeof(Heard),
+    heard_c = api->component_register(app, MIRA_STR("test.Heard"), sizeof(Heard),
                                       _Alignof(Heard), NULL);
-    tick_e = api->event_register(app, VOXL_STR("test.Tick"), sizeof(Tick));
-    VoxlTerm heard[] = {{heard_c, VOXL_WRITE}};
-    VoxlSystemDesc systems[] = {
-        {VOXL_STR("setup"), VOXL_STAGE_STARTUP, 0, setup, NULL, NULL, 0},
-        {VOXL_STR("listen"), VOXL_STAGE_UPDATE, 0, listen, NULL, heard, 1},
+    tick_e = api->event_register(app, MIRA_STR("test.Tick"), sizeof(Tick));
+    MiraTerm heard[] = {{heard_c, MIRA_WRITE}};
+    MiraSystemDesc systems[] = {
+        {MIRA_STR("setup"), MIRA_STAGE_STARTUP, 0, setup, NULL, NULL, 0},
+        {MIRA_STR("listen"), MIRA_STAGE_UPDATE, 0, listen, NULL, heard, 1},
     };
     for (int i = 0; i < 2; i++)
         if (api->system_add(app, &systems[i]) != 0) return -4;
@@ -320,82 +320,82 @@ VOXL_EXPORT int32_t voxl_plugin_load(const VoxlApi *a, VoxlApp *app) {
 /// which loads an image and a model from files.
 const INVENTORY: &str = r#"
 #include <stddef.h>
-typedef struct { float weight; int32_t count; uint8_t rare; VoxlEntity owner; float tint[3]; } Item;
-static VoxlComponent transform_c, item_c;
-static VoxlEntity *hen, *camp;
+typedef struct { float weight; int32_t count; uint8_t rare; MiraEntity owner; float tint[3]; } Item;
+static MiraComponent transform_c, item_c;
+static MiraEntity *hen, *camp;
 
-static VoxlTransform at(float x, float y, float z) {
-    VoxlTransform t = {{x, y, z}, 0, {0, 0, 0, 1}, {1, 1, 1}, 0};
+static MiraTransform at(float x, float y, float z) {
+    MiraTransform t = {{x, y, z}, 0, {0, 0, 0, 1}, {1, 1, 1}, 0};
     return t;
 }
 
-static void setup(VoxlSystem *s, void *user) {
-    VoxlTransform here = at(0, 0, 0), there = at(5, 0, 0);
-    VoxlEntity owner = api->spawn(s);
+static void setup(MiraSystem *s, void *user) {
+    MiraTransform here = at(0, 0, 0), there = at(5, 0, 0);
+    MiraEntity owner = api->spawn(s);
     api->insert(s, owner, transform_c, &here);
 
-    VoxlEntity sword = api->spawn(s);
+    MiraEntity sword = api->spawn(s);
     Item item = {2.5f, 3, 1, owner, {0.1f, 0.2f, 0.3f}};
     api->insert(s, sword, transform_c, &here);
     api->insert(s, sword, item_c, &item);
-    api->set_mesh(s, sword, api->mesh_shape(s, VOXL_SHAPE_CUBE, 1.0f));
-    VoxlImage tile = api->image_load(s, VOXL_STR("tile.png"));
-    if (tile != api->image_load(s, VOXL_STR("tile.png"))) tile = 0; /* one name, one image */
+    api->set_mesh(s, sword, api->mesh_shape(s, MIRA_SHAPE_CUBE, 1.0f));
+    MiraImage tile = api->image_load(s, MIRA_STR("tile.png"));
+    if (tile != api->image_load(s, MIRA_STR("tile.png"))) tile = 0; /* one name, one image */
     api->set_textures(s, sword, tile, 0, 0);
 
-    *hen = api->spawn_model(s, VOXL_STR("hen.glb"), &there);
-    api->spawn_model(s, VOXL_STR("no-such-model.glb"), &there); /* logged, not fatal */
-    *camp = api->spawn_prefab(s, VOXL_STR("camp.json"), &there);
+    *hen = api->spawn_model(s, MIRA_STR("hen.glb"), &there);
+    api->spawn_model(s, MIRA_STR("no-such-model.glb"), &there); /* logged, not fatal */
+    *camp = api->spawn_prefab(s, MIRA_STR("camp.json"), &there);
 
     /* A lantern carried by the owner: its place is relative to the owner's. */
-    VoxlTransform beside = at(0, 2, 0);
-    VoxlEntity lantern = api->spawn(s);
+    MiraTransform beside = at(0, 2, 0);
+    MiraEntity lantern = api->spawn(s);
     api->insert(s, lantern, transform_c, &beside);
     api->set_parent(s, lantern, owner);
 }
 
-static void clear(VoxlSystem *s, void *user) {
-    if (api->key_pressed(s, VOXL_KEY_BACKSPACE)) api->despawn_tree(s, *hen);
+static void clear(MiraSystem *s, void *user) {
+    if (api->key_pressed(s, MIRA_KEY_BACKSPACE)) api->despawn_tree(s, *hen);
 }
 
 /* The item's place shows its total weight, so a change to the component from outside (an
  * inspector, a loaded scene) is something the plugin acts on. */
-static void weigh(VoxlSystem *s, void *user) {
-    VoxlEntity e;
+static void weigh(MiraSystem *s, void *user) {
+    MiraEntity e;
     void *found[2];
     while (api->query_next(s, &e, found)) {
-        VoxlTransform *t = found[0];
+        MiraTransform *t = found[0];
         const Item *item = found[1];
         t->translation[0] = item->weight * (float)item->count;
     }
 }
 
-VOXL_EXPORT int32_t voxl_plugin_load(const VoxlApi *a, VoxlApp *app) {
+MIRA_EXPORT int32_t mira_plugin_load(const MiraApi *a, MiraApp *app) {
     api = a;
-    transform_c = api->component_lookup(app, VOXL_STR("voxl.Transform"), NULL, NULL);
-    item_c = api->component_register(app, VOXL_STR("inv.Item"), sizeof(Item), _Alignof(Item), NULL);
+    transform_c = api->component_lookup(app, MIRA_STR("mira.Transform"), NULL, NULL);
+    item_c = api->component_register(app, MIRA_STR("inv.Item"), sizeof(Item), _Alignof(Item), NULL);
 
-    VoxlField fields[] = {
-        {VOXL_STR("weight"), VOXL_FIELD_F32, 1, offsetof(Item, weight)},
-        {VOXL_STR("count"), VOXL_FIELD_I32, 1, offsetof(Item, count)},
-        {VOXL_STR("rare"), VOXL_FIELD_BOOL, 1, offsetof(Item, rare)},
-        {VOXL_STR("owner"), VOXL_FIELD_ENTITY, 1, offsetof(Item, owner)},
-        {VOXL_STR("tint"), VOXL_FIELD_F32, 3, offsetof(Item, tint)},
+    MiraField fields[] = {
+        {MIRA_STR("weight"), MIRA_FIELD_F32, 1, offsetof(Item, weight)},
+        {MIRA_STR("count"), MIRA_FIELD_I32, 1, offsetof(Item, count)},
+        {MIRA_STR("rare"), MIRA_FIELD_BOOL, 1, offsetof(Item, rare)},
+        {MIRA_STR("owner"), MIRA_FIELD_ENTITY, 1, offsetof(Item, owner)},
+        {MIRA_STR("tint"), MIRA_FIELD_F32, 3, offsetof(Item, tint)},
     };
     /* A field that runs off the end of the component, and describing an engine component,
      * must both be refused. */
-    VoxlField too_far[] = {{VOXL_STR("x"), VOXL_FIELD_F64, 1, sizeof(Item) - 4}};
+    MiraField too_far[] = {{MIRA_STR("x"), MIRA_FIELD_F64, 1, sizeof(Item) - 4}};
     if (api->component_describe(app, item_c, too_far, 1) == 0) return -2;
     if (api->component_describe(app, transform_c, fields, 5) == 0) return -3;
     if (api->component_describe(app, item_c, fields, 5) != 0) return -4;
 
-    VoxlTerm items[] = {{transform_c, VOXL_WRITE}, {item_c, VOXL_READ}};
-    hen = api->state(app, VOXL_STR("inv.hen"), sizeof(VoxlEntity), _Alignof(VoxlEntity));
-    camp = api->state(app, VOXL_STR("inv.camp"), sizeof(VoxlEntity), _Alignof(VoxlEntity));
-    VoxlSystemDesc systems[] = {
-        {VOXL_STR("setup"), VOXL_STAGE_STARTUP, 0, setup, NULL, NULL, 0},
-        {VOXL_STR("weigh"), VOXL_STAGE_UPDATE, 0, weigh, NULL, items, 2},
-        {VOXL_STR("clear"), VOXL_STAGE_UPDATE, 0, clear, NULL, NULL, 0},
+    MiraTerm items[] = {{transform_c, MIRA_WRITE}, {item_c, MIRA_READ}};
+    hen = api->state(app, MIRA_STR("inv.hen"), sizeof(MiraEntity), _Alignof(MiraEntity));
+    camp = api->state(app, MIRA_STR("inv.camp"), sizeof(MiraEntity), _Alignof(MiraEntity));
+    MiraSystemDesc systems[] = {
+        {MIRA_STR("setup"), MIRA_STAGE_STARTUP, 0, setup, NULL, NULL, 0},
+        {MIRA_STR("weigh"), MIRA_STAGE_UPDATE, 0, weigh, NULL, items, 2},
+        {MIRA_STR("clear"), MIRA_STAGE_UPDATE, 0, clear, NULL, NULL, 0},
     };
     for (int i = 0; i < 3; i++)
         if (api->system_add(app, &systems[i]) != 0) return -5;
@@ -409,7 +409,7 @@ struct Workspace {
 
 impl Workspace {
     fn new(test: &str) -> Self {
-        let dir = std::env::temp_dir().join(format!("voxl-test-{}-{test}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("mira-test-{}-{test}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         Self { dir }
@@ -481,7 +481,7 @@ fn position(app: &App, entity: Entity) -> Vec3 {
 #[test]
 fn a_c_plugin_runs_reloads_and_keeps_its_data() {
     let workspace = Workspace::new("reload");
-    let library = workspace.compile("counter", COUNTER, &["ABI=VOXL_ABI_VERSION", "STEP=1.0f"]);
+    let library = workspace.compile("counter", COUNTER, &["ABI=MIRA_ABI_VERSION", "STEP=1.0f"]);
 
     let mut app = app();
     let moved = app.world.spawn(Transform::IDENTITY);
@@ -507,7 +507,7 @@ fn a_c_plugin_runs_reloads_and_keeps_its_data() {
     assert_eq!(app.reload_native_plugins(), 0);
 
     // Rebuild with different behaviour, while the app is running.
-    workspace.compile("counter", COUNTER, &["ABI=VOXL_ABI_VERSION", "STEP=10.0f"]);
+    workspace.compile("counter", COUNTER, &["ABI=MIRA_ABI_VERSION", "STEP=10.0f"]);
     assert_eq!(app.reload_native_plugins(), 1);
     for _ in 0..2 {
         app.update();
@@ -532,7 +532,7 @@ fn a_plugin_system_that_fails_pauses_the_game_until_it_is_fixed() {
     use crate::live::Live;
 
     let workspace = Workspace::new("fragile");
-    let defines = ["ABI=VOXL_ABI_VERSION", "STEP=1.0f", "LIMIT=3.0f"];
+    let defines = ["ABI=MIRA_ABI_VERSION", "STEP=1.0f", "LIMIT=3.0f"];
     let library = workspace.compile("counter", COUNTER, &defines);
     let mut app = app();
     app.world.resource_mut::<Live>().catch_failures = true;
@@ -561,7 +561,7 @@ fn a_plugin_system_that_fails_pauses_the_game_until_it_is_fixed() {
     assert_eq!(app.world.entity_count(), entities, "what the failed run queued was dropped");
 
     // Fix the code and save. The plugin reloads, and the game carries on by itself.
-    workspace.compile("counter", COUNTER, &["ABI=VOXL_ABI_VERSION", "STEP=10.0f"]);
+    workspace.compile("counter", COUNTER, &["ABI=MIRA_ABI_VERSION", "STEP=10.0f"]);
     assert_eq!(app.reload_native_plugins(), 1);
     app.update();
     assert!(!app.world.resource::<Live>().is_paused());
@@ -580,37 +580,37 @@ fn a_plugin_system_that_fails_pauses_the_game_until_it_is_fixed() {
 /// A plugin that tells the signal graph facts, builds a rule on them and on the host's
 /// signals, and acts on a signal.
 const RULES: &str = r#"
-static VoxlComponent transform_c;
+static MiraComponent transform_c;
 static int32_t *frames;
 
-static void facts(VoxlSystem *s, void *user) {
+static void facts(MiraSystem *s, void *user) {
     *frames += 1;
-    api->signal_set(s, VOXL_STR("c.frames"), (double)*frames, 1);
-    api->signal_set(s, VOXL_STR("c.even"), *frames % 2 == 0, 0);
-    api->signal_define(s, VOXL_STR("c.odd"), VOXL_SIGNAL_NOT, 0, VOXL_STR("c.even"));
-    api->signal_define(s, VOXL_STR("c.late"), VOXL_SIGNAL_GREATER_OR_EQUAL, 0,
-                       VOXL_STR("c.frames host.limit"));
-    api->signal_define(s, VOXL_STR("c.go"), VOXL_SIGNAL_AND, 0, VOXL_STR("c.late  host.allowed"));
-    api->signal_define(s, VOXL_STR("c.bad"), 99, 0, VOXL_STR("c.even")); /* logged, not fatal */
+    api->signal_set(s, MIRA_STR("c.frames"), (double)*frames, 1);
+    api->signal_set(s, MIRA_STR("c.even"), *frames % 2 == 0, 0);
+    api->signal_define(s, MIRA_STR("c.odd"), MIRA_SIGNAL_NOT, 0, MIRA_STR("c.even"));
+    api->signal_define(s, MIRA_STR("c.late"), MIRA_SIGNAL_GREATER_OR_EQUAL, 0,
+                       MIRA_STR("c.frames host.limit"));
+    api->signal_define(s, MIRA_STR("c.go"), MIRA_SIGNAL_AND, 0, MIRA_STR("c.late  host.allowed"));
+    api->signal_define(s, MIRA_STR("c.bad"), 99, 0, MIRA_STR("c.even")); /* logged, not fatal */
 }
 
-static void act(VoxlSystem *s, void *user) {
+static void act(MiraSystem *s, void *user) {
     double go = 0, nothing = 5;
-    if (api->signal_get(s, VOXL_STR("c.nothing"), &nothing) != 0 || nothing != 5) return;
-    if (!api->signal_get(s, VOXL_STR("c.go"), &go) || go == 0) return;
-    VoxlEntity e;
+    if (api->signal_get(s, MIRA_STR("c.nothing"), &nothing) != 0 || nothing != 5) return;
+    if (!api->signal_get(s, MIRA_STR("c.go"), &go) || go == 0) return;
+    MiraEntity e;
     void *found[1];
-    while (api->query_next(s, &e, found)) ((VoxlTransform *)found[0])->translation[0] += 1;
+    while (api->query_next(s, &e, found)) ((MiraTransform *)found[0])->translation[0] += 1;
 }
 
-VOXL_EXPORT int32_t voxl_plugin_load(const VoxlApi *a, VoxlApp *app) {
+MIRA_EXPORT int32_t mira_plugin_load(const MiraApi *a, MiraApp *app) {
     api = a;
-    transform_c = api->component_lookup(app, VOXL_STR("voxl.Transform"), NULL, NULL);
-    frames = api->state(app, VOXL_STR("rules.frames"), sizeof(int32_t), _Alignof(int32_t));
-    VoxlTerm moved[] = {{transform_c, VOXL_WRITE}};
-    VoxlSystemDesc systems[] = {
-        {VOXL_STR("facts"), VOXL_STAGE_UPDATE, 0, facts, NULL, NULL, 0},
-        {VOXL_STR("act"), VOXL_STAGE_UPDATE, 0, act, NULL, moved, 1},
+    transform_c = api->component_lookup(app, MIRA_STR("mira.Transform"), NULL, NULL);
+    frames = api->state(app, MIRA_STR("rules.frames"), sizeof(int32_t), _Alignof(int32_t));
+    MiraTerm moved[] = {{transform_c, MIRA_WRITE}};
+    MiraSystemDesc systems[] = {
+        {MIRA_STR("facts"), MIRA_STAGE_UPDATE, 0, facts, NULL, NULL, 0},
+        {MIRA_STR("act"), MIRA_STAGE_UPDATE, 0, act, NULL, moved, 1},
     };
     for (int i = 0; i < 2; i++)
         if (api->system_add(app, &systems[i]) != 0) return -3;
@@ -623,7 +623,7 @@ fn a_plugin_can_set_define_and_read_signals() {
     use crate::signal::{Signal, Signals};
 
     let workspace = Workspace::new("rules");
-    let library = workspace.compile("rules", RULES, &["ABI=VOXL_ABI_VERSION"]);
+    let library = workspace.compile("rules", RULES, &["ABI=MIRA_ABI_VERSION"]);
     let mut app = app();
     app.world.resource_mut::<Signals>().set("host.limit", 4.0);
     app.world.resource_mut::<Signals>().set("host.allowed", true);
@@ -661,7 +661,7 @@ fn a_plugin_can_set_define_and_read_signals() {
 #[test]
 fn the_frame_loop_reloads_a_changed_plugin_once_it_settles() {
     let workspace = Workspace::new("watch");
-    let library = workspace.compile("counter", COUNTER, &["ABI=VOXL_ABI_VERSION", "STEP=1.0f"]);
+    let library = workspace.compile("counter", COUNTER, &["ABI=MIRA_ABI_VERSION", "STEP=1.0f"]);
     let mut app = app();
     let entity = app.world.spawn(Transform::IDENTITY);
     app.load_native_plugin(&library).unwrap();
@@ -669,7 +669,7 @@ fn the_frame_loop_reloads_a_changed_plugin_once_it_settles() {
     app.update();
     assert_eq!(position(&app, entity).x, 1.0);
 
-    workspace.compile("counter", COUNTER, &["ABI=VOXL_ABI_VERSION", "STEP=100.0f"]);
+    workspace.compile("counter", COUNTER, &["ABI=MIRA_ABI_VERSION", "STEP=100.0f"]);
     app.update(); // sees the change, waits to see if the file is still being written
     assert_eq!(position(&app, entity).x, 2.0);
     app.update(); // unchanged since last look: reloads, then runs the new code
@@ -679,7 +679,7 @@ fn the_frame_loop_reloads_a_changed_plugin_once_it_settles() {
 #[test]
 fn a_broken_rebuild_leaves_the_old_version_running() {
     let workspace = Workspace::new("broken");
-    let library = workspace.compile("counter", COUNTER, &["ABI=VOXL_ABI_VERSION", "STEP=1.0f"]);
+    let library = workspace.compile("counter", COUNTER, &["ABI=MIRA_ABI_VERSION", "STEP=1.0f"]);
     let mut app = app();
     let entity = app.world.spawn(Transform::IDENTITY);
     app.load_native_plugin(&library).unwrap();
@@ -695,7 +695,7 @@ fn a_broken_rebuild_leaves_the_old_version_running() {
     );
 
     // A good build afterwards is picked up.
-    workspace.compile("counter", COUNTER, &["ABI=VOXL_ABI_VERSION", "STEP=5.0f"]);
+    workspace.compile("counter", COUNTER, &["ABI=MIRA_ABI_VERSION", "STEP=5.0f"]);
     assert_eq!(app.reload_native_plugins(), 1);
     app.update();
     assert_eq!(position(&app, entity).x, 7.0);
@@ -713,7 +713,7 @@ fn unusable_plugins_are_refused() {
     let err = app.load_native_plugin(&old).err().unwrap();
     assert!(format!("{err:#}").contains("version 999"), "{err:#}");
 
-    let conflicting = workspace.compile("conflicting", CONFLICTING, &["ABI=VOXL_ABI_VERSION"]);
+    let conflicting = workspace.compile("conflicting", CONFLICTING, &["ABI=MIRA_ABI_VERSION"]);
     assert!(app.load_native_plugin(&conflicting).is_err());
 
     // None of that left anything behind.
@@ -779,7 +779,7 @@ fn a_plugin_can_read_input_draw_things_and_run_two_queries() {
     };
 
     let workspace = Workspace::new("game");
-    let library = workspace.compile("game", GAME, &["ABI=VOXL_ABI_VERSION"]);
+    let library = workspace.compile("game", GAME, &["ABI=MIRA_ABI_VERSION"]);
     let mut app = app();
     app.add_plugins(InputPlugin).init_resource::<Assets<Mesh>>();
     let rock = app.world.spawn(Transform::from_xyz(5.0, 0.0, 0.0));
@@ -853,8 +853,8 @@ fn a_plugin_can_own_the_scene_use_physics_and_talk_to_another_plugin() {
     }
 
     let workspace = Workspace::new("scene");
-    let scene = workspace.compile("scene", SCENE, &["ABI=VOXL_ABI_VERSION"]);
-    let listener = workspace.compile("listener", LISTENER, &["ABI=VOXL_ABI_VERSION"]);
+    let scene = workspace.compile("scene", SCENE, &["ABI=MIRA_ABI_VERSION"]);
+    let listener = workspace.compile("listener", LISTENER, &["ABI=MIRA_ABI_VERSION"]);
 
     let mut app = app();
     app.add_plugins(InputPlugin).add_plugins(PhysicsPlugin);
@@ -950,7 +950,7 @@ fn a_described_plugin_component_can_be_inspected_saved_and_loaded() {
     };
 
     let workspace = Workspace::new("inventory");
-    let library = workspace.compile("inventory", INVENTORY, &["ABI=VOXL_ABI_VERSION"]);
+    let library = workspace.compile("inventory", INVENTORY, &["ABI=MIRA_ABI_VERSION"]);
     let mut app = app_with_assets(&workspace);
     app.load_native_plugin(&library).unwrap();
     app.update();
@@ -1140,11 +1140,11 @@ import Data.Int (Int32)
 import Foreign (Ptr)
 import Foreign.C.Types (CInt (..))
 import System.Mem (performMajorGC)
-import Voxl
+import Mira
 
-foreign import ccall unsafe "voxl_hs_nonmoving_gc" nonmovingGC :: IO CInt
+foreign import ccall unsafe "mira_hs_nonmoving_gc" nonmovingGC :: IO CInt
 
-foreign export ccall "voxl_hs_main" pluginMain :: Ptr () -> IO CInt
+foreign export ccall "mira_hs_main" pluginMain :: Ptr () -> IO CInt
 
 pluginMain :: Ptr () -> IO CInt
 pluginMain = plugin $ \app -> do
@@ -1153,7 +1153,7 @@ pluginMain = plugin $ \app -> do
   nonmoving <- nonmovingGC
   unless (nonmoving /= 0) $ ioError (userError "the non-moving collector is off")
   unless rtsSupportsBoundThreads $ ioError (userError "not the threaded runtime")
-  transform <- lookupComponent app "voxl.Transform"
+  transform <- lookupComponent app "mira.Transform"
   frames <- registerComponent app "hs.Frames" :: IO (Component Int32)
   addSystem app "adopt" Update (with transform <* without frames) $ \sys entity () ->
     insert sys entity frames 0
@@ -1181,14 +1181,14 @@ pluginMain = plugin $ \app -> do
 "#;
 
 /// Whether the Haskell tests can run. Without GHC they are skipped, loudly; where the suite
-/// must be complete (CI sets `VOXL_REQUIRE_GHC=1`) a missing GHC fails them instead.
+/// must be complete (CI sets `MIRA_REQUIRE_GHC=1`) a missing GHC fails them instead.
 fn have_ghc() -> bool {
     if Command::new("ghc").arg("--version").output().is_ok() {
         return true;
     }
     assert!(
-        std::env::var("VOXL_REQUIRE_GHC").as_deref() != Ok("1"),
-        "GHC is required (VOXL_REQUIRE_GHC=1) but not installed"
+        std::env::var("MIRA_REQUIRE_GHC").as_deref() != Ok("1"),
+        "GHC is required (MIRA_REQUIRE_GHC=1) but not installed"
     );
     eprintln!("skipped: GHC is not installed, so the Haskell plugins were not tested");
     false

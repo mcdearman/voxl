@@ -111,7 +111,7 @@ impl Gpu {
         let available = adapter.limits();
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
-                label: Some("voxl device"),
+                label: Some("mira device"),
                 required_features: if traced { rt_features } else { wgpu::Features::empty() },
                 required_limits: wgpu::Limits {
                     // Big merged scenery meshes.

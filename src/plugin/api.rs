@@ -1,4 +1,4 @@
-//! The engine's side of `include/voxl.h`: the functions a plugin is handed.
+//! The engine's side of `include/mira.h`: the functions a plugin is handed.
 //!
 //! Every function checks its arguments and catches panics, because whatever is on the other
 //! side of the boundary may be in any language and can't be unwound through.
@@ -11,7 +11,7 @@ use std::{
     ptr::NonNull,
 };
 
-use voxl_plugin::sys::{self, VoxlApi, VoxlApp, VoxlComponent, VoxlEntity, VoxlSystem};
+use mira_plugin::sys::{self, MiraApi, MiraApp, MiraComponent, MiraEntity, MiraSystem};
 
 use super::{
     events::PluginEvents,
@@ -61,7 +61,7 @@ impl Drop for StateBlock {
     }
 }
 
-/// What a `VoxlApp*` points to while a plugin's load function runs. It collects what the
+/// What a `MiraApp*` points to while a plugin's load function runs. It collects what the
 /// plugin registers; the host installs it once the load has succeeded.
 pub(crate) struct Registrar<'a> {
     pub world: &'a mut World,
@@ -72,9 +72,9 @@ pub(crate) struct Registrar<'a> {
     pub components: Vec<u32>,
 }
 
-pub(crate) static API: VoxlApi = VoxlApi {
-    abi_version: sys::VOXL_ABI_VERSION,
-    size: size_of::<VoxlApi>() as u32,
+pub(crate) static API: MiraApi = MiraApi {
+    abi_version: sys::MIRA_ABI_VERSION,
+    size: size_of::<MiraApi>() as u32,
     log,
     component_register,
     component_lookup,
@@ -150,7 +150,7 @@ fn layout_of(size: usize, align: usize) -> Option<Layout> {
 }
 
 /// Component handles are world ids offset by one, so that zero can mean "none".
-fn component_id(handle: VoxlComponent) -> Option<u32> {
+fn component_id(handle: MiraComponent) -> Option<u32> {
     handle.checked_sub(1)
 }
 
@@ -160,9 +160,9 @@ unsafe extern "C" fn log(level: u32, message: *const u8, len: usize) {
             return;
         };
         let level = match level {
-            sys::VOXL_LOG_ERROR => log::Level::Error,
-            sys::VOXL_LOG_WARN => log::Level::Warn,
-            sys::VOXL_LOG_DEBUG => log::Level::Debug,
+            sys::MIRA_LOG_ERROR => log::Level::Error,
+            sys::MIRA_LOG_WARN => log::Level::Warn,
+            sys::MIRA_LOG_DEBUG => log::Level::Debug,
             _ => log::Level::Info,
         };
         log::log!(target: "plugin", level, "{message}");
@@ -170,13 +170,13 @@ unsafe extern "C" fn log(level: u32, message: *const u8, len: usize) {
 }
 
 unsafe extern "C" fn component_register(
-    app: *mut VoxlApp,
+    app: *mut MiraApp,
     name: *const u8,
     name_len: usize,
     size: usize,
     align: usize,
-    drop: Option<sys::VoxlDropFn>,
-) -> VoxlComponent {
+    drop: Option<sys::MiraDropFn>,
+) -> MiraComponent {
     guard("component_register", 0, || {
         let Some(registrar) = app.cast::<Registrar>().as_mut() else {
             return 0;
@@ -186,7 +186,7 @@ unsafe extern "C" fn component_register(
             return 0;
         };
         // SAFETY: the two function types differ only in the pointee of their one argument.
-        let drop = drop.map(|f| std::mem::transmute::<sys::VoxlDropFn, DropFn>(f));
+        let drop = drop.map(|f| std::mem::transmute::<sys::MiraDropFn, DropFn>(f));
         match registrar.world.register_blob_component(name, layout, drop) {
             Ok(id) => {
                 if !registrar.components.contains(&id) {
@@ -203,12 +203,12 @@ unsafe extern "C" fn component_register(
 }
 
 unsafe extern "C" fn component_lookup(
-    app: *mut VoxlApp,
+    app: *mut MiraApp,
     name: *const u8,
     name_len: usize,
     size: *mut usize,
     align: *mut usize,
-) -> VoxlComponent {
+) -> MiraComponent {
     guard("component_lookup", 0, || {
         let (Some(registrar), Some(name)) =
             (app.cast::<Registrar>().as_mut(), text(name, name_len))
@@ -230,7 +230,7 @@ unsafe extern "C" fn component_lookup(
 }
 
 unsafe extern "C" fn state(
-    app: *mut VoxlApp,
+    app: *mut MiraApp,
     name: *const u8,
     name_len: usize,
     size: usize,
@@ -262,7 +262,7 @@ unsafe extern "C" fn state(
     })
 }
 
-unsafe extern "C" fn system_add(app: *mut VoxlApp, desc: *const sys::VoxlSystemDesc) -> i32 {
+unsafe extern "C" fn system_add(app: *mut MiraApp, desc: *const sys::MiraSystemDesc) -> i32 {
     guard("system_add", -1, || {
         let (Some(registrar), Some(desc)) = (app.cast::<Registrar>().as_mut(), desc.as_ref())
         else {
@@ -279,13 +279,13 @@ unsafe extern "C" fn system_add(app: *mut VoxlApp, desc: *const sys::VoxlSystemD
             return fail("it has no function");
         };
         let stage = match desc.stage {
-            sys::VOXL_STAGE_STARTUP => Stage::Startup,
-            sys::VOXL_STAGE_FIRST => Stage::First,
-            sys::VOXL_STAGE_PRE_UPDATE => Stage::PreUpdate,
-            sys::VOXL_STAGE_FIXED_UPDATE => Stage::FixedUpdate,
-            sys::VOXL_STAGE_UPDATE => Stage::Update,
-            sys::VOXL_STAGE_POST_UPDATE => Stage::PostUpdate,
-            sys::VOXL_STAGE_LAST => Stage::Last,
+            sys::MIRA_STAGE_STARTUP => Stage::Startup,
+            sys::MIRA_STAGE_FIRST => Stage::First,
+            sys::MIRA_STAGE_PRE_UPDATE => Stage::PreUpdate,
+            sys::MIRA_STAGE_FIXED_UPDATE => Stage::FixedUpdate,
+            sys::MIRA_STAGE_UPDATE => Stage::Update,
+            sys::MIRA_STAGE_POST_UPDATE => Stage::PostUpdate,
+            sys::MIRA_STAGE_LAST => Stage::Last,
             _ => return fail("unknown stage"),
         };
         if registrar
@@ -315,7 +315,7 @@ unsafe extern "C" fn system_add(app: *mut VoxlApp, desc: *const sys::VoxlSystemD
 /// `terms` must be readable for `count` terms, or `count` zero.
 unsafe fn read_terms(
     world: &World,
-    terms: *const sys::VoxlTerm,
+    terms: *const sys::MiraTerm,
     count: usize,
 ) -> Result<Vec<Term>, &'static str> {
     if count == 0 {
@@ -330,7 +330,7 @@ unsafe fn read_terms(
             let named = component_id(raw.component)
                 .and_then(|id| world.named_component(id))
                 .ok_or("a term names a component that doesn't exist")?;
-            if raw.access > sys::VOXL_WITHOUT {
+            if raw.access > sys::MIRA_WITHOUT {
                 return Err("a term has an unknown access mode");
             }
             Ok(Term {
@@ -343,10 +343,10 @@ unsafe fn read_terms(
 }
 
 unsafe extern "C" fn system_add_query(
-    app: *mut VoxlApp,
+    app: *mut MiraApp,
     system: *const u8,
     system_len: usize,
-    terms: *const sys::VoxlTerm,
+    terms: *const sys::MiraTerm,
     term_count: usize,
 ) -> i32 {
     guard("system_add_query", -1, || {
@@ -382,25 +382,25 @@ unsafe extern "C" fn system_add_query(
 
 /// # Safety
 /// `system` must be the pointer a running system was called with.
-unsafe fn context<'a>(system: *mut VoxlSystem) -> Option<&'a mut Context<'a>> {
+unsafe fn context<'a>(system: *mut MiraSystem) -> Option<&'a mut Context<'a>> {
     system.cast::<Context>().as_mut()
 }
 
-unsafe extern "C" fn delta_seconds(system: *mut VoxlSystem) -> f32 {
+unsafe extern "C" fn delta_seconds(system: *mut MiraSystem) -> f32 {
     guard("delta_seconds", 0.0, || {
         context(system).map_or(0.0, |c| c.delta)
     })
 }
 
-unsafe extern "C" fn elapsed_seconds(system: *mut VoxlSystem) -> f64 {
+unsafe extern "C" fn elapsed_seconds(system: *mut MiraSystem) -> f64 {
     guard("elapsed_seconds", 0.0, || {
         context(system).map_or(0.0, |c| c.elapsed)
     })
 }
 
 unsafe extern "C" fn query_next(
-    system: *mut VoxlSystem,
-    entity: *mut VoxlEntity,
+    system: *mut MiraSystem,
+    entity: *mut MiraEntity,
     components: *mut *mut c_void,
 ) -> u8 {
     guard("query_next", 0, || {
@@ -420,8 +420,8 @@ unsafe extern "C" fn query_next(
 }
 
 unsafe extern "C" fn query_get(
-    system: *mut VoxlSystem,
-    entity: VoxlEntity,
+    system: *mut MiraSystem,
+    entity: MiraEntity,
     components: *mut *mut c_void,
 ) -> u8 {
     guard("query_get", 0, || {
@@ -429,13 +429,13 @@ unsafe extern "C" fn query_get(
     })
 }
 
-unsafe extern "C" fn spawn(system: *mut VoxlSystem) -> VoxlEntity {
-    guard("spawn", sys::VOXL_ENTITY_NONE, || {
-        context(system).map_or(sys::VOXL_ENTITY_NONE, |c| c.spawn().to_bits())
+unsafe extern "C" fn spawn(system: *mut MiraSystem) -> MiraEntity {
+    guard("spawn", sys::MIRA_ENTITY_NONE, || {
+        context(system).map_or(sys::MIRA_ENTITY_NONE, |c| c.spawn().to_bits())
     })
 }
 
-unsafe extern "C" fn despawn(system: *mut VoxlSystem, entity: VoxlEntity) {
+unsafe extern "C" fn despawn(system: *mut MiraSystem, entity: MiraEntity) {
     guard("despawn", (), || {
         if let Some(context) = context(system) {
             let entity = Entity::from_bits(entity);
@@ -447,9 +447,9 @@ unsafe extern "C" fn despawn(system: *mut VoxlSystem, entity: VoxlEntity) {
 }
 
 unsafe extern "C" fn insert(
-    system: *mut VoxlSystem,
-    entity: VoxlEntity,
-    component: VoxlComponent,
+    system: *mut MiraSystem,
+    entity: MiraEntity,
+    component: MiraComponent,
     value: *const c_void,
 ) {
     guard("insert", (), || {
@@ -472,7 +472,7 @@ unsafe extern "C" fn insert(
     })
 }
 
-unsafe extern "C" fn remove(system: *mut VoxlSystem, entity: VoxlEntity, component: VoxlComponent) {
+unsafe extern "C" fn remove(system: *mut MiraSystem, entity: MiraEntity, component: MiraComponent) {
     guard("remove", (), || {
         let Some(context) = context(system) else {
             return;
@@ -490,9 +490,9 @@ unsafe extern "C" fn remove(system: *mut VoxlSystem, entity: VoxlEntity, compone
 }
 
 unsafe extern "C" fn query_next_in(
-    system: *mut VoxlSystem,
+    system: *mut MiraSystem,
     query: u32,
-    entity: *mut VoxlEntity,
+    entity: *mut MiraEntity,
     components: *mut *mut c_void,
 ) -> u8 {
     guard("query_next_in", 0, || {
@@ -507,9 +507,9 @@ unsafe extern "C" fn query_next_in(
 }
 
 unsafe extern "C" fn query_get_in(
-    system: *mut VoxlSystem,
+    system: *mut MiraSystem,
     query: u32,
-    entity: VoxlEntity,
+    entity: MiraEntity,
     components: *mut *mut c_void,
 ) -> u8 {
     guard("query_get_in", 0, || {
@@ -519,7 +519,7 @@ unsafe extern "C" fn query_get_in(
     })
 }
 
-unsafe extern "C" fn query_rewind(system: *mut VoxlSystem, query: u32) {
+unsafe extern "C" fn query_rewind(system: *mut MiraSystem, query: u32) {
     guard("query_rewind", (), || {
         if let Some(context) = context(system) {
             context.rewind(query as usize);
@@ -527,7 +527,7 @@ unsafe extern "C" fn query_rewind(system: *mut VoxlSystem, query: u32) {
     })
 }
 
-/// The key a `VOXL_KEY_*` number stands for.
+/// The key a `MIRA_KEY_*` number stands for.
 fn key_code(key: u32) -> Option<KeyCode> {
     use KeyCode::*;
     const LETTERS: [KeyCode; 26] = [
@@ -558,24 +558,24 @@ fn key_code(key: u32) -> Option<KeyCode> {
     let key = key as usize;
     LETTERS
         .get(key)
-        .or_else(|| DIGITS.get(key.wrapping_sub(sys::VOXL_KEY_0 as usize)))
-        .or_else(|| OTHERS.get(key.wrapping_sub(sys::VOXL_KEY_SPACE as usize)))
-        .or_else(|| FUNCTION.get(key.wrapping_sub(sys::VOXL_KEY_F1 as usize)))
+        .or_else(|| DIGITS.get(key.wrapping_sub(sys::MIRA_KEY_0 as usize)))
+        .or_else(|| OTHERS.get(key.wrapping_sub(sys::MIRA_KEY_SPACE as usize)))
+        .or_else(|| FUNCTION.get(key.wrapping_sub(sys::MIRA_KEY_F1 as usize)))
         .copied()
 }
 
 fn mouse_button(button: u32) -> Option<MouseButton> {
     match button {
-        sys::VOXL_MOUSE_LEFT => Some(MouseButton::Left),
-        sys::VOXL_MOUSE_RIGHT => Some(MouseButton::Right),
-        sys::VOXL_MOUSE_MIDDLE => Some(MouseButton::Middle),
+        sys::MIRA_MOUSE_LEFT => Some(MouseButton::Left),
+        sys::MIRA_MOUSE_RIGHT => Some(MouseButton::Right),
+        sys::MIRA_MOUSE_MIDDLE => Some(MouseButton::Middle),
         _ => None,
     }
 }
 
 /// Asks the keyboard state a question. False if there is no keyboard (a headless app).
 unsafe fn key(
-    system: *mut VoxlSystem,
+    system: *mut MiraSystem,
     key: u32,
     ask: fn(&ButtonInput<KeyCode>, KeyCode) -> bool,
 ) -> u8 {
@@ -586,20 +586,20 @@ unsafe fn key(
     })
 }
 
-unsafe extern "C" fn key_down(system: *mut VoxlSystem, code: u32) -> u8 {
+unsafe extern "C" fn key_down(system: *mut MiraSystem, code: u32) -> u8 {
     key(system, code, ButtonInput::pressed)
 }
 
-unsafe extern "C" fn key_pressed(system: *mut VoxlSystem, code: u32) -> u8 {
+unsafe extern "C" fn key_pressed(system: *mut MiraSystem, code: u32) -> u8 {
     key(system, code, ButtonInput::just_pressed)
 }
 
-unsafe extern "C" fn key_released(system: *mut VoxlSystem, code: u32) -> u8 {
+unsafe extern "C" fn key_released(system: *mut MiraSystem, code: u32) -> u8 {
     key(system, code, ButtonInput::just_released)
 }
 
 unsafe fn mouse(
-    system: *mut VoxlSystem,
+    system: *mut MiraSystem,
     button: u32,
     ask: fn(&ButtonInput<MouseButton>, MouseButton) -> bool,
 ) -> u8 {
@@ -612,15 +612,15 @@ unsafe fn mouse(
     })
 }
 
-unsafe extern "C" fn mouse_down(system: *mut VoxlSystem, button: u32) -> u8 {
+unsafe extern "C" fn mouse_down(system: *mut MiraSystem, button: u32) -> u8 {
     mouse(system, button, ButtonInput::pressed)
 }
 
-unsafe extern "C" fn mouse_pressed(system: *mut VoxlSystem, button: u32) -> u8 {
+unsafe extern "C" fn mouse_pressed(system: *mut MiraSystem, button: u32) -> u8 {
     mouse(system, button, ButtonInput::just_pressed)
 }
 
-unsafe extern "C" fn mouse_motion(system: *mut VoxlSystem, delta: *mut f32) {
+unsafe extern "C" fn mouse_motion(system: *mut MiraSystem, delta: *mut f32) {
     guard("mouse_motion", (), || {
         if delta.is_null() {
             return;
@@ -634,7 +634,7 @@ unsafe extern "C" fn mouse_motion(system: *mut VoxlSystem, delta: *mut f32) {
 }
 
 /// Mesh handles are asset ids offset by one, so that zero can mean "none".
-fn mesh_handle(context: &mut Context, mesh: Mesh) -> sys::VoxlMesh {
+fn mesh_handle(context: &mut Context, mesh: Mesh) -> sys::MiraMesh {
     match context.add_mesh(mesh) {
         Some(id) => id + 1,
         None => {
@@ -644,15 +644,15 @@ fn mesh_handle(context: &mut Context, mesh: Mesh) -> sys::VoxlMesh {
     }
 }
 
-unsafe extern "C" fn mesh_shape(system: *mut VoxlSystem, shape: u32, a: f32) -> sys::VoxlMesh {
+unsafe extern "C" fn mesh_shape(system: *mut MiraSystem, shape: u32, a: f32) -> sys::MiraMesh {
     guard("mesh_shape", 0, || {
         let Some(context) = context(system) else {
             return 0;
         };
         let name = match shape {
-            sys::VOXL_SHAPE_CUBE => format!("shape:cube:{a}"),
-            sys::VOXL_SHAPE_SPHERE => format!("shape:sphere:{a}"),
-            sys::VOXL_SHAPE_PLANE => format!("shape:plane:{a}"),
+            sys::MIRA_SHAPE_CUBE => format!("shape:cube:{a}"),
+            sys::MIRA_SHAPE_SPHERE => format!("shape:sphere:{a}"),
+            sys::MIRA_SHAPE_PLANE => format!("shape:plane:{a}"),
             _ => {
                 log::error!(target: "plugin", "mesh_shape: unknown shape {shape}");
                 return 0;
@@ -664,8 +664,8 @@ unsafe extern "C" fn mesh_shape(system: *mut VoxlSystem, shape: u32, a: f32) -> 
             return context.shape_mesh(&name).map_or(0, |id| id + 1);
         }
         let mesh = match shape {
-            sys::VOXL_SHAPE_CUBE => Mesh::cube(a),
-            sys::VOXL_SHAPE_SPHERE => Mesh::uv_sphere(a, 32, 16),
+            sys::MIRA_SHAPE_CUBE => Mesh::cube(a),
+            sys::MIRA_SHAPE_SPHERE => Mesh::uv_sphere(a, 32, 16),
             _ => Mesh::plane(a),
         };
         mesh_handle(context, mesh)
@@ -673,12 +673,12 @@ unsafe extern "C" fn mesh_shape(system: *mut VoxlSystem, shape: u32, a: f32) -> 
 }
 
 unsafe extern "C" fn mesh_create(
-    system: *mut VoxlSystem,
-    vertices: *const sys::VoxlVertex,
+    system: *mut MiraSystem,
+    vertices: *const sys::MiraVertex,
     vertex_count: usize,
     indices: *const u32,
     index_count: usize,
-) -> sys::VoxlMesh {
+) -> sys::MiraMesh {
     guard("mesh_create", 0, || {
         let Some(context) = context(system) else {
             return 0;
@@ -704,7 +704,7 @@ unsafe extern "C" fn mesh_create(
     })
 }
 
-unsafe extern "C" fn set_mesh(system: *mut VoxlSystem, entity: VoxlEntity, mesh: sys::VoxlMesh) {
+unsafe extern "C" fn set_mesh(system: *mut MiraSystem, entity: MiraEntity, mesh: sys::MiraMesh) {
     guard("set_mesh", (), || {
         let (Some(context), Some(id)) = (context(system), mesh.checked_sub(1)) else {
             return;
@@ -724,9 +724,9 @@ unsafe extern "C" fn set_mesh(system: *mut VoxlSystem, entity: VoxlEntity, mesh:
 }
 
 unsafe extern "C" fn set_material(
-    system: *mut VoxlSystem,
-    entity: VoxlEntity,
-    material: *const sys::VoxlMaterial,
+    system: *mut MiraSystem,
+    entity: MiraEntity,
+    material: *const sys::MiraMaterial,
 ) {
     guard("set_material", (), || {
         let (Some(context), Some(material)) = (context(system), material.as_ref()) else {
@@ -749,11 +749,11 @@ unsafe extern "C" fn set_material(
 }
 
 unsafe extern "C" fn event_register(
-    app: *mut VoxlApp,
+    app: *mut MiraApp,
     name: *const u8,
     name_len: usize,
     size: usize,
-) -> sys::VoxlEvent {
+) -> sys::MiraEvent {
     guard("event_register", 0, || {
         let (Some(registrar), Some(name)) =
             (app.cast::<Registrar>().as_mut(), text(name, name_len))
@@ -774,8 +774,8 @@ unsafe extern "C" fn event_register(
 }
 
 unsafe extern "C" fn event_send(
-    system: *mut VoxlSystem,
-    event: sys::VoxlEvent,
+    system: *mut MiraSystem,
+    event: sys::MiraEvent,
     value: *const c_void,
 ) {
     guard("event_send", (), || {
@@ -806,8 +806,8 @@ unsafe extern "C" fn event_send(
 }
 
 unsafe extern "C" fn event_next(
-    system: *mut VoxlSystem,
-    event: sys::VoxlEvent,
+    system: *mut MiraSystem,
+    event: sys::MiraEvent,
     value: *mut c_void,
 ) -> u8 {
     guard("event_next", 0, || {
@@ -828,9 +828,9 @@ unsafe extern "C" fn event_next(
 }
 
 unsafe extern "C" fn set_camera(
-    system: *mut VoxlSystem,
-    entity: VoxlEntity,
-    camera: *const sys::VoxlCamera,
+    system: *mut MiraSystem,
+    entity: MiraEntity,
+    camera: *const sys::MiraCamera,
 ) {
     guard("set_camera", (), || {
         let (Some(context), Some(camera)) = (context(system), camera.as_ref()) else {
@@ -849,9 +849,9 @@ unsafe extern "C" fn set_camera(
 }
 
 unsafe extern "C" fn set_light(
-    system: *mut VoxlSystem,
-    entity: VoxlEntity,
-    light: *const sys::VoxlLight,
+    system: *mut MiraSystem,
+    entity: MiraEntity,
+    light: *const sys::MiraLight,
 ) {
     guard("set_light", (), || {
         let (Some(context), Some(light)) = (context(system), light.as_ref()) else {
@@ -876,7 +876,7 @@ unsafe fn vec3(values: *const f32) -> Option<glam::Vec3> {
     (!values.is_null()).then(|| glam::Vec3::from_slice(std::slice::from_raw_parts(values, 3)))
 }
 
-unsafe extern "C" fn set_ambient(system: *mut VoxlSystem, color: *const f32, intensity: f32) {
+unsafe extern "C" fn set_ambient(system: *mut MiraSystem, color: *const f32, intensity: f32) {
     guard("set_ambient", (), || {
         let (Some(context), Some(color)) = (context(system), vec3(color)) else {
             return;
@@ -890,7 +890,7 @@ unsafe extern "C" fn set_ambient(system: *mut VoxlSystem, color: *const f32, int
     })
 }
 
-unsafe extern "C" fn set_window_title(system: *mut VoxlSystem, title: *const u8, len: usize) {
+unsafe extern "C" fn set_window_title(system: *mut MiraSystem, title: *const u8, len: usize) {
     guard("set_window_title", (), || {
         let (Some(context), Some(title)) = (context(system), text(title, len)) else {
             return;
@@ -903,9 +903,9 @@ unsafe extern "C" fn set_window_title(system: *mut VoxlSystem, title: *const u8,
 }
 
 unsafe extern "C" fn set_collider(
-    system: *mut VoxlSystem,
-    entity: VoxlEntity,
-    collider: *const sys::VoxlCollider,
+    system: *mut MiraSystem,
+    entity: MiraEntity,
+    collider: *const sys::MiraCollider,
 ) {
     guard("set_collider", (), || {
         let (Some(context), Some(raw)) = (context(system), collider.as_ref()) else {
@@ -913,10 +913,10 @@ unsafe extern "C" fn set_collider(
         };
         let [x, y, z] = raw.size;
         let collider = match raw.shape {
-            sys::VOXL_COLLIDER_SPHERE => Collider::sphere(x),
-            sys::VOXL_COLLIDER_BOX => Collider::cuboid(glam::Vec3::new(x, y, z)),
-            sys::VOXL_COLLIDER_CAPSULE => Collider::capsule(y, x),
-            sys::VOXL_COLLIDER_GROUND => Collider::ground(),
+            sys::MIRA_COLLIDER_SPHERE => Collider::sphere(x),
+            sys::MIRA_COLLIDER_BOX => Collider::cuboid(glam::Vec3::new(x, y, z)),
+            sys::MIRA_COLLIDER_CAPSULE => Collider::capsule(y, x),
+            sys::MIRA_COLLIDER_GROUND => Collider::ground(),
             other => {
                 log::error!(target: "plugin", "set_collider: unknown shape {other}");
                 return;
@@ -936,18 +936,18 @@ unsafe extern "C" fn set_collider(
 }
 
 unsafe extern "C" fn set_body(
-    system: *mut VoxlSystem,
-    entity: VoxlEntity,
-    body: *const sys::VoxlBody,
+    system: *mut MiraSystem,
+    entity: MiraEntity,
+    body: *const sys::MiraBody,
 ) {
     guard("set_body", (), || {
         let (Some(context), Some(raw)) = (context(system), body.as_ref()) else {
             return;
         };
         let mut body = match raw.kind {
-            sys::VOXL_BODY_DYNAMIC => RigidBody::dynamic(),
-            sys::VOXL_BODY_KINEMATIC => RigidBody::kinematic(),
-            sys::VOXL_BODY_ANIMATED => RigidBody::animated(),
+            sys::MIRA_BODY_DYNAMIC => RigidBody::dynamic(),
+            sys::MIRA_BODY_KINEMATIC => RigidBody::kinematic(),
+            sys::MIRA_BODY_ANIMATED => RigidBody::animated(),
             other => {
                 log::error!(target: "plugin", "set_body: unknown kind {other}");
                 return;
@@ -966,8 +966,8 @@ unsafe extern "C" fn set_body(
 }
 
 unsafe extern "C" fn apply_impulse(
-    system: *mut VoxlSystem,
-    entity: VoxlEntity,
+    system: *mut MiraSystem,
+    entity: MiraEntity,
     impulse: *const f32,
 ) {
     guard("apply_impulse", (), || {
@@ -984,8 +984,8 @@ unsafe extern "C" fn apply_impulse(
 }
 
 unsafe extern "C" fn set_velocity(
-    system: *mut VoxlSystem,
-    entity: VoxlEntity,
+    system: *mut MiraSystem,
+    entity: MiraEntity,
     velocity: *const f32,
 ) {
     guard("set_velocity", (), || {
@@ -1002,7 +1002,7 @@ unsafe extern "C" fn set_velocity(
     })
 }
 
-unsafe extern "C" fn velocity(system: *mut VoxlSystem, entity: VoxlEntity, out: *mut f32) -> u8 {
+unsafe extern "C" fn velocity(system: *mut MiraSystem, entity: MiraEntity, out: *mut f32) -> u8 {
     guard("velocity", 0, || {
         let Some(context) = context(system) else {
             return 0;
@@ -1019,11 +1019,11 @@ unsafe extern "C" fn velocity(system: *mut VoxlSystem, entity: VoxlEntity, out: 
 }
 
 unsafe extern "C" fn raycast(
-    system: *mut VoxlSystem,
+    system: *mut MiraSystem,
     origin: *const f32,
     direction: *const f32,
     max_distance: f32,
-    hit: *mut sys::VoxlRayHit,
+    hit: *mut sys::MiraRayHit,
 ) -> u8 {
     guard("raycast", 0, || {
         let (Some(context), Some(origin), Some(direction)) =
@@ -1042,7 +1042,7 @@ unsafe extern "C" fn raycast(
             return 0;
         };
         if let Some(hit) = hit.as_mut() {
-            *hit = sys::VoxlRayHit {
+            *hit = sys::MiraRayHit {
                 entity: found.entity.to_bits(),
                 point: found.point.into(),
                 normal: found.normal.into(),
@@ -1054,9 +1054,9 @@ unsafe extern "C" fn raycast(
 }
 
 unsafe extern "C" fn component_describe(
-    app: *mut VoxlApp,
-    component: VoxlComponent,
-    fields: *const sys::VoxlField,
+    app: *mut MiraApp,
+    component: MiraComponent,
+    fields: *const sys::MiraField,
     field_count: usize,
 ) -> i32 {
     guard("component_describe", -1, || {
@@ -1089,14 +1089,14 @@ unsafe extern "C" fn component_describe(
                 return fail("a field's name is missing or not UTF-8");
             };
             let kind = match field.field_type {
-                sys::VOXL_FIELD_F32 => FieldKind::F32,
-                sys::VOXL_FIELD_F64 => FieldKind::F64,
-                sys::VOXL_FIELD_I32 => FieldKind::I32,
-                sys::VOXL_FIELD_I64 => FieldKind::I64,
-                sys::VOXL_FIELD_U8 => FieldKind::U8,
-                sys::VOXL_FIELD_U32 => FieldKind::U32,
-                sys::VOXL_FIELD_BOOL => FieldKind::Bool,
-                sys::VOXL_FIELD_ENTITY => FieldKind::Entity,
+                sys::MIRA_FIELD_F32 => FieldKind::F32,
+                sys::MIRA_FIELD_F64 => FieldKind::F64,
+                sys::MIRA_FIELD_I32 => FieldKind::I32,
+                sys::MIRA_FIELD_I64 => FieldKind::I64,
+                sys::MIRA_FIELD_U8 => FieldKind::U8,
+                sys::MIRA_FIELD_U32 => FieldKind::U32,
+                sys::MIRA_FIELD_BOOL => FieldKind::Bool,
+                sys::MIRA_FIELD_ENTITY => FieldKind::Entity,
                 _ => return fail("a field has an unknown type"),
             };
             described.push(BlobField {
@@ -1121,10 +1121,10 @@ unsafe extern "C" fn component_describe(
 }
 
 unsafe extern "C" fn image_load(
-    system: *mut VoxlSystem,
+    system: *mut MiraSystem,
     name: *const u8,
     len: usize,
-) -> sys::VoxlImage {
+) -> sys::MiraImage {
     guard("image_load", 0, || {
         let (Some(context), Some(name)) = (context(system), text(name, len)) else {
             return 0;
@@ -1140,17 +1140,17 @@ unsafe extern "C" fn image_load(
 }
 
 unsafe extern "C" fn set_textures(
-    system: *mut VoxlSystem,
-    entity: VoxlEntity,
-    base_color: sys::VoxlImage,
-    normal: sys::VoxlImage,
-    metallic_roughness: sys::VoxlImage,
+    system: *mut MiraSystem,
+    entity: MiraEntity,
+    base_color: sys::MiraImage,
+    normal: sys::MiraImage,
+    metallic_roughness: sys::MiraImage,
 ) {
     guard("set_textures", (), || {
         let Some(context) = context(system) else {
             return;
         };
-        let handle = |image: sys::VoxlImage| image.checked_sub(1).map(Handle::<Image>::from_id);
+        let handle = |image: sys::MiraImage| image.checked_sub(1).map(Handle::<Image>::from_id);
         let entity = Entity::from_bits(entity);
         context.queue.push(move |world| {
             let mut material = world.get::<Material>(entity).copied().unwrap_or_default();
@@ -1163,16 +1163,16 @@ unsafe extern "C" fn set_textures(
 }
 
 unsafe extern "C" fn spawn_model(
-    system: *mut VoxlSystem,
+    system: *mut MiraSystem,
     name: *const u8,
     len: usize,
-    transform: *const sys::VoxlTransform,
-) -> VoxlEntity {
-    guard("spawn_model", sys::VOXL_ENTITY_NONE, || {
+    transform: *const sys::MiraTransform,
+) -> MiraEntity {
+    guard("spawn_model", sys::MIRA_ENTITY_NONE, || {
         let (Some(context), Some(name), Some(at)) =
             (context(system), text(name, len), transform.as_ref())
         else {
-            return sys::VOXL_ENTITY_NONE;
+            return sys::MIRA_ENTITY_NONE;
         };
         let transform = Transform {
             translation: at.translation.into(),
@@ -1220,14 +1220,14 @@ unsafe extern "C" fn spawn_model(
     })
 }
 
-unsafe extern "C" fn set_parent(system: *mut VoxlSystem, child: VoxlEntity, parent: VoxlEntity) {
+unsafe extern "C" fn set_parent(system: *mut MiraSystem, child: MiraEntity, parent: MiraEntity) {
     guard("set_parent", (), || {
         let Some(context) = context(system) else {
             return;
         };
         let child = Entity::from_bits(child);
         context.queue.push(move |world| {
-            if parent == sys::VOXL_ENTITY_NONE {
+            if parent == sys::MIRA_ENTITY_NONE {
                 world.remove::<Parent>(child);
             } else {
                 world.insert(child, Parent(Entity::from_bits(parent)));
@@ -1236,7 +1236,7 @@ unsafe extern "C" fn set_parent(system: *mut VoxlSystem, child: VoxlEntity, pare
     })
 }
 
-unsafe extern "C" fn despawn_tree(system: *mut VoxlSystem, entity: VoxlEntity) {
+unsafe extern "C" fn despawn_tree(system: *mut MiraSystem, entity: MiraEntity) {
     guard("despawn_tree", (), || {
         if let Some(context) = context(system) {
             let entity = Entity::from_bits(entity);
@@ -1248,16 +1248,16 @@ unsafe extern "C" fn despawn_tree(system: *mut VoxlSystem, entity: VoxlEntity) {
 }
 
 unsafe extern "C" fn spawn_prefab(
-    system: *mut VoxlSystem,
+    system: *mut MiraSystem,
     name: *const u8,
     len: usize,
-    transform: *const sys::VoxlTransform,
-) -> VoxlEntity {
-    guard("spawn_prefab", sys::VOXL_ENTITY_NONE, || {
+    transform: *const sys::MiraTransform,
+) -> MiraEntity {
+    guard("spawn_prefab", sys::MIRA_ENTITY_NONE, || {
         let (Some(context), Some(name), Some(at)) =
             (context(system), text(name, len), transform.as_ref())
         else {
-            return sys::VOXL_ENTITY_NONE;
+            return sys::MIRA_ENTITY_NONE;
         };
         let transform = Transform {
             translation: at.translation.into(),
@@ -1274,7 +1274,7 @@ unsafe extern "C" fn spawn_prefab(
 }
 
 unsafe extern "C" fn system_fail(
-    system: *mut VoxlSystem,
+    system: *mut MiraSystem,
     message: *const u8,
     len: usize,
     trace: *const u8,
@@ -1294,7 +1294,7 @@ unsafe extern "C" fn system_fail(
 }
 
 unsafe extern "C" fn signal_set(
-    system: *mut VoxlSystem,
+    system: *mut MiraSystem,
     name: *const u8,
     len: usize,
     value: f64,
@@ -1322,7 +1322,7 @@ unsafe extern "C" fn signal_set(
 }
 
 unsafe extern "C" fn signal_get(
-    system: *mut VoxlSystem,
+    system: *mut MiraSystem,
     name: *const u8,
     len: usize,
     out: *mut f64,
@@ -1346,7 +1346,7 @@ unsafe extern "C" fn signal_get(
 }
 
 unsafe extern "C" fn signal_define(
-    system: *mut VoxlSystem,
+    system: *mut MiraSystem,
     name: *const u8,
     len: usize,
     op: u32,
@@ -1359,19 +1359,19 @@ unsafe extern "C" fn signal_define(
             return;
         };
         let op = match op {
-            sys::VOXL_SIGNAL_AND => Op::And,
-            sys::VOXL_SIGNAL_OR => Op::Or,
-            sys::VOXL_SIGNAL_NOT => Op::Not,
-            sys::VOXL_SIGNAL_COUNT => Op::Count,
-            sys::VOXL_SIGNAL_SUM => Op::Sum,
-            sys::VOXL_SIGNAL_SELECT => Op::Select,
-            sys::VOXL_SIGNAL_TIMER => Op::Timer,
-            sys::VOXL_SIGNAL_HELD_FOR => Op::HeldFor(param),
-            sys::VOXL_SIGNAL_LESS => Op::Compare(Compare::Less),
-            sys::VOXL_SIGNAL_LESS_OR_EQUAL => Op::Compare(Compare::LessOrEqual),
-            sys::VOXL_SIGNAL_EQUAL => Op::Compare(Compare::Equal),
-            sys::VOXL_SIGNAL_GREATER_OR_EQUAL => Op::Compare(Compare::GreaterOrEqual),
-            sys::VOXL_SIGNAL_GREATER => Op::Compare(Compare::Greater),
+            sys::MIRA_SIGNAL_AND => Op::And,
+            sys::MIRA_SIGNAL_OR => Op::Or,
+            sys::MIRA_SIGNAL_NOT => Op::Not,
+            sys::MIRA_SIGNAL_COUNT => Op::Count,
+            sys::MIRA_SIGNAL_SUM => Op::Sum,
+            sys::MIRA_SIGNAL_SELECT => Op::Select,
+            sys::MIRA_SIGNAL_TIMER => Op::Timer,
+            sys::MIRA_SIGNAL_HELD_FOR => Op::HeldFor(param),
+            sys::MIRA_SIGNAL_LESS => Op::Compare(Compare::Less),
+            sys::MIRA_SIGNAL_LESS_OR_EQUAL => Op::Compare(Compare::LessOrEqual),
+            sys::MIRA_SIGNAL_EQUAL => Op::Compare(Compare::Equal),
+            sys::MIRA_SIGNAL_GREATER_OR_EQUAL => Op::Compare(Compare::GreaterOrEqual),
+            sys::MIRA_SIGNAL_GREATER => Op::Compare(Compare::Greater),
             other => {
                 log::error!(target: "plugin", "signal_define: there is no operation {other}");
                 return;

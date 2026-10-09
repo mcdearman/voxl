@@ -35,7 +35,7 @@ use crate::{
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Reflect)]
-#[reflect(name = "voxl.BodyKind")]
+#[reflect(name = "mira.BodyKind")]
 pub enum BodyKind {
     /// Moved by gravity, forces and collisions.
     Dynamic,
@@ -46,7 +46,7 @@ pub enum BodyKind {
 /// Makes a collider's entity move. The entity's `Transform` is the body's position and
 /// orientation; its centre of mass is at the entity's origin.
 #[derive(Clone, Debug, Reflect)]
-#[reflect(name = "voxl.RigidBody", default)]
+#[reflect(name = "mira.RigidBody", default)]
 pub struct RigidBody {
     pub kind: BodyKind,
     pub linear_velocity: Vec3,
@@ -162,7 +162,7 @@ impl RigidBody {
 
 /// What an entity collides as: one or more shapes, placed relative to the entity.
 #[derive(Clone, Debug, Reflect)]
-#[reflect(name = "voxl.Collider")]
+#[reflect(name = "mira.Collider")]
 pub struct Collider {
     pub shapes: Vec<(Iso, Shape)>,
     pub friction: f32,
@@ -260,7 +260,7 @@ impl Collider {
 }
 
 #[derive(Clone, Copy, Debug, Reflect)]
-#[reflect(name = "voxl.JointKind")]
+#[reflect(name = "mira.JointKind")]
 pub enum JointKind {
     /// The anchors held together; free to turn any way.
     Ball,
@@ -276,7 +276,7 @@ pub enum JointKind {
 /// Joins two bodies (or a body to the world, with `b` none). Anchors are in each body's own
 /// space; with no `b`, `anchor_b` is a point in the world.
 #[derive(Clone, Copy, Debug, Reflect)]
-#[reflect(name = "voxl.Joint")]
+#[reflect(name = "mira.Joint")]
 pub struct Joint {
     pub a: Entity,
     pub b: Option<Entity>,
@@ -365,8 +365,8 @@ impl Body {
     }
 }
 
-/// The name of the event native plugins read to learn of contacts (`VoxlContact` in voxl.h).
-pub const CONTACT_EVENT: &str = "voxl.Contact";
+/// The name of the event native plugins read to learn of contacts (`MiraContact` in mira.h).
+pub const CONTACT_EVENT: &str = "mira.Contact";
 
 /// Publishes each step's contacts as events, so plugins in any language can react to them.
 fn publish_contacts(world: Res<PhysicsWorld>, mut events: ResMut<crate::plugin::PluginEvents>) {
@@ -374,7 +374,7 @@ fn publish_contacts(world: Res<PhysicsWorld>, mut events: ResMut<crate::plugin::
         return;
     };
     for contact in &world.contacts {
-        // Laid out as `VoxlContact`: two entities, a point, a normal, an impulse, padding.
+        // Laid out as `MiraContact`: two entities, a point, a normal, an impulse, padding.
         let mut bytes = [0u8; 48];
         bytes[0..8].copy_from_slice(&contact.a.to_bits().to_ne_bytes());
         bytes[8..16].copy_from_slice(&contact.b.to_bits().to_ne_bytes());

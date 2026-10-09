@@ -27,7 +27,7 @@ pub struct WindowSettings {
 impl Default for WindowSettings {
     fn default() -> Self {
         Self {
-            title: "voxl".into(),
+            title: "mira".into(),
             width: 1280,
             height: 720,
             vsync: true,

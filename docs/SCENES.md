@@ -6,7 +6,7 @@ Scene files, the editor's inspector, save games and networking all build on it.
 ## Making a type reflectable
 
 ```rust
-use voxl::prelude::*;
+use mira::prelude::*;
 
 #[derive(Component, Reflect, Default)]
 #[reflect(name = "game.Health", default)]
@@ -104,7 +104,7 @@ order. A prefab made in code has whatever name you give it:
 - **Prefab files are watched.** Save one again while the game runs and every instance of it
   is rebuilt in place. A file that no longer reads leaves the last good version in use.
 - **An instance can differ.** `PrefabInstance::new("torch.json").with_override(1,
-  "voxl.Material", "color.r", 0.2f32)` sets one field of one of the prefab's entities (the
+  "mira.Material", "color.r", 0.2f32)` sets one field of one of the prefab's entities (the
   second, here) for that instance only. Overrides are applied again every time the instance
   is rebuilt, so they survive changes to the prefab; one that no longer fits is reported and
   skipped. An empty path replaces, or adds, the whole component.
@@ -119,7 +119,7 @@ order. A prefab made in code has whatever name you give it:
 The `TypeRegistry` reaches components by name, which is what an editor does:
 
 ```rust
-let transform = registry.get("voxl.Transform").unwrap();
+let transform = registry.get("mira.Transform").unwrap();
 let mut value = (transform.get)(&world, entity).unwrap();
 value.set_path("translation.1", Value::Float(4.0));
 (transform.insert)(&mut world, entity, &value)?;

@@ -4,7 +4,7 @@
 //! view, and the vertex shader places every blade from a hash of its tile and index, the
 //! terrain heights, and a cover map saying what grows where.
 
-use voxl::{
+use mira::{
     glam::{Vec2, Vec3, Vec4},
     prelude::*,
     render::{main_depth_state, main_multisample, DrawFunctions, Gpu, RenderFrame, ViewBinding, HDR_FORMAT},

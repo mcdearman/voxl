@@ -4,7 +4,7 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::Context;
-use voxl::{prelude::*, render::Image};
+use mira::{prelude::*, render::Image};
 
 pub const ASSETS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/res/paris");
 

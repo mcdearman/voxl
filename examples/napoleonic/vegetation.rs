@@ -1,7 +1,7 @@
 //! Trees and shrubs: EZ-Tree models (MIT, bark from Poly Haven, CC0) and a Poly Haven shrub
 //! scan, each with a simplified middle level and a far impostor made by `tools/trees.py`.
 
-use voxl::{
+use mira::{
     glam::Vec3,
     prelude::*,
     render::{GltfScene, Image},
