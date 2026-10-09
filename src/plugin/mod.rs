@@ -376,12 +376,14 @@ fn install(app: &mut App, plugin: &mut Loaded) -> anyhow::Result<()> {
         plugin: &plugin.name,
         systems: Vec::new(),
         components: Vec::new(),
+        orders: Vec::new(),
     };
     // SAFETY: as above. The registrar outlives the call, and the plugin may not keep it.
     let status = unsafe { load(&api::API, (&raw mut registrar).cast()) };
     let Registrar {
         systems,
         components,
+        orders,
         ..
     } = registrar;
 
@@ -401,7 +403,19 @@ fn install(app: &mut App, plugin: &mut Loaded) -> anyhow::Result<()> {
     }
 
     let mut by_stage: HashMap<Stage, Vec<BoxedSystem>> = HashMap::new();
+    // Each system's order as this load of the plugin gave it; a system it said nothing
+    // about is given none, so that a constraint taken out of the code goes away on reload.
+    let mut order: Vec<(Stage, String, Vec<String>, Vec<String>)> = Vec::new();
     for (stage, system) in systems {
+        let name = crate::ecs::System::name(&system).to_owned();
+        let named = |after: bool| {
+            orders
+                .iter()
+                .filter(|(system, is_after, _)| *system == name && *is_after == after)
+                .map(|(_, _, other)| other.clone())
+                .collect::<Vec<_>>()
+        };
+        order.push((stage, name.clone(), named(false), named(true)));
         by_stage.entry(stage).or_default().push(Box::new(system));
     }
     for stage in STAGES {
@@ -418,6 +432,9 @@ fn install(app: &mut App, plugin: &mut Loaded) -> anyhow::Result<()> {
             systems.clear();
         }
         app.schedule_mut(stage).replace_owned(plugin.owner, systems);
+    }
+    for (stage, name, before, after) in order {
+        app.schedule_mut(stage).set_order(&name, before, after);
     }
 
     plugin.components = components;

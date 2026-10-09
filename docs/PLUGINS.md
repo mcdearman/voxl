@@ -126,6 +126,16 @@ Names are relative to the app's asset folder. The same name always gives the sam
 parent's, and `despawn_tree` despawns an entity with everything below it. A model spawned with
 `spawn_model` is such a tree: despawn its root with `despawn_tree` to remove its parts too.
 
+## Order
+
+Systems run in the order a plugin adds them, among the others of their stage. A plugin that
+needs more says so during load with `system_order(app, name, MIRA_BEFORE or MIRA_AFTER,
+other)`, where `other` is another of its systems by the name it was added under, or any system
+or set by its full name (`"otherplugin::system"`, `"signals"`). Naming something that isn't
+there does nothing, so a plugin can ask to run after another plugin's system whether or not
+that plugin is loaded. What a plugin says about order is taken afresh each time it loads. In
+Rust it is `app.run_before` and `run_after`; in Haskell `runBefore` and `runAfter`.
+
 ## Failures
 
 A system that goes wrong says so with `system_fail(system, message, trace)` and returns. In a

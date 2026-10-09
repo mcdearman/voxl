@@ -113,6 +113,9 @@ enum {
     MIRA_SHAPE_PLANE = 2   /* a: edge length; flat, facing up */
 };
 
+/* For `system_order`. */
+enum { MIRA_BEFORE = 0, MIRA_AFTER = 1 };
+
 /* How a signal is worked out from its inputs, for `signal_define`. */
 enum {
     MIRA_SIGNAL_AND = 0,
@@ -469,6 +472,23 @@ typedef struct MiraApi {
      * by spaces; `param` is the seconds of MIRA_SIGNAL_HELD_FOR, and ignored otherwise. */
     void (*signal_define)(MiraSystem *system, const char *name, size_t len, uint32_t op,
                           double param, const char *inputs, size_t inputs_len);
+
+    /* ---- more of the engine (appended; check `size` before using them) ---- */
+
+    /* Makes the entity an orthographic camera (it also needs a transform): the view is
+     * `height` metres of the world tall and things don't shrink with distance. `near` and
+     * `far` bound what is drawn; `active` as for set_camera. Inside a system; takes effect
+     * when it returns. */
+    void (*set_camera_orthographic)(MiraSystem *system, MiraEntity entity, float height,
+                                    float near, float far, uint32_t active);
+
+    /* During load: says that one of this plugin's systems runs before (MIRA_BEFORE) or
+     * after (MIRA_AFTER) another, within their stage. `other` is another of this plugin's
+     * systems by the name it was added under, or any system or set by its full name
+     * ("otherplugin::system", a set such as "signals"). Naming something that isn't in the
+     * stage does nothing. Returns 0, or -1 if `name` isn't a system this plugin has added. */
+    int32_t (*system_order)(MiraApp *app, const char *name, size_t len, uint32_t relation,
+                            const char *other, size_t other_len);
 } MiraApi;
 
 /* ---- conveniences for C and C++ ---- */

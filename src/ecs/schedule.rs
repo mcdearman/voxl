@@ -153,6 +153,24 @@ impl Schedule {
         self.batches.clear();
     }
 
+    /// Sets what the system called `name` runs before and after, in place of whatever it
+    /// was told before. For systems that arrive without constraints of their own (a
+    /// plugin's). Returns whether there is such a system.
+    pub fn set_order(&mut self, name: &str, before: Vec<String>, after: Vec<String>) -> bool {
+        let Some((_, config)) = self
+            .systems
+            .iter_mut()
+            .find(|(_, config)| config.system.name() == name)
+        else {
+            return false;
+        };
+        config.before = before;
+        config.after = after;
+        self.sorted = false;
+        self.batches.clear();
+        true
+    }
+
     /// Works out the order the systems run in: at each step, the earliest-added system that
     /// isn't waiting for another.
     ///

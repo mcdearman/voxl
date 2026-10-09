@@ -52,6 +52,8 @@ module Mira
   , Entity
   , addSystem
   , addSystem_
+  , runBefore
+  , runAfter
   , Each
   , addSystem1
   , addSystem2
@@ -128,6 +130,7 @@ module Mira
   , Light (..)
   , defaultLight
   , setCamera
+  , setCameraOrthographic
   , setLight
   , setAmbient
   , setWindowTitle
@@ -213,6 +216,10 @@ foreign import ccall unsafe "mira_hs_event_register"
   c_event_register :: Ptr () -> Ptr CChar -> CSize -> CSize -> IO Word32
 foreign import ccall unsafe "mira_hs_event_send" c_event_send :: Ptr () -> Word32 -> Ptr () -> IO ()
 foreign import ccall unsafe "mira_hs_event_next" c_event_next :: Ptr () -> Word32 -> Ptr () -> IO Word8
+foreign import ccall unsafe "mira_hs_set_camera_orthographic"
+  c_set_camera_orthographic :: Ptr () -> Word64 -> CFloat -> CFloat -> CFloat -> IO ()
+foreign import ccall unsafe "mira_hs_system_order"
+  c_system_order :: Ptr () -> Ptr CChar -> CSize -> Word32 -> Ptr CChar -> CSize -> IO CInt
 foreign import ccall unsafe "mira_hs_set_camera"
   c_set_camera :: Ptr () -> Word64 -> CFloat -> CFloat -> Word32 -> IO ()
 foreign import ccall unsafe "mira_hs_set_light"
@@ -491,6 +498,22 @@ addSystem :: App -> String -> Stage -> Query a -> (System -> Entity -> a -> IO (
 addSystem app name stage query visit =
   addSystem1 app name stage query $ \sys each -> forEach each (visit sys)
 
+-- | Says that the system added under the first name runs before the other, within their
+-- stage. The other is another of this plugin's systems by the name it was added under, or
+-- any system or set by its full name (@"otherplugin::system"@, @"signals"@).
+runBefore :: App -> String -> String -> IO ()
+runBefore = order 0
+
+-- | Says that the system added under the first name runs after the other. See 'runBefore'.
+runAfter :: App -> String -> String -> IO ()
+runAfter = order 1
+
+order :: Word32 -> App -> String -> String -> IO ()
+order relation (App app) name other =
+  withName name $ \chars len -> withName other $ \otherChars otherLen -> do
+    status <- c_system_order app chars len relation otherChars otherLen
+    when (status /= 0) $ ioError (userError ("there is no system `" ++ name ++ "` to order"))
+
 -- | Adds a system that runs once each time its stage comes round, visiting nothing.
 addSystem_ :: App -> String -> Stage -> (System -> IO ()) -> IO ()
 addSystem_ app name stage body = register app name stage [[]] (body . System)
@@ -748,6 +771,13 @@ defaultLight = Light (V3 1 1 1) 3 True
 setCamera :: System -> Entity -> Camera -> IO ()
 setCamera (System system) (Entity entity) (Camera fov near on) =
   c_set_camera system entity (realToFrac fov) (realToFrac near) (flag on)
+
+-- | Makes the entity an orthographic camera (it also needs a 'Transform'), when this system
+-- returns: the view is that many metres of the world tall, and things don't shrink with
+-- distance. The other two numbers are the nearest and farthest distances drawn.
+setCameraOrthographic :: System -> Entity -> Float -> Float -> Float -> IO ()
+setCameraOrthographic (System system) (Entity entity) height near far =
+  c_set_camera_orthographic system entity (realToFrac height) (realToFrac near) (realToFrac far)
 
 -- | Makes the entity a light (it also needs a 'Transform'), when this system returns.
 setLight :: System -> Entity -> Light -> IO ()

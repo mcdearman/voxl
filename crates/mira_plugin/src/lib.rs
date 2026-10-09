@@ -521,6 +521,37 @@ impl App {
         })
     }
 
+    /// Says that the system added as `system` runs before another, within their stage.
+    /// `other` is another of this plugin's systems by the name it was added under, or any
+    /// system or set by its full name (`"otherplugin::system"`, `"signals"`).
+    pub fn run_before(&mut self, system: &str, other: &str) -> Result<(), Error> {
+        self.order(system, sys::MIRA_BEFORE, other)
+    }
+
+    /// Says that the system added as `system` runs after another. See [`App::run_before`].
+    pub fn run_after(&mut self, system: &str, other: &str) -> Result<(), Error> {
+        self.order(system, sys::MIRA_AFTER, other)
+    }
+
+    fn order(&mut self, system: &str, relation: u32, other: &str) -> Result<(), Error> {
+        // SAFETY: called during load with the engine's pointer; the engine copies the names.
+        let status = unsafe {
+            (api().system_order)(
+                self.raw,
+                system.as_ptr(),
+                system.len(),
+                relation,
+                other.as_ptr(),
+                other.len(),
+            )
+        };
+        if status == 0 {
+            Ok(())
+        } else {
+            Err(Error(format!("there is no system `{system}` to order")))
+        }
+    }
+
     /// Adds a system that visits every entity matching `terms`.
     pub fn add_system(
         &mut self,
@@ -855,6 +886,13 @@ impl System {
             let found = (api().event_next)(self.raw, event.id, value.as_mut_ptr().cast());
             (found != 0).then(|| value.assume_init())
         }
+    }
+
+    /// Makes the entity an orthographic camera whose view is `height` metres tall, when this
+    /// system returns. It also needs a transform.
+    pub fn set_camera_orthographic(&mut self, entity: Entity, height: f32, near: f32, far: f32) {
+        // SAFETY: called inside the system.
+        unsafe { (api().set_camera_orthographic)(self.raw, entity.0, height, near, far, 1) }
     }
 
     /// Makes the entity a camera (it also needs a `Transform`), when this system returns.

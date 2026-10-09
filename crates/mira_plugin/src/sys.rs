@@ -68,6 +68,9 @@ pub const MIRA_SHAPE_CUBE: u32 = 0;
 pub const MIRA_SHAPE_SPHERE: u32 = 1;
 pub const MIRA_SHAPE_PLANE: u32 = 2;
 
+pub const MIRA_BEFORE: u32 = 0;
+pub const MIRA_AFTER: u32 = 1;
+
 pub const MIRA_SIGNAL_AND: u32 = 0;
 pub const MIRA_SIGNAL_OR: u32 = 1;
 pub const MIRA_SIGNAL_NOT: u32 = 2;
@@ -422,6 +425,23 @@ pub struct MiraApi {
         inputs: *const u8,
         inputs_len: usize,
     ),
+
+    pub set_camera_orthographic: unsafe extern "C" fn(
+        system: *mut MiraSystem,
+        entity: MiraEntity,
+        height: f32,
+        near: f32,
+        far: f32,
+        active: u32,
+    ),
+    pub system_order: unsafe extern "C" fn(
+        app: *mut MiraApp,
+        name: *const u8,
+        len: usize,
+        relation: u32,
+        other: *const u8,
+        other_len: usize,
+    ) -> i32,
 }
 
 /// `mira.Transform`: 48 bytes, 16-byte aligned.
