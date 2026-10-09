@@ -96,6 +96,34 @@ contract is `include/voxl.h`; see [PLUGINS.md](PLUGINS.md).
 **Exit test:** the Phase 4 sample game's rules live entirely in plugins, in two languages, and
 can be rewritten while the game is being played.
 
+## Phase 1B: A live program (L)
+
+Added at Chris's request (October 2026), after Bret Victor's talks and Jack Rusher's "Stop
+Writing Dead Programs": in debug builds the game is a program you change, question and repair
+while it runs, not one you restart. Hot reload (Phase 1A) is half of this; the other half is
+being able to see inside.
+
+- [x] A failure stops the game where it is instead of ending it: a system that panics is
+      caught, its stack and message kept, and the game paused with the world intact; fix the
+      code (a plugin reloads itself), resume; see [LIVE.md](LIVE.md)
+- [x] Time under control: pause, step frames, slow motion
+- [x] Every system's name, stage, order, constraints and run times, from the running app
+- [ ] What each system reads and writes, from the running app
+- [ ] A debug connection (a local socket speaking JSON) to a running game: list and search
+      entities, read and change any registered component or resource by name, spawn and
+      despawn, save the scene, pause and step, see failures with their stacks, reload plugins
+- [ ] A command-line client for it, and the same protocol under the editor (Phase 5)
+- [ ] Hot reload of the host's own Rust systems, not only plugins (the engine as a library the
+      game reloads)
+- [ ] Rewind: snapshots of the world every few frames (reflection makes them), scrub back,
+      change code, play forward again
+- [ ] Stacks across the plugin boundary: which plugin system was running, and for Haskell the
+      exception with its call stack
+
+**Exit test:** make a plugin system divide by zero while the sample game runs; the game
+freezes on that frame and shows the stack; fix the line, save, and play carries on from the
+same frame without the window ever closing.
+
 ## Phase 1: Data layer (L)
 
 The layer Unreal's editor, saves, networking and Blueprints all stand on.
@@ -138,6 +166,31 @@ and see it change in the running scene.
 
 **Exit test:** the Napoleonic demo's update time drops in proportion to cores used, with Miri
 and a thread sanitizer clean.
+
+## Phase 2B: Signals (M)
+
+Added at Chris's request (October 2026). Game rules written as handlers that set and clear
+shared flags get out of step with each other. His example is a bug in Age of Empires 4:
+standing on a sacred site pauses the win timer; step onto a second site and the units on the
+first die and the timer starts again. The rule should be stated once, as a function of the
+world: the timer is paused while anyone on your team stands on any sacred site the other
+team holds. That is a signal, in the sense of functional reactive programming: a value
+derived from other values, which the engine keeps true.
+
+- [ ] Signals: a named value computed from queries over the world, resources and other
+      signals; recomputed when what it reads has changed; read by systems like a resource
+- [ ] Signals as run conditions, and edges (became true, became false) as events, so "when
+      the timer un-pauses" is written once
+- [ ] Signals over time: held for, since, integrate (a timer that runs only while a signal is
+      true is the sacred-site clock itself)
+- [ ] Dependencies known to the engine: which signals read which, shown in the debug
+      connection, with the current value of each (Phase 1B)
+- [ ] Signals from plugins, through the C interface; a Haskell layer in the applicative style
+      of the bindings' queries
+- [ ] The sacred-site rule as a worked example and a test
+
+**Exit test:** the sacred-site game: two teams, several sites, units walking on and off and
+dying in any order; the timer is right in every case because no code ever sets it.
 
 ## Phase 3: GPU-driven renderer (XL)
 
@@ -259,5 +312,5 @@ project grows.
    seen in screenshots to fix alongside: the built-in sky is dull next to the sun it comes
    with; and objects that move every frame smear under temporal anti-aliasing (it has no
    motion vectors).
-3. The parallel scheduler, on the ordering constraints and access sets that are now there
-   (Phase 2).
+3. A live program (Phase 1B): the debug connection to a running game, and failures inside
+   plugins. Signals (Phase 2B). Then the parallel scheduler (Phase 2).

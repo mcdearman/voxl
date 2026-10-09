@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use crate::{
     ecs::{event_update_system, Component, Events, IntoSystems, Schedule, World},
     input::InputPlugin,
+    live::{Frame, Live},
     plugin::{NativePlugins, PluginEvents},
     reflect::{Reflect, TypeRegistry},
     render::RenderPlugin,
@@ -85,6 +86,7 @@ impl App {
         app.add_event::<AppExit>();
         app.init_resource::<PluginEvents>();
         app.init_resource::<TypeRegistry>();
+        app.init_resource::<Live>();
         app.add_systems(Stage::First, |world: &mut World| {
             world.resource_mut::<PluginEvents>().update();
         });
@@ -158,12 +160,19 @@ impl App {
     pub fn update(&mut self) {
         self.startup();
         self.check_native_plugins();
+        let frame = self.begin_live_frame();
         let mut fixed_steps = 0;
         if let Some(time) = self.world.get_resource_mut::<Time>() {
-            time.tick();
+            match frame {
+                Frame::Run => time.tick(),
+                Frame::Step(step) => time.advance_by(step),
+                Frame::Hold => time.hold(),
+            }
             let delta = time.delta();
             if let Some(fixed) = self.world.get_resource_mut::<FixedTime>() {
-                fixed_steps = fixed.accumulate(delta);
+                if frame != Frame::Hold {
+                    fixed_steps = fixed.accumulate(delta);
+                }
             }
         }
         for stage in EARLY_STAGES {
@@ -175,8 +184,37 @@ impl App {
             }
         }
         for stage in LATE_STAGES {
+            // A paused game doesn't simulate, and does everything else.
+            if stage == Stage::Update && frame == Frame::Hold {
+                continue;
+            }
             self.run_stage(stage);
         }
+    }
+
+    /// Settles what this frame does about the simulation: runs, steps or holds.
+    fn begin_live_frame(&mut self) -> Frame {
+        let Some(live) = self.world.get_resource_mut::<Live>() else {
+            return Frame::Run;
+        };
+        if live.take_resume() {
+            for schedule in self.schedules.values_mut() {
+                schedule.resume();
+            }
+        } else if live.is_paused_by_failure()
+            && self.schedules.values().all(|schedule| schedule.suspended() == 0)
+        {
+            // Every system that failed has been replaced by new code.
+            live.failures_repaired();
+        }
+        live.begin_frame()
+    }
+
+    /// Every system in a stage, in the order they run, with how long each last took.
+    pub fn systems(&self, stage: Stage) -> Vec<crate::ecs::SystemInfo> {
+        self.schedules
+            .get(&stage)
+            .map_or(Vec::new(), |schedule| schedule.systems())
     }
 
     pub fn is_started(&self) -> bool {
@@ -194,8 +232,22 @@ impl App {
     }
 
     fn run_stage(&mut self, stage: Stage) {
-        if let Some(schedule) = self.schedules.get_mut(&stage) {
-            schedule.run(&mut self.world);
+        let Some(schedule) = self.schedules.get_mut(&stage) else {
+            return;
+        };
+        let guarded = self
+            .world
+            .get_resource::<Live>()
+            .is_some_and(|live| live.catch_failures);
+        schedule.set_guarded(guarded);
+        schedule.run(&mut self.world);
+        let failures = schedule.take_failures();
+        if !failures.is_empty() {
+            let frame = self
+                .world
+                .get_resource::<Time>()
+                .map_or(0, Time::frame_count);
+            self.world.resource_mut::<Live>().record(stage, frame, failures);
         }
     }
 

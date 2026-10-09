@@ -7,6 +7,7 @@ mod commands;
 mod condition;
 mod entity;
 mod event;
+pub mod guard;
 mod query;
 mod resource;
 mod schedule;
@@ -30,7 +31,10 @@ pub use query::{
     Without,
 };
 pub use resource::{Local, Res, ResMut};
-pub use schedule::{IntoLabel, IntoSystems, Schedule, SystemConfig, SystemConfigs, SystemOwner};
+pub use schedule::{
+    IntoLabel, IntoSystems, Schedule, SystemConfig, SystemConfigs, SystemFailure, SystemInfo,
+    SystemOwner, SystemStats,
+};
 pub(crate) use storage::ErasedStorage;
 pub use storage::{Component, ComponentKey, ComponentTicks, DropFn, Tick};
 pub use voxl_derive::Component;

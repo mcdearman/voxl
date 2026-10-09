@@ -6,6 +6,7 @@ pub mod asset_server;
 pub mod assets;
 pub mod ecs;
 pub mod input;
+pub mod live;
 pub mod physics;
 pub mod plugin;
 pub mod prefab;
@@ -27,6 +28,7 @@ pub mod prelude {
         assets::{Assets, Handle},
         ecs::prelude::*,
         input::{ButtonInput, KeyCode, Mouse, MouseButton},
+        live::{Failure, Live},
         physics::{
             fluid::{Emitter, ParticleFluid, WaterSurface},
             BodyKind, CharacterController, Collider, Joint, JointKind, PhysicsPlugin, PhysicsWorld,

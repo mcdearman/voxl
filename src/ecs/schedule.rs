@@ -1,5 +1,8 @@
+use std::time::{Duration, Instant};
+
 use super::{
     condition::{BoxedCondition, IntoCondition},
+    guard,
     system::{BoxedSystem, IntoSystem},
     world::World,
 };
@@ -19,6 +22,41 @@ pub struct SystemConfig {
     sets: Vec<String>,
     /// It runs only when all of these say so.
     conditions: Vec<BoxedCondition>,
+    /// It panicked, and is left out until it is resumed or replaced.
+    suspended: bool,
+    stats: SystemStats,
+}
+
+/// How much a system has run.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct SystemStats {
+    /// How many times it has run (not counting frames its conditions held it back).
+    pub runs: u64,
+    /// How long its last run took, conditions included.
+    pub last: Duration,
+    pub total: Duration,
+}
+
+/// A system as seen from outside: for a debugger, a profiler, an editor.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SystemInfo {
+    pub name: String,
+    pub sets: Vec<String>,
+    pub before: Vec<String>,
+    pub after: Vec<String>,
+    pub conditions: usize,
+    /// It panicked and is waiting to be resumed or replaced.
+    pub suspended: bool,
+    pub stats: SystemStats,
+}
+
+/// A system that panicked while the schedule was guarded.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SystemFailure {
+    pub system: String,
+    pub message: String,
+    pub location: String,
+    pub stack: String,
 }
 
 impl SystemConfig {
@@ -29,6 +67,8 @@ impl SystemConfig {
             after: Vec::new(),
             sets: Vec::new(),
             conditions: Vec::new(),
+            suspended: false,
+            stats: SystemStats::default(),
         }
     }
 
@@ -46,6 +86,9 @@ pub struct Schedule {
     /// Indices into `systems`, in the order they run. Rebuilt when `systems` changes.
     order: Vec<usize>,
     sorted: bool,
+    /// Whether a panicking system is caught and suspended instead of unwinding out of `run`.
+    guarded: bool,
+    failures: Vec<SystemFailure>,
 }
 
 impl Schedule {
@@ -67,7 +110,9 @@ impl Schedule {
             });
             match slot {
                 Some(i) => {
+                    // New code: whatever made the old one fail may be gone.
                     self.systems[i].1.system = system;
+                    self.systems[i].1.suspended = false;
                     kept[i] = true;
                 }
                 None => added.push((owner, SystemConfig::new(system))),
@@ -156,15 +201,91 @@ impl Schedule {
         }
         for &index in &self.order {
             let config = &mut self.systems[index].1;
-            // Every condition is asked, so each one sees every frame.
-            let mut wanted = true;
-            for condition in &mut config.conditions {
-                wanted &= condition.check(world);
+            if config.suspended {
+                continue;
             }
-            if wanted {
-                config.system.run(world);
+            let started = Instant::now();
+            let mut step = || {
+                // Every condition is asked, so each one sees every frame.
+                let mut wanted = true;
+                for condition in &mut config.conditions {
+                    wanted &= condition.check(world);
+                }
+                if wanted {
+                    config.system.run(world);
+                }
+                wanted
+            };
+            let ran = if self.guarded {
+                match guard::catch(&mut step) {
+                    Ok(ran) => ran,
+                    Err(caught) => {
+                        config.suspended = true;
+                        self.failures.push(SystemFailure {
+                            system: config.system.name().to_owned(),
+                            message: caught.message,
+                            location: caught.location,
+                            stack: caught.stack,
+                        });
+                        false
+                    }
+                }
+            } else {
+                step()
+            };
+            if ran {
+                let took = started.elapsed();
+                config.stats.runs += 1;
+                config.stats.last = took;
+                config.stats.total += took;
             }
         }
+    }
+
+    /// Sets whether a system that panics is caught: it is then suspended (left out of later
+    /// runs) and reported by `take_failures`, and the rest of the schedule carries on.
+    pub fn set_guarded(&mut self, guarded: bool) {
+        self.guarded = guarded;
+    }
+
+    /// The systems that have panicked since this was last called.
+    pub fn take_failures(&mut self) -> Vec<SystemFailure> {
+        std::mem::take(&mut self.failures)
+    }
+
+    /// Lets suspended systems run again. Returns how many there were.
+    pub fn resume(&mut self) -> usize {
+        let mut resumed = 0;
+        for (_, config) in &mut self.systems {
+            resumed += std::mem::take(&mut config.suspended) as usize;
+        }
+        resumed
+    }
+
+    pub fn suspended(&self) -> usize {
+        self.systems
+            .iter()
+            .filter(|(_, config)| config.suspended)
+            .count()
+    }
+
+    /// Every system, in the order they run (see `system_names`).
+    pub fn systems(&self) -> Vec<SystemInfo> {
+        let sorted = self.sorted.then_some(&self.order);
+        (0..self.systems.len())
+            .map(|i| {
+                let config = &self.systems[sorted.map_or(i, |order| order[i])].1;
+                SystemInfo {
+                    name: config.system.name().to_owned(),
+                    sets: config.sets.clone(),
+                    before: config.before.clone(),
+                    after: config.after.clone(),
+                    conditions: config.conditions.len(),
+                    suspended: config.suspended,
+                    stats: config.stats,
+                }
+            })
+            .collect()
     }
 
     /// The systems' names, in the order they run (the order they were added, until the
