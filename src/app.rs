@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 
 use crate::{
-    ecs::{event_update_system, Events, IntoSystems, Schedule, World},
+    ecs::{event_update_system, Component, Events, IntoSystems, Schedule, World},
+    reflect::{Reflect, TypeRegistry},
     input::InputPlugin,
     plugin::{NativePlugins, PluginEvents},
     render::RenderPlugin,
@@ -109,6 +110,14 @@ impl App {
 
     pub fn init_resource<R: Default + 'static>(&mut self) -> &mut Self {
         self.world.init_resource::<R>();
+        self
+    }
+
+    /// Makes a component type reachable by name, so scenes can save and load it and tools
+    /// can inspect it.
+    pub fn register_type<C: Component + Reflect>(&mut self) -> &mut Self {
+        self.world.init_resource::<TypeRegistry>();
+        self.world.resource_mut::<TypeRegistry>().register::<C>();
         self
     }
 

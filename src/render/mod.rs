@@ -50,6 +50,7 @@ use crate::{
     app::{App, Plugin, Stage},
     assets::{Assets, Handle},
     ecs::{Component, EventReader, Query, Res, ResMut, World},
+    reflect::Reflect,
     time::Time,
     transform::{GlobalTransform, Transform},
     window::{Window, WindowResized, WindowSettings},
@@ -65,7 +66,7 @@ pub const PBR_WGSL: &str = concat!(include_str!("pbr.wgsl"), include_str!("rt_of
 pub const PBR_RT_WGSL: &str = concat!(include_str!("pbr.wgsl"), include_str!("rt_on.wgsl"));
 
 /// Linear RGBA color.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Reflect)]
 pub struct Color {
     pub r: f32,
     pub g: f32,
@@ -108,7 +109,8 @@ impl Color {
 }
 
 /// How a surface looks: a metallic-roughness PBR material, as in glTF.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Reflect)]
+#[reflect(name = "voxl.Material", default)]
 pub struct Material {
     /// Multiplies the base color texture and the mesh's vertex colors.
     pub color: Color,
@@ -222,7 +224,8 @@ impl Component for NotShadowCaster {}
 
 /// A perspective camera. The first active camera found is used. The projection has no far
 /// plane: everything in front of `near` is drawn.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Reflect)]
+#[reflect(name = "voxl.Camera", default)]
 pub struct Camera {
     pub fov_y: f32,
     pub near: f32,
@@ -249,7 +252,8 @@ impl Camera {
 }
 
 /// The sun, shining along its entity's forward direction.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Reflect)]
+#[reflect(name = "voxl.DirectionalLight", default)]
 pub struct DirectionalLight {
     pub color: Color,
     /// Illuminance on a surface facing the light, in the same units as the sky's radiance.
@@ -901,6 +905,10 @@ pub struct RenderPlugin;
 
 impl Plugin for RenderPlugin {
     fn build(&self, app: &mut App) {
+        app.register_type::<Camera>()
+            .register_type::<DirectionalLight>()
+            .register_type::<Mesh3d>()
+            .register_type::<Material>();
         app.init_resource::<Assets<Mesh>>()
             .init_resource::<Assets<Image>>()
             .init_resource::<AmbientLight>()

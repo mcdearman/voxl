@@ -31,6 +31,7 @@ pub use resource::{Local, Res, ResMut};
 pub use schedule::{IntoSystems, Schedule, SystemOwner};
 pub(crate) use storage::ErasedStorage;
 pub use storage::{Component, ComponentKey, ComponentTicks, DropFn, Tick};
+pub use voxl_derive::Component;
 pub use system::{BoxedSystem, IntoSystem, System, SystemMeta, SystemParam, SystemParamFunction};
 pub use world::{NamedComponent, World};
 

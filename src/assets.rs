@@ -126,3 +126,24 @@ impl<T> Assets<T> {
         )
     }
 }
+
+/// A handle is saved as its id. That only means something while the same assets are loaded
+/// in the same order; until assets are loaded by path, a scene with handles in it can be
+/// restored within a run but not from a file in a later one.
+impl<T: 'static> crate::reflect::Reflect for Handle<T> {
+    fn type_name() -> &'static str {
+        "Handle"
+    }
+
+    fn to_value(&self) -> crate::reflect::Value {
+        crate::reflect::Value::Int(self.id as i64)
+    }
+
+    fn from_value(value: &crate::reflect::Value) -> Result<Self, crate::reflect::ReflectError> {
+        u32::from_value(value).map(Self::from_id)
+    }
+
+    fn schema() -> crate::reflect::Schema {
+        crate::reflect::Schema::Int
+    }
+}

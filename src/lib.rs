@@ -1,9 +1,13 @@
+// Lets the derive macros name this crate as `::voxl` from inside it too.
+extern crate self as voxl;
+
 pub mod app;
 pub mod assets;
 pub mod ecs;
 pub mod input;
 pub mod physics;
 pub mod plugin;
+pub mod reflect;
 pub mod render;
 pub mod tasks;
 pub mod time;
@@ -18,6 +22,7 @@ pub mod prelude {
         app::{App, AppExit, DefaultPlugins, Plugin, Stage},
         assets::{Assets, Handle},
         ecs::prelude::*,
+        reflect::{Reflect, Scene, TypeRegistry},
         input::{ButtonInput, KeyCode, Mouse, MouseButton},
         physics::{
             fluid::{Emitter, ParticleFluid, WaterSurface},
