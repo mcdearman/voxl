@@ -8,7 +8,8 @@
 use super::gpu::{Gpu, HDR_FORMAT};
 
 /// How hazy the air is, for light shafts. Off unless inserted with `enabled: true`.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, crate::reflect::Reflect)]
+#[reflect(name = "mira.VolumetricLight", default)]
 pub struct VolumetricLight {
     pub enabled: bool,
     /// Scattering per metre at `base_height`. Around 0.005 is a hazy day.

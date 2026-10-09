@@ -22,7 +22,8 @@ pub struct ChunkViewer;
 
 impl Component for ChunkViewer {}
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, crate::reflect::Reflect)]
+#[reflect(name = "mira.VoxelSettings", default)]
 pub struct VoxelSettings {
     /// How far, in chunks, terrain is visible horizontally.
     pub view_radius: i32,

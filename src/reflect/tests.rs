@@ -467,3 +467,40 @@ fn a_level_keeps_its_settings() {
         .resources
         .is_empty());
 }
+
+#[test]
+fn the_look_of_a_level_is_part_of_it() {
+    use crate::render::{PostProcess, ShadowSettings, VolumetricLight};
+
+    let mut registry = registry();
+    registry.register_resource::<PostProcess>();
+    registry.register_resource::<ShadowSettings>();
+    registry.register_resource::<VolumetricLight>();
+    let mut world = World::new();
+    world.insert_resource(PostProcess {
+        exposure: 2.5,
+        taa: false,
+        ..Default::default()
+    });
+    world.insert_resource(ShadowSettings {
+        max_distance: 77.0,
+        ..Default::default()
+    });
+    let scene = Scene::from_json(&Scene::capture(&world, &registry).to_json()).unwrap();
+    assert_eq!(scene.resources.len(), 2, "only what the world has");
+
+    let mut other = World::new();
+    let spawned = scene.spawn(&mut other, &registry);
+    assert!(spawned.skipped.is_empty(), "{:?}", spawned.skipped);
+    let post = other.resource::<PostProcess>();
+    assert_eq!((post.exposure, post.taa), (2.5, false));
+    assert_eq!(other.resource::<ShadowSettings>().max_distance, 77.0);
+    // One field by name, as a tool would set it; the rest keep their defaults.
+    let exposure = Value::Map(vec![("exposure".into(), Value::Float(0.4))]);
+    (registry.resource("mira.PostProcess").unwrap().insert)(&mut other, &exposure).unwrap();
+    assert_eq!(other.resource::<PostProcess>().exposure, 0.4);
+    assert!(
+        other.resource::<PostProcess>().taa,
+        "a field left out takes its default"
+    );
+}
