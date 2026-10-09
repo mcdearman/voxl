@@ -264,7 +264,13 @@ mod tests {
         let miser = app.world.spawn(());
         let a = app.world.spawn(Owes { to: bank, coins: 5 });
         let b = app.world.spawn(Owes { to: bank, coins: 7 });
-        let c = app.world.spawn((Owes { to: miser, coins: 1 }, Follows(a)));
+        let c = app.world.spawn((
+            Owes {
+                to: miser,
+                coins: 1,
+            },
+            Follows(a),
+        ));
         app.update();
         assert_eq!(owed(&app, bank), [a, b]);
         assert_eq!(owed(&app, miser), [c]);
