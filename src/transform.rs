@@ -1,11 +1,10 @@
-use std::collections::HashMap;
-
 use glam::{Mat3, Mat4, Quat, Vec3};
 
 use crate::{
     app::{App, Plugin, Stage},
     ecs::{Commands, Component, Entity, EntityCommands, Local, Query, Res, With, Without, World},
     reflect::Reflect,
+    relation::{self, Related, Relation},
     time::FixedTime,
 };
 
@@ -126,6 +125,12 @@ pub struct Parent(pub Entity);
 
 impl Component for Parent {}
 
+impl Relation for Parent {
+    fn target(&self) -> Entity {
+        self.0
+    }
+}
+
 /// Smooths an entity that is moved in `FixedUpdate`. Each frame its `Transform` is set to a blend
 /// of the last two fixed steps, so motion stays smooth when the display and simulation rates
 /// differ. The true simulated value is restored before every fixed step.
@@ -186,102 +191,13 @@ fn interpolate_transforms(
 
 /// The entities whose `Parent` is this one, in entity order. The engine keeps it up to date
 /// from the `Parent` components every frame; read it, and change `Parent` to change it.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Children(Vec<Entity>);
-
-impl Component for Children {}
-
-impl Children {
-    pub fn iter(&self) -> impl Iterator<Item = Entity> + '_ {
-        self.0.iter().copied()
-    }
-
-    pub fn len(&self) -> usize {
-        self.0.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
-    }
-}
-
-/// What the parent links looked like when `Children` was last rebuilt.
-#[derive(Default, PartialEq, Eq, Clone, Copy)]
-struct HierarchyState {
-    parents: usize,
-    entities: usize,
-    newest_change: u64,
-    orphans: usize,
-}
-
-/// Rebuilds `Children` from `Parent` when the links have changed. Looking costs one pass over
-/// the `Parent` components; rebuilding only happens when something is different.
-fn sync_children(world: &mut World) {
-    let mut state = HierarchyState {
-        entities: world.entity_count(),
-        ..Default::default()
-    };
-    if let Some(parents) = world.storage::<Parent>() {
-        state.parents = parents.len();
-        for &child in parents.entities() {
-            let ticks = parents.ticks(child).expect("listed, so present");
-            state.newest_change = state.newest_change.max(ticks.changed);
-            let parent = parents.get(child).expect("listed, so present").0;
-            state.orphans += !world.contains_entity(parent) as usize;
-        }
-    }
-    if world.get_resource::<HierarchyState>() == Some(&state) {
-        return;
-    }
-    world.insert_resource(state);
-
-    let mut families: HashMap<Entity, Vec<Entity>> = HashMap::new();
-    for (child, parent) in world.query::<(Entity, &Parent)>().iter() {
-        families.entry(parent.0).or_default().push(child);
-    }
-    // Take `Children` away from entities that no longer have any.
-    let stale: Vec<Entity> = world
-        .query::<(Entity, &Children)>()
-        .iter()
-        .filter(|(entity, _)| !families.contains_key(entity))
-        .map(|(entity, _)| entity)
-        .collect();
-    for entity in stale {
-        world.remove::<Children>(entity);
-    }
-    for (parent, mut children) in families {
-        if !world.contains_entity(parent) {
-            continue;
-        }
-        children.sort_unstable();
-        // Only write when the list differs, so `Changed<Children>` means what it says.
-        if world
-            .get::<Children>(parent)
-            .is_none_or(|old| old.0 != children)
-        {
-            world.insert(parent, Children(children));
-        }
-    }
-}
+/// `Parent` is a [relation](crate::relation), and this is the way back along it.
+pub type Children = Related<Parent>;
 
 /// Despawns an entity and everything below it in the hierarchy. Returns how many entities
 /// were despawned.
 pub fn despawn_recursive(world: &mut World, entity: Entity) -> usize {
-    // From the `Parent` components themselves, not `Children`, so that links made earlier in
-    // the same frame count too.
-    let mut families: HashMap<Entity, Vec<Entity>> = HashMap::new();
-    for (child, parent) in world.query::<(Entity, &Parent)>().iter() {
-        families.entry(parent.0).or_default().push(child);
-    }
-    let mut pending = vec![entity];
-    let mut despawned = 0;
-    while let Some(next) = pending.pop() {
-        if let Some(children) = families.remove(&next) {
-            pending.extend(children);
-        }
-        despawned += world.despawn(next) as usize;
-    }
-    despawned
+    relation::despawn_with_related::<Parent>(world, entity)
 }
 
 /// Hierarchy operations on an entity being commanded.
@@ -369,7 +285,7 @@ impl Plugin for TransformPlugin {
                 (
                     interpolate_transforms,
                     add_global_transforms,
-                    sync_children,
+                    relation::sync::<Parent>,
                     propagate_transforms,
                 ),
             );

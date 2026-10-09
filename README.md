@@ -71,6 +71,7 @@ Edits to voxel terrain are kept when their chunk streams out, and can be saved t
 [docs/VOXELS.md](docs/VOXELS.md).
 
 Ordering systems, run conditions and game states: [docs/SCHEDULING.md](docs/SCHEDULING.md).
+Relations between entities: [docs/RELATIONS.md](docs/RELATIONS.md).
 
 Failures that pause the game instead of ending it, and stepping time:
 [docs/LIVE.md](docs/LIVE.md). Game rules as signals: [docs/SIGNALS.md](docs/SIGNALS.md).
@@ -103,4 +104,11 @@ Where the engine is headed: [docs/ROADMAP.md](docs/ROADMAP.md).
 cargo test
 cargo +nightly miri test --lib -- ecs::     # the ECS's unsafe code
 MIRA_SCREENSHOT=frame.png cargo run --release   # render a frame to a file and quit
+MIRA_FRAME_TESTS=1 cargo test --test frames     # draw fixed scenes and compare with stored frames
 ```
+
+The last needs a graphics card, so it runs only when asked. It starts a scene hidden and
+paused (`MIRA_PAUSED=1`), steps it to a set frame, and compares the picture, made small, with
+the one in `tests/frames`; a frame that differs leaves `<name>.new.png` and `<name>.diff.png`
+there. After a change that was meant to change the picture, store new frames with
+`MIRA_UPDATE_FRAMES=1`. The comparison is `mira::render::frame_diff`, for a game's own tests.

@@ -389,6 +389,39 @@ impl Signals {
         }
     }
 
+    /// Gives a rule another name, and has everything that reads it read it under the new
+    /// one. Its value, what it has timed and where its box sits all stay. A source keeps the
+    /// name the game gave it, since the game asks for it by that name.
+    pub fn rename(&mut self, name: &str, to: &str) -> Result<(), String> {
+        let &index = self
+            .names
+            .get(name)
+            .ok_or_else(|| format!("there is no signal `{name}`"))?;
+        if !matches!(self.nodes[index].kind, Kind::Op(_)) {
+            return Err(format!(
+                "`{name}` is a source: the game names it, and reads it by that name"
+            ));
+        }
+        if to.is_empty() || to.chars().any(char::is_whitespace) {
+            return Err("a signal's name is one word".to_owned());
+        }
+        if self.names.contains_key(to) {
+            return Err(format!("there is a signal `{to}` already"));
+        }
+        self.names.remove(name);
+        self.names.insert(to.to_owned(), index);
+        self.nodes[index].name = to.to_owned();
+        for input in self.nodes.iter_mut().flat_map(|node| &mut node.inputs) {
+            if input == name {
+                *input = to.to_owned();
+            }
+        }
+        if let Some(at) = self.places.remove(name) {
+            self.places.insert(to.to_owned(), at);
+        }
+        Ok(())
+    }
+
     /// Removes a node. Nodes that read it report a problem and read false.
     pub fn remove(&mut self, name: &str) -> bool {
         let Some(index) = self.names.remove(name) else {
@@ -970,6 +1003,26 @@ mod tests {
         fn signals(&self) -> &Signals {
             self.app.world.resource::<Signals>()
         }
+    }
+
+    #[test]
+    fn a_rule_is_renamed_and_what_reads_it_follows() {
+        let mut signals = Signals::default();
+        signals.set("limit", 3.0);
+        signals.define("small", Op::Not, ["limit"]);
+        signals.place("limit", [4.0, 8.0]);
+        assert_eq!(signals.rename("limit", "most"), Ok(()));
+        assert_eq!(signals.constant("most"), Some(Signal::Number(3.0)));
+        assert_eq!(signals.constant("limit"), None);
+        assert!(signals.is_defined_as("small", Op::Not, &["most".to_owned()]));
+        assert_eq!(signals.place_of("most"), Some([4.0, 8.0]));
+        assert_eq!(
+            signals.rename("small", "most"),
+            Err("there is a signal `most` already".to_owned())
+        );
+        assert!(signals.rename("gone", "back").is_err());
+        assert!(signals.rename("most", "two words").is_err());
+        assert!(signals.rename("most", "").is_err());
     }
 
     #[test]
