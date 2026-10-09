@@ -154,7 +154,12 @@ using only the engine.
 
 ## Phase 5: Editor (XL)
 
-Built from the engine's own UI and reflection.
+Built with [Neo](https://github.com/mcdearman/neo), Chris's GUI toolkit, on top of the
+engine's reflection. Before starting, work out with the Neo project what the
+editor needs from it.
+
+- [ ] Agree with Neo on what it must provide: a wgpu viewport inside a Neo window, dockable
+      panels, tree and property views, drag and drop, undo
 
 - [ ] Viewport, entity tree, inspector generated from reflection, transform gizmos
 - [ ] Asset browser, drag to place, prefab editing
