@@ -58,6 +58,7 @@ fn main() -> anyhow::Result<()> {
             density: 0.0012,
             height_falloff: 0.015,
             base_height: 0.0,
+            start: 0.0,
         })
         .insert_resource(PostProcess {
             exposure: 1.0,

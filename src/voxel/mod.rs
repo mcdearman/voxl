@@ -110,11 +110,13 @@ impl Plugin for VoxelPlugin {
             .insert_resource(registry)
             .insert_resource(ChunkGenerator::new(move |chunk| terrain.generate(chunk)))
             .insert_resource(self.settings)
-            // Haze thick enough to hide chunks appearing at the edge of the world.
+            // Haze that leaves the near half of the view clear and is all but opaque by the edge
+            // of the world, to hide chunks appearing there.
             .insert_resource(Fog {
-                density: 1.2 / view_distance,
+                density: 6.0 / view_distance,
                 height_falloff: 0.004,
                 base_height: 20.0,
+                start: view_distance * 0.5,
             })
             .init_resource::<TaskPool>()
             .init_resource::<VoxelWorld>()

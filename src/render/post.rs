@@ -37,10 +37,11 @@ pub struct PostProcess {
 impl Default for PostProcess {
     fn default() -> Self {
         Self {
-            // The defaults suit a plain scene under the built-in sky and a sun of ordinary
+            // The defaults suit a plain scene under the built-in sky and a sun of the default
             // strength. With exposure 1 and the flat curve such a scene comes out pale and
-            // washed; scenes lit by a photographed sky set their own.
-            exposure: 0.45,
+            // washed, and much below 0.7 the sky goes dark; scenes lit by a photographed sky
+            // set their own.
+            exposure: 0.7,
             bloom: 0.04,
             vignette: 0.3,
             saturation: 1.0,

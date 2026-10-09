@@ -16,7 +16,7 @@ struct View {
     sun_direction: vec4<f32>,
     // Sun illuminance, linear RGB. w: sky intensity
     sun_color: vec4<f32>,
-    // Flat extra ambient light, linear RGB.
+    // Flat extra ambient light, linear RGB. w: distance at which the haze begins
     ambient: vec4<f32>,
     // x: haze density at base height, y: height falloff, z: base height, w: sky mip count
     fog: vec4<f32>,
@@ -275,8 +275,10 @@ fn shade(s: Surface, world_position: vec3<f32>) -> vec3<f32> {
 // Aerial perspective: exponential height fog, lit by the sky and glowing toward the sun.
 fn apply_haze(color: vec3<f32>, world_position: vec3<f32>) -> vec3<f32> {
     let to = world_position - view.camera_position.xyz;
-    let distance = length(to);
-    let dir = to / max(distance, 1e-4);
+    let full_distance = length(to);
+    let dir = to / max(full_distance, 1e-4);
+    // Only the part of the ray beyond the haze's start passes through any.
+    let distance = max(full_distance - view.ambient.w, 0.0);
     let density = view.fog.x;
     let falloff = view.fog.y;
     let height = view.camera_position.y - view.fog.z;
