@@ -203,10 +203,16 @@ mod tests {
         // A named reader's place is kept for it, so whoever asks under that name next (a
         // reloaded system) carries on from there.
         let before_reload = events.reader("plugin::listen");
-        assert_eq!(events.next(before_reload, id).map(<[u8]>::to_vec), Some(4u32.to_ne_bytes().to_vec()));
+        assert_eq!(
+            events.next(before_reload, id).map(<[u8]>::to_vec),
+            Some(4u32.to_ne_bytes().to_vec())
+        );
         events.send_value(id, &5u32);
         let after_reload = events.reader("plugin::listen");
-        assert_eq!(events.next(after_reload, id).map(<[u8]>::to_vec), Some(5u32.to_ne_bytes().to_vec()));
+        assert_eq!(
+            events.next(after_reload, id).map(<[u8]>::to_vec),
+            Some(5u32.to_ne_bytes().to_vec())
+        );
         assert!(events.next(after_reload, id).is_none());
     }
 }

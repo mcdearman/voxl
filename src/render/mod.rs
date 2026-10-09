@@ -5,7 +5,6 @@ pub mod reach;
 mod gltf_scene;
 mod gpu;
 mod image;
-mod image_files;
 mod mesh;
 mod post;
 mod probes;
@@ -29,7 +28,6 @@ pub use gpu::{
     HDR_FORMAT, MSAA_SAMPLES,
 };
 pub use image::Image;
-pub use image_files::ImageFiles;
 pub use mesh::{Mesh, Mesh3d, Vertex};
 pub use post::PostProcess;
 pub use shaders::{Install, Rebuild, Shader, ShaderReload};
@@ -48,6 +46,7 @@ use probes::ProbeBaker;
 
 use crate::{
     app::{App, Plugin, Stage},
+    asset_server::AssetServer,
     assets::{Assets, Handle},
     ecs::{Component, EventReader, Query, Res, ResMut, World},
     reflect::Reflect,
@@ -917,10 +916,10 @@ impl Plugin for RenderPlugin {
             .init_resource::<PostProcess>()
             .init_resource::<Screenshot>()
             .init_resource::<ShaderReload>()
-            .init_resource::<ImageFiles>()
+            .init_resource::<AssetServer>()
             .add_systems(
                 Stage::First,
-                (shaders::reload_changed, image_files::reload_changed_images),
+                (shaders::reload_changed, crate::asset_server::update_asset_server),
             )
             .init_resource::<RenderFrame>()
             .init_resource::<VolumetricLight>()

@@ -2,6 +2,7 @@
 extern crate self as voxl;
 
 pub mod app;
+pub mod asset_server;
 pub mod assets;
 pub mod ecs;
 pub mod input;
@@ -20,6 +21,7 @@ pub use glam;
 pub mod prelude {
     pub use crate::{
         app::{App, AppExit, DefaultPlugins, Plugin, Stage},
+        asset_server::AssetServer,
         assets::{Assets, Handle},
         ecs::prelude::*,
         reflect::{Reflect, Scene, TypeRegistry},
@@ -31,7 +33,7 @@ pub mod prelude {
         },
         render::{
             AmbientLight, Animator, Camera, Color, DirectionalLight, Environment, Fog, Gait,
-            GltfScene, Image, ImageFiles, Leg, Limb, LodLevel, Lods, Material, Mesh, Mesh3d, NotShadowCaster,
+            GltfScene, Image, Leg, Limb, LodLevel, Lods, Material, Mesh, Mesh3d, NotShadowCaster,
             Pattern, PostProcess, RayTracingSettings, Reach, ShadowSettings, VolumetricLight,
         },
         time::{FixedTime, Time},

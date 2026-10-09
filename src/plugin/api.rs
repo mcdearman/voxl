@@ -19,6 +19,7 @@ use super::{
 };
 use crate::{
     app::Stage,
+    asset_server::AssetServer,
     assets::{Assets, Handle},
     ecs::{DropFn, Entity, System, World},
     input::{ButtonInput, KeyCode, Mouse, MouseButton},
@@ -632,14 +633,24 @@ unsafe extern "C" fn mesh_shape(system: *mut VoxlSystem, shape: u32, a: f32) -> 
         let Some(context) = context(system) else {
             return 0;
         };
-        let mesh = match shape {
-            sys::VOXL_SHAPE_CUBE => Mesh::cube(a),
-            sys::VOXL_SHAPE_SPHERE => Mesh::uv_sphere(a, 32, 16),
-            sys::VOXL_SHAPE_PLANE => Mesh::plane(a),
+        let name = match shape {
+            sys::VOXL_SHAPE_CUBE => format!("shape:cube:{a}"),
+            sys::VOXL_SHAPE_SPHERE => format!("shape:sphere:{a}"),
+            sys::VOXL_SHAPE_PLANE => format!("shape:plane:{a}"),
             _ => {
                 log::error!(target: "plugin", "mesh_shape: unknown shape {shape}");
                 return 0;
             }
+        };
+        // Through the asset server when there is one, so the shape has a name; an app without
+        // one still gets its mesh.
+        if context.world().contains_resource::<AssetServer>() {
+            return context.shape_mesh(&name).map_or(0, |id| id + 1);
+        }
+        let mesh = match shape {
+            sys::VOXL_SHAPE_CUBE => Mesh::cube(a),
+            sys::VOXL_SHAPE_SPHERE => Mesh::uv_sphere(a, 32, 16),
+            _ => Mesh::plane(a),
         };
         mesh_handle(context, mesh)
     })

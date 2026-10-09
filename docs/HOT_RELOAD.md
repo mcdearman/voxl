@@ -7,7 +7,7 @@ reloaded a moment after it is saved, and left as it was if the new version is br
 |---|---|---|
 | Gameplay code | Write it as a [native plugin](PLUGINS.md) | Always, unless `app.native_plugins().hot_reload = false` |
 | Shaders | Name them with `shader!` instead of `include_str!` | Debug builds; `VOXL_HOT_SHADERS=1` or `=0` overrides |
-| Textures | Load them through `ImageFiles` | Debug builds; `ImageFiles::hot_reload` overrides |
+| Textures | Load them through the `AssetServer` | Debug builds; `AssetServer::hot_reload` overrides |
 
 ## Shaders
 
@@ -43,11 +43,12 @@ shaders of the Napoleonic and Paris demos, which still use `include_str!`.
 ## Textures
 
 ```rust
-fn setup(mut files: ResMut<ImageFiles>, mut images: ResMut<Assets<Image>>) {
-    let bricks = files.load(&mut images, "assets/bricks.png", true)?;
+fn setup(mut server: ResMut<AssetServer>, mut images: ResMut<Assets<Image>>) {
+    let bricks = server.load_image(&mut images, "textures/bricks.png");
     // use `bricks` in a Material as usual
 }
 ```
 
-When the file is saved again, the image is decoded, uploaded, and every material using it is
-rebuilt. A file that can't be decoded is reported and the old image stays.
+Images loaded through the `AssetServer` are watched. When the file is saved again, the image is
+decoded on a worker thread and uploaded, and every material using it is rebuilt. A file that
+can't be decoded is reported and the old image stays. See [ASSETS.md](ASSETS.md).
