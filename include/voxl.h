@@ -127,6 +127,68 @@ typedef struct VoxlMaterial {
     float metallic;    /* 0 or 1, usually */
 } VoxlMaterial;
 
+/* An event type handle, from event_register. 0 is "no event". */
+typedef uint32_t VoxlEvent;
+
+typedef struct VoxlCamera {
+    float fov_y;     /* vertical field of view, in radians */
+    float near;      /* nearest distance drawn */
+    uint32_t active; /* the first active camera is the one that is drawn */
+} VoxlCamera;
+
+/* A sun-like light, shining along the forward direction (-Z) of the entity's transform. */
+typedef struct VoxlLight {
+    float color[3];
+    float intensity;
+    uint32_t shadows;
+} VoxlLight;
+
+enum {
+    VOXL_COLLIDER_SPHERE = 0,  /* size[0]: radius */
+    VOXL_COLLIDER_BOX = 1,     /* size: half extents along x, y, z */
+    VOXL_COLLIDER_CAPSULE = 2, /* size[0]: radius, size[1]: height; upright */
+    VOXL_COLLIDER_GROUND = 3   /* everything below the entity's position */
+};
+
+/* Makes an entity solid. Without a body it never moves. */
+typedef struct VoxlCollider {
+    uint32_t shape;
+    float size[3];
+    float friction;
+    float restitution; /* bounciness, 0 to 1 */
+    uint32_t sensor;   /* nonzero: detects overlaps but blocks nothing */
+} VoxlCollider;
+
+enum {
+    VOXL_BODY_DYNAMIC = 0,   /* moved by gravity, forces and collisions */
+    VOXL_BODY_KINEMATIC = 1, /* moved only by its velocity; pushes, is never pushed */
+    VOXL_BODY_ANIMATED = 2   /* moved by setting its transform; pushes, is never pushed */
+};
+
+/* Makes an entity with a collider move. */
+typedef struct VoxlBody {
+    uint32_t kind;
+    float mass; /* kilograms; 0 to work it out from the collider's size */
+    float velocity[3];
+    uint32_t lock_rotation; /* nonzero keeps it upright */
+} VoxlBody;
+
+typedef struct VoxlRayHit {
+    VoxlEntity entity;
+    float point[3];
+    float normal[3];
+    float distance;
+} VoxlRayHit;
+
+/* The engine's "voxl.Contact" event: two colliders touched during a physics step. */
+typedef struct VoxlContact {
+    VoxlEntity a;
+    VoxlEntity b;
+    float point[3];
+    float normal[3]; /* from a toward b */
+    float impulse;   /* how hard, in newton-seconds */
+} VoxlContact;
+
 enum {
     VOXL_LOG_ERROR = 1,
     VOXL_LOG_WARN = 2,
@@ -241,6 +303,44 @@ typedef struct VoxlApi {
      * voxl.Transform. */
     void (*set_mesh)(VoxlSystem *system, VoxlEntity entity, VoxlMesh mesh);
     void (*set_material)(VoxlSystem *system, VoxlEntity entity, const VoxlMaterial *material);
+
+    /* ---- events (register inside voxl_plugin_load) ---- */
+
+    /* Defines an event type, or finds the one this name already has: `size` bytes each. Any
+     * plugin that knows the name can send and read it; that is how plugins talk to each
+     * other. The engine's own events are found the same way ("voxl.Contact"). Returns 0 on
+     * failure, including the name existing with a different size. */
+    VoxlEvent (*event_register)(VoxlApp *app, const char *name, size_t name_len, size_t size);
+
+    /* ---- inside a system ---- */
+
+    /* Sends an event, copying `size` bytes from `value`. Systems that run later this frame,
+     * and every system next frame, can read it. */
+    void (*event_send)(VoxlSystem *system, VoxlEvent event, const void *value);
+    /* Copies the next event this system has not yet read into `value`. Returns 0 when there
+     * are no more. Each system reads each event once. */
+    uint8_t (*event_next)(VoxlSystem *system, VoxlEvent event, void *value);
+
+    /* The scene. Like set_mesh, these take effect when the system returns, and the entity
+     * also needs a voxl.Transform. */
+    void (*set_camera)(VoxlSystem *system, VoxlEntity entity, const VoxlCamera *camera);
+    void (*set_light)(VoxlSystem *system, VoxlEntity entity, const VoxlLight *light);
+    /* Light arriving from every direction: an RGB colour and a strength. */
+    void (*set_ambient)(VoxlSystem *system, const float *color, float intensity);
+    void (*set_window_title)(VoxlSystem *system, const char *title, size_t len);
+
+    /* Physics. These do nothing, and the queries find nothing, in an app without physics. */
+    void (*set_collider)(VoxlSystem *system, VoxlEntity entity, const VoxlCollider *collider);
+    void (*set_body)(VoxlSystem *system, VoxlEntity entity, const VoxlBody *body);
+    /* A sudden push on a dynamic body: three floats, in newton-seconds. */
+    void (*apply_impulse)(VoxlSystem *system, VoxlEntity entity, const float *impulse);
+    void (*set_velocity)(VoxlSystem *system, VoxlEntity entity, const float *velocity);
+    /* Writes the body's velocity as three floats. Returns 0 if the entity has no body. */
+    uint8_t (*velocity)(VoxlSystem *system, VoxlEntity entity, float *velocity);
+    /* The first collider a ray meets within `max_distance`, as things stood after the last
+     * physics step. `direction` need not be normalized. Returns 0 if it meets nothing. */
+    uint8_t (*raycast)(VoxlSystem *system, const float *origin, const float *direction,
+                       float max_distance, VoxlRayHit *hit);
 } VoxlApi;
 
 /* ---- components the engine exports ---- */

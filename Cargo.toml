@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [workspace]
-members = ["crates/voxl_plugin", "plugins/wave"]
+members = ["crates/voxl_plugin", "plugins/wave", "plugins/scoreboard"]
 
 [dependencies]
 voxl_plugin = { path = "crates/voxl_plugin" }

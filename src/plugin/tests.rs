@@ -172,6 +172,143 @@ VOXL_EXPORT int32_t voxl_plugin_load(const VoxlApi *a, VoxlApp *app) {
 }
 "#;
 
+/// Owns a scene (camera, sun, ambient light), drops a ball onto the ground with physics, and
+/// sends a `test.Tick` event every frame. What it observes goes in a `test.Report` component.
+const SCENE: &str = r#"
+typedef struct { int32_t n; } Tick;
+typedef struct { int32_t contacts; float speed; float ray; int32_t ticks_sent; } Report;
+static VoxlComponent transform_c, report_c;
+static VoxlEvent tick_e, contact_e;
+static VoxlEntity *ball;
+
+static VoxlTransform at(float x, float y, float z) {
+    VoxlTransform t = {{x, y, z}, 0, {0, 0, 0, 1}, {1, 1, 1}, 0};
+    return t;
+}
+
+static void setup(VoxlSystem *s, void *user) {
+    VoxlTransform origin = at(0, 0, 0), above = at(0, 5, 0);
+
+    VoxlEntity camera = api->spawn(s);
+    VoxlCamera lens = {1.0f, 0.5f, 1};
+    api->insert(s, camera, transform_c, &origin);
+    api->set_camera(s, camera, &lens);
+
+    VoxlEntity sun = api->spawn(s);
+    VoxlLight light = {{1.0f, 0.5f, 0.25f}, 4.0f, 0};
+    api->insert(s, sun, transform_c, &origin);
+    api->set_light(s, sun, &light);
+
+    float sky[3] = {0.1f, 0.2f, 0.3f};
+    api->set_ambient(s, sky, 0.7f);
+    api->set_window_title(s, VOXL_STR("no window here; must not crash"));
+
+    VoxlEntity ground = api->spawn(s);
+    VoxlCollider floor = {VOXL_COLLIDER_GROUND, {0, 0, 0}, 0.5f, 0.0f, 0};
+    api->insert(s, ground, transform_c, &origin);
+    api->set_collider(s, ground, &floor);
+
+    *ball = api->spawn(s);
+    VoxlCollider round = {VOXL_COLLIDER_SPHERE, {0.5f, 0, 0}, 0.5f, 0.0f, 0};
+    VoxlBody body = {VOXL_BODY_DYNAMIC, 2.0f, {0, 0, 0}, 0};
+    Report report = {0, 0, 0, 0};
+    api->insert(s, *ball, transform_c, &above);
+    api->insert(s, *ball, report_c, &report);
+    api->set_collider(s, *ball, &round);
+    api->set_body(s, *ball, &body);
+}
+
+static void observe(VoxlSystem *s, void *user) {
+    VoxlEntity e;
+    void *found[1];
+    while (api->query_next(s, &e, found)) {
+        Report *report = found[0];
+
+        Tick tick = {report->ticks_sent++};
+        api->event_send(s, tick_e, &tick);
+
+        VoxlContact contact;
+        while (api->event_next(s, contact_e, &contact))
+            if (contact.a == *ball || contact.b == *ball) report->contacts += 1;
+
+        float v[3];
+        report->speed = api->velocity(s, e, v) ? (v[1] < 0 ? -v[1] : v[1]) : -1.0f;
+
+        float from[3] = {0, 10, 0}, down[3] = {0, -3, 0};
+        VoxlRayHit hit;
+        report->ray = api->raycast(s, from, down, 100.0f, &hit) && hit.entity == *ball
+                          ? hit.distance : -1.0f;
+        if (api->key_pressed(s, VOXL_KEY_ENTER)) {
+            float up[3] = {0, 20, 0};
+            api->apply_impulse(s, e, up);
+        }
+    }
+}
+
+VOXL_EXPORT int32_t voxl_plugin_load(const VoxlApi *a, VoxlApp *app) {
+    api = a;
+    transform_c = api->component_lookup(app, VOXL_STR("voxl.Transform"), NULL, NULL);
+    report_c = api->component_register(app, VOXL_STR("test.Report"), sizeof(Report),
+                                       _Alignof(Report), NULL);
+    ball = api->state(app, VOXL_STR("test.ball"), sizeof(VoxlEntity), _Alignof(VoxlEntity));
+    tick_e = api->event_register(app, VOXL_STR("test.Tick"), sizeof(Tick));
+    contact_e = api->event_register(app, VOXL_STR("voxl.Contact"), sizeof(VoxlContact));
+    if (!tick_e || !contact_e) return -2;
+    /* The same name with another size would make the two sides misread each other. */
+    if (api->event_register(app, VOXL_STR("test.Tick"), 64)) return -3;
+
+    VoxlTerm reports[] = {{report_c, VOXL_WRITE}};
+    VoxlSystemDesc systems[] = {
+        {VOXL_STR("setup"), VOXL_STAGE_STARTUP, 0, setup, NULL, NULL, 0},
+        {VOXL_STR("observe"), VOXL_STAGE_UPDATE, 0, observe, NULL, reports, 1},
+    };
+    for (int i = 0; i < 2; i++)
+        if (api->system_add(app, &systems[i]) != 0) return -4;
+    return 0;
+}
+"#;
+
+/// A separate plugin that knows nothing of the first but the name and size of its event.
+const LISTENER: &str = r#"
+typedef struct { int32_t n; } Tick;
+typedef struct { int32_t count; int32_t sum; } Heard;
+static VoxlComponent heard_c;
+static VoxlEvent tick_e;
+
+static void setup(VoxlSystem *s, void *user) {
+    Heard heard = {0, 0};
+    api->insert(s, api->spawn(s), heard_c, &heard);
+}
+
+static void listen(VoxlSystem *s, void *user) {
+    VoxlEntity e;
+    void *found[1];
+    while (api->query_next(s, &e, found)) {
+        Heard *heard = found[0];
+        Tick tick;
+        while (api->event_next(s, tick_e, &tick)) {
+            heard->count += 1;
+            heard->sum += tick.n;
+        }
+    }
+}
+
+VOXL_EXPORT int32_t voxl_plugin_load(const VoxlApi *a, VoxlApp *app) {
+    api = a;
+    heard_c = api->component_register(app, VOXL_STR("test.Heard"), sizeof(Heard),
+                                      _Alignof(Heard), NULL);
+    tick_e = api->event_register(app, VOXL_STR("test.Tick"), sizeof(Tick));
+    VoxlTerm heard[] = {{heard_c, VOXL_WRITE}};
+    VoxlSystemDesc systems[] = {
+        {VOXL_STR("setup"), VOXL_STAGE_STARTUP, 0, setup, NULL, NULL, 0},
+        {VOXL_STR("listen"), VOXL_STAGE_UPDATE, 0, listen, NULL, heard, 1},
+    };
+    for (int i = 0; i < 2; i++)
+        if (api->system_add(app, &systems[i]) != 0) return -4;
+    return tick_e ? 0 : -2;
+}
+"#;
+
 struct Workspace {
     dir: PathBuf,
 }
@@ -360,6 +497,22 @@ fn unusable_plugins_are_refused() {
     assert_eq!(app.native_plugins().loaded().count(), 0);
 }
 
+/// Builds one of the workspace's Rust example plugins and says where it is.
+fn build_rust_plugin(name: &str) -> PathBuf {
+    // Built into its own directory: the outer `cargo test` may hold the lock on the main one.
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let target = root.join("target").join("plugin-tests");
+    let status = Command::new(env!("CARGO"))
+        .args(["build", "-p", name, "--manifest-path"])
+        .arg(root.join("Cargo.toml"))
+        .arg("--target-dir")
+        .arg(&target)
+        .status()
+        .unwrap();
+    assert!(status.success(), "building the {name} plugin failed");
+    target.join("debug").join(library_file_name(name))
+}
+
 /// The Rust bindings, through the real example plugin.
 #[test]
 fn the_rust_example_plugin_loads() {
@@ -371,18 +524,7 @@ fn the_rust_example_plugin_loads() {
     }
     impl crate::ecs::Component for Cell {}
 
-    // Built into its own directory: the outer `cargo test` may hold the lock on the main one.
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let target = root.join("target").join("plugin-tests");
-    let status = Command::new(env!("CARGO"))
-        .args(["build", "-p", "wave", "--manifest-path"])
-        .arg(root.join("Cargo.toml"))
-        .arg("--target-dir")
-        .arg(&target)
-        .status()
-        .unwrap();
-    assert!(status.success(), "building the wave plugin failed");
-    let library = target.join("debug").join(library_file_name("wave"));
+    let library = build_rust_plugin("wave");
 
     let mut app = app();
     app.world.export_component::<Cell>("demo.Cell");
@@ -448,6 +590,92 @@ fn a_plugin_can_read_input_draw_things_and_run_two_queries() {
         .press(MouseButton::Right);
     app.update();
     assert_eq!(position(&app, player), Vec3::new(2.0, -100.0, 0.0));
+}
+
+/// The one value of a runtime-defined component that exists, as `T`.
+fn only<T: Copy>(app: &App, component: &str) -> (Entity, T) {
+    let id = app.world.named_component_id(component).unwrap();
+    let storage = app
+        .world
+        .erased_storage(app.world.named_component(id).unwrap().key)
+        .unwrap();
+    let [entity] = storage.entities() else {
+        panic!("expected exactly one `{component}`");
+    };
+    // SAFETY: nothing else is using the world, and the test names the component's real type.
+    (*entity, unsafe {
+        *storage.value_ptr(*entity).unwrap().cast::<T>()
+    })
+}
+
+#[test]
+fn a_plugin_can_own_the_scene_use_physics_and_talk_to_another_plugin() {
+    use crate::{
+        input::{ButtonInput, InputPlugin, KeyCode},
+        physics::PhysicsPlugin,
+        render::{AmbientLight, Camera, DirectionalLight},
+        time::Time,
+    };
+    use std::time::Duration;
+
+    #[repr(C)]
+    #[derive(Clone, Copy, Debug)]
+    struct Report {
+        contacts: i32,
+        speed: f32,
+        ray: f32,
+        ticks_sent: i32,
+    }
+
+    let workspace = Workspace::new("scene");
+    let scene = workspace.compile("scene", SCENE, &["ABI=VOXL_ABI_VERSION"]);
+    let listener = workspace.compile("listener", LISTENER, &["ABI=VOXL_ABI_VERSION"]);
+
+    let mut app = app();
+    app.add_plugins(InputPlugin).add_plugins(PhysicsPlugin);
+    app.world
+        .resource_mut::<Time>()
+        .set_fixed_step(Some(Duration::from_secs_f64(1.0 / 60.0)));
+    app.load_native_plugin(&scene).unwrap();
+    app.load_native_plugin(&listener).unwrap();
+    for _ in 0..180 {
+        app.update();
+    }
+
+    // The scene the plugin set up.
+    let camera = *app.world.query::<&Camera>().single();
+    assert_eq!((camera.fov_y, camera.near, camera.active), (1.0, 0.5, true));
+    let sun = *app.world.query::<&DirectionalLight>().single();
+    assert_eq!((sun.intensity, sun.shadows), (4.0, false));
+    assert_eq!(sun.color.to_array(), [1.0, 0.5, 0.25, 1.0]);
+    let ambient = app.world.resource::<AmbientLight>();
+    assert_eq!((ambient.intensity, ambient.color.b), (0.7, 0.3));
+
+    // Physics: the ball fell five metres and came to rest on the ground, and the plugin saw
+    // it happen through contact events, its velocity, and a ray cast from above.
+    let (ball, report) = only::<Report>(&app, "test.Report");
+    let height = position(&app, ball).y;
+    assert!(
+        (height - 0.5).abs() < 0.05,
+        "the ball rests on the ground: y = {height}"
+    );
+    assert!(report.contacts > 0, "{report:?}");
+    assert!(report.speed.abs() < 0.2, "{report:?}");
+    assert!((report.ray - 9.0).abs() < 0.1, "{report:?}");
+
+    // Events: the other plugin heard every tick, once each.
+    assert_eq!(report.ticks_sent, 180);
+    let (_, heard) = only::<[i32; 2]>(&app, "test.Heard");
+    assert_eq!(heard, [180, (0..180).sum()]);
+
+    // An impulse, on a key press.
+    app.world
+        .resource_mut::<ButtonInput<KeyCode>>()
+        .press(KeyCode::Enter);
+    for _ in 0..10 {
+        app.update();
+    }
+    assert!(position(&app, ball).y > 1.0, "the ball was knocked upward");
 }
 
 /// A Haskell plugin: moves every entity with a transform `STEP` along X each frame and counts
@@ -572,15 +800,16 @@ fn a_haskell_plugin_runs_and_reloads_repeatedly() {
     );
 }
 
-/// The example game, which is written entirely as a Haskell plugin: the whole widened
-/// interface (drawing, input, two queries, spawning and despawning) through the bindings a
-/// plugin author would use.
+/// The example game, which is written entirely as a Haskell plugin: the scene, drawing, input,
+/// two queries, physics, spawning and despawning, through the bindings a plugin author would
+/// use. Its score is shown by a separate plugin in Rust that only knows the name of an event.
 #[test]
 fn the_haskell_game_plays() {
     use crate::{
         assets::Assets,
         input::{ButtonInput, InputPlugin, KeyCode},
-        render::{Material, Mesh, Mesh3d},
+        physics::{PhysicsPlugin, RigidBody},
+        render::{Camera, DirectionalLight, Material, Mesh, Mesh3d},
         time::Time,
     };
     use std::time::Duration;
@@ -603,18 +832,37 @@ fn the_haskell_game_plays() {
     );
 
     let mut app = app();
-    app.add_plugins(InputPlugin).init_resource::<Assets<Mesh>>();
+    app.add_plugins(InputPlugin)
+        .add_plugins(PhysicsPlugin)
+        .init_resource::<Assets<Mesh>>();
     app.load_native_plugin(workspace.library("chase")).unwrap();
-    // A fixed tenth of a second per frame, so the test doesn't depend on how fast it runs.
+    app.load_native_plugin(build_rust_plugin("scoreboard"))
+        .unwrap();
+    // A fixed sixtieth of a second per frame, so the test doesn't depend on how fast it runs.
     app.world
         .resource_mut::<Time>()
-        .set_fixed_step(Some(Duration::from_millis(100)));
+        .set_fixed_step(Some(Duration::from_secs_f64(1.0 / 60.0)));
     let frame = |app: &mut App| app.update();
     frame(&mut app);
     frame(&mut app);
 
     let drawn = |app: &mut App| app.world.query::<(&Mesh3d, &Material)>().count();
-    assert_eq!(drawn(&mut app), 12, "the field, the player and ten pickups");
+    assert_eq!(
+        drawn(&mut app),
+        18,
+        "the field, the player, ten pickups and six crates"
+    );
+    assert_eq!(
+        app.world.query::<&Camera>().count(),
+        1,
+        "the game brings its own camera"
+    );
+    assert_eq!(app.world.query::<&DirectionalLight>().count(), 1);
+    assert_eq!(
+        app.world.query::<&RigidBody>().count(),
+        7,
+        "the player and the crates"
+    );
     let ids = |app: &App, name: &str| {
         let id = app.world.named_component_id(name).unwrap();
         let key = app.world.named_component(id).unwrap().key;
@@ -627,8 +875,9 @@ fn the_haskell_game_plays() {
     app.world
         .resource_mut::<ButtonInput<KeyCode>>()
         .press(KeyCode::KeyD);
-    frame(&mut app);
-    frame(&mut app);
+    for _ in 0..12 {
+        frame(&mut app);
+    }
     app.world
         .resource_mut::<ButtonInput<KeyCode>>()
         .release(KeyCode::KeyD);
@@ -654,7 +903,31 @@ fn the_haskell_game_plays() {
         pickups.len(),
         "and replaced"
     );
-    assert_eq!(drawn(&mut app), 12);
+    assert_eq!(drawn(&mut app), 18);
+
+    // The game announced it as an event, which anyone who knows the name can read: the
+    // scoreboard plugin did, and so can the engine.
+    let events = app.world.resource::<crate::plugin::PluginEvents>();
+    let collected = events.id("chase.Collected").unwrap();
+    let reader = events.reader("the test");
+    let latest = events.next(reader, collected).unwrap();
+    // At least this one; steering may have run the player over another on the way.
+    assert!(i32::from_ne_bytes(latest.try_into().unwrap()) >= 1);
+
+    // Physics the game set up but doesn't drive: after a while every crate is at rest on the
+    // ground, wherever it was dropped or pushed.
+    for _ in 0..120 {
+        frame(&mut app);
+    }
+    let crates: Vec<f32> = app
+        .world
+        .query::<(&Transform, &RigidBody)>()
+        .iter()
+        .filter(|(_, body)| body.kind == crate::physics::BodyKind::Dynamic)
+        .map(|(transform, _)| transform.translation.y)
+        .collect();
+    assert_eq!(crates.len(), 6);
+    assert!(crates.iter().all(|y| (y - 0.5).abs() < 0.1), "{crates:?}");
 }
 
 /// Two apps on two threads load Haskell plugins at the same instant. Both plugins share one

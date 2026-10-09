@@ -85,6 +85,75 @@ pub struct VoxlMaterial {
     pub metallic: f32,
 }
 
+pub type VoxlEvent = u32;
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct VoxlCamera {
+    pub fov_y: f32,
+    pub near: f32,
+    pub active: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct VoxlLight {
+    pub color: [f32; 3],
+    pub intensity: f32,
+    pub shadows: u32,
+}
+
+pub const VOXL_COLLIDER_SPHERE: u32 = 0;
+pub const VOXL_COLLIDER_BOX: u32 = 1;
+pub const VOXL_COLLIDER_CAPSULE: u32 = 2;
+pub const VOXL_COLLIDER_GROUND: u32 = 3;
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct VoxlCollider {
+    pub shape: u32,
+    pub size: [f32; 3],
+    pub friction: f32,
+    pub restitution: f32,
+    pub sensor: u32,
+}
+
+pub const VOXL_BODY_DYNAMIC: u32 = 0;
+pub const VOXL_BODY_KINEMATIC: u32 = 1;
+pub const VOXL_BODY_ANIMATED: u32 = 2;
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct VoxlBody {
+    pub kind: u32,
+    pub mass: f32,
+    pub velocity: [f32; 3],
+    pub lock_rotation: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct VoxlRayHit {
+    pub entity: VoxlEntity,
+    pub point: [f32; 3],
+    pub normal: [f32; 3],
+    pub distance: f32,
+}
+
+/// The engine's `voxl.Contact` event.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct VoxlContact {
+    pub a: VoxlEntity,
+    pub b: VoxlEntity,
+    pub point: [f32; 3],
+    pub normal: [f32; 3],
+    pub impulse: f32,
+    pub _pad: u32,
+}
+
+const _: () = assert!(std::mem::size_of::<VoxlContact>() == 48);
+
 pub const VOXL_LOG_ERROR: u32 = 1;
 pub const VOXL_LOG_WARN: u32 = 2;
 pub const VOXL_LOG_INFO: u32 = 3;
@@ -209,6 +278,45 @@ pub struct VoxlApi {
         entity: VoxlEntity,
         material: *const VoxlMaterial,
     ),
+
+    pub event_register: unsafe extern "C" fn(
+        app: *mut VoxlApp,
+        name: *const u8,
+        name_len: usize,
+        size: usize,
+    ) -> VoxlEvent,
+    pub event_send:
+        unsafe extern "C" fn(system: *mut VoxlSystem, event: VoxlEvent, value: *const c_void),
+    pub event_next:
+        unsafe extern "C" fn(system: *mut VoxlSystem, event: VoxlEvent, value: *mut c_void) -> u8,
+
+    pub set_camera:
+        unsafe extern "C" fn(system: *mut VoxlSystem, entity: VoxlEntity, camera: *const VoxlCamera),
+    pub set_light:
+        unsafe extern "C" fn(system: *mut VoxlSystem, entity: VoxlEntity, light: *const VoxlLight),
+    pub set_ambient: unsafe extern "C" fn(system: *mut VoxlSystem, color: *const f32, intensity: f32),
+    pub set_window_title: unsafe extern "C" fn(system: *mut VoxlSystem, title: *const u8, len: usize),
+
+    pub set_collider: unsafe extern "C" fn(
+        system: *mut VoxlSystem,
+        entity: VoxlEntity,
+        collider: *const VoxlCollider,
+    ),
+    pub set_body:
+        unsafe extern "C" fn(system: *mut VoxlSystem, entity: VoxlEntity, body: *const VoxlBody),
+    pub apply_impulse:
+        unsafe extern "C" fn(system: *mut VoxlSystem, entity: VoxlEntity, impulse: *const f32),
+    pub set_velocity:
+        unsafe extern "C" fn(system: *mut VoxlSystem, entity: VoxlEntity, velocity: *const f32),
+    pub velocity:
+        unsafe extern "C" fn(system: *mut VoxlSystem, entity: VoxlEntity, velocity: *mut f32) -> u8,
+    pub raycast: unsafe extern "C" fn(
+        system: *mut VoxlSystem,
+        origin: *const f32,
+        direction: *const f32,
+        max_distance: f32,
+        hit: *mut VoxlRayHit,
+    ) -> u8,
 }
 
 /// `voxl.Transform`: 48 bytes, 16-byte aligned.

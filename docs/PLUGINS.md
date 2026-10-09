@@ -28,12 +28,14 @@ plugins/pulse/build.sh       # after editing plugins/pulse/pulse.c
 A plugin that isn't built is skipped, so the example runs with whichever toolchains you have.
 
 A plugin can also be the whole game. `plugins/chase` is one, in Haskell: steer a cube with
-WASD or the arrow keys and collect the spheres. The host program only opens a window and sets
-up a camera and a sun:
+WASD or the arrow keys, collect the spheres and shove the crates about. It sets up its own
+camera, lighting and physics; the host program only opens a window. A second plugin,
+`plugins/scoreboard` in Rust, shows the score: it knows nothing about the game except the name
+of the event the game sends.
 
 ```
-plugins/chase/build.sh
-cargo run --example host -- chase
+plugins/chase/build.sh && cargo build -p scoreboard
+cargo run --example host -- chase scoreboard
 ```
 
 ## What a plugin is
@@ -78,6 +80,30 @@ Inside a system a plugin can also:
 - **Make an entity visible:** `set_mesh` and `set_material`, together with a
   `voxl.Transform`.
 - **Read time:** `delta_seconds` and `elapsed_seconds`.
+- **Set up the scene:** `set_camera` and `set_light` on an entity with a transform,
+  `set_ambient`, and `set_window_title`.
+- **Use physics:** `set_collider` makes an entity solid and `set_body` makes it move;
+  `apply_impulse`, `set_velocity`, `velocity` and `raycast` do what they say. These do nothing
+  in an app that doesn't have the engine's physics turned on.
+
+## Events
+
+Events are how plugins talk to each other, and how the engine tells plugins that something
+happened. An event type is a name and a size; `event_register` defines it or finds it. Inside a
+system, `event_send` sends one and `event_next` reads the next one this system hasn't seen.
+
+Any plugin that knows the name can send or read, whatever language it is written in. The
+example game sends `chase.Collected` (one 32-bit integer) from Haskell, and the scoreboard
+plugin reads it from Rust. Asking for a name that exists with a different size fails, so two
+plugins can't silently disagree about what an event contains.
+
+- Every reader sees each event exactly once, whichever order the systems run in.
+- An event can be read for two frames; a reader that doesn't look for longer misses it.
+- A system's place is kept by the engine under the system's name, so a hot-reloaded system
+  carries on exactly where the old version stopped.
+
+The engine publishes `voxl.Contact` (`VoxlContact` in the header) for every pair of colliders
+touching during a physics step.
 
 ## What survives a reload
 
@@ -157,7 +183,10 @@ addSystem2 app "collect" Update
         when (distance here there < 1) (despawn sys entity)
 ```
 
-[`plugins/chase`](../plugins/chase/Chase.hs) is a complete small game written this way.
+[`plugins/chase`](../plugins/chase/Chase.hs) is a complete small game written this way. The
+scene, physics and events have typed wrappers too: `setCamera`, `setLight`, `setCollider`
+with `colliderOf (Box half)`, `setBody` with `bodyOf Dynamic`, `raycast`, and
+`registerEvent` / `sendEvent` / `readEvents`.
 
 Build with the script, which links the module with the bindings
 ([`bindings/haskell/Voxl.hs`](../bindings/haskell/Voxl.hs)) and a small piece of C that starts
@@ -245,8 +274,8 @@ app.run()
 
 ## What the interface does not cover yet
 
-Plugins cannot yet send or receive events, use engine resources, load assets from files
-(models, textures), control the camera or lights, use physics, draw text or UI, play sound,
-or see any engine component other than `voxl.Transform`. Queries have no optional terms or
-change filters. A plugin cannot be removed while the app runs. The table of functions is
+Plugins cannot yet load assets from files (models, textures), draw text or UI, play sound,
+use joints or character controllers, edit voxel terrain, or see any engine component other
+than `voxl.Transform`. Point and spot lights don't exist in the engine yet. Queries have no
+optional terms or change filters. A plugin cannot be removed while the app runs. The table of functions is
 versioned and carries its own size, so these can be added without breaking existing plugins.

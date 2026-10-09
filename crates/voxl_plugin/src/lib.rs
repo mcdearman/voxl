@@ -41,7 +41,9 @@ use std::{
 };
 
 pub use sys::{
-    VoxlMaterial as Material, VoxlQuat as Quat, VoxlTransform as Transform, VoxlVertex as Vertex,
+    VoxlBody as Body, VoxlCamera as Camera, VoxlCollider as Collider, VoxlContact as Contact,
+    VoxlLight as Light, VoxlMaterial as Material, VoxlQuat as Quat, VoxlRayHit as RayHit,
+    VoxlTransform as Transform, VoxlVertex as Vertex,
 };
 
 static API: AtomicPtr<sys::VoxlApi> = AtomicPtr::new(std::ptr::null_mut());
@@ -149,6 +151,97 @@ impl<T> Component<T> {
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug)]
 pub struct Term(sys::VoxlTerm);
+
+/// An event type whose events are `T`, from [`App::event`].
+pub struct Event<T> {
+    id: sys::VoxlEvent,
+    _marker: PhantomData<fn() -> T>,
+}
+
+impl<T> Clone for Event<T> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<T> Copy for Event<T> {}
+
+impl Default for Camera {
+    fn default() -> Self {
+        Self {
+            fov_y: 60f32.to_radians(),
+            near: 0.1,
+            active: 1,
+        }
+    }
+}
+
+impl Default for Light {
+    fn default() -> Self {
+        Self {
+            color: [1.0; 3],
+            intensity: 3.0,
+            shadows: 1,
+        }
+    }
+}
+
+impl Collider {
+    fn of(shape: u32, size: [f32; 3]) -> Self {
+        Self {
+            shape,
+            size,
+            friction: 0.5,
+            restitution: 0.0,
+            sensor: 0,
+        }
+    }
+
+    pub fn sphere(radius: f32) -> Self {
+        Self::of(sys::VOXL_COLLIDER_SPHERE, [radius, 0.0, 0.0])
+    }
+
+    /// A box with the given half extents.
+    pub fn cuboid(half: [f32; 3]) -> Self {
+        Self::of(sys::VOXL_COLLIDER_BOX, half)
+    }
+
+    /// An upright capsule.
+    pub fn capsule(height: f32, radius: f32) -> Self {
+        Self::of(sys::VOXL_COLLIDER_CAPSULE, [radius, height, 0.0])
+    }
+
+    /// Everything below the entity's position.
+    pub fn ground() -> Self {
+        Self::of(sys::VOXL_COLLIDER_GROUND, [0.0; 3])
+    }
+}
+
+impl Body {
+    fn of(kind: u32) -> Self {
+        Self {
+            kind,
+            mass: 0.0,
+            velocity: [0.0; 3],
+            lock_rotation: 0,
+        }
+    }
+
+    /// Moved by gravity, forces and collisions.
+    pub fn dynamic() -> Self {
+        Self::of(sys::VOXL_BODY_DYNAMIC)
+    }
+
+    /// Moved only by its velocity; pushes other bodies and is never pushed.
+    pub fn kinematic() -> Self {
+        Self::of(sys::VOXL_BODY_KINEMATIC)
+    }
+
+    /// Moved by setting its transform; pushes other bodies and is never pushed.
+    pub fn animated() -> Self {
+        Self::of(sys::VOXL_BODY_ANIMATED)
+    }
+}
 
 /// A further query of a system, from [`App::add_query`].
 #[derive(Clone, Copy, Debug)]
@@ -312,6 +405,23 @@ impl App {
             )
         };
         block.cast()
+    }
+
+    /// Defines an event type whose events are the bytes of `T`, or finds the one this name
+    /// already has. Any plugin that knows the name can send and read it; the engine's own
+    /// events are found the same way (`"voxl.Contact"` is a [`Contact`]).
+    pub fn event<T: Copy + 'static>(&mut self, name: &str) -> Result<Event<T>, Error> {
+        // SAFETY: called inside `load` with the engine's app pointer.
+        let id = unsafe {
+            (api().event_register)(self.raw, name.as_ptr(), name.len(), size_of::<T>())
+        };
+        if id == 0 {
+            return Err(format!("could not register event `{name}` (is it another size?)").into());
+        }
+        Ok(Event {
+            id,
+            _marker: PhantomData,
+        })
     }
 
     /// Gives the system called `system` (added earlier in this `load`) another query. Two
@@ -558,6 +668,95 @@ impl System {
     pub fn set_material(&mut self, entity: Entity, material: &Material) {
         // SAFETY: `material` is valid for the call, and the engine copies it.
         unsafe { (api().set_material)(self.raw, entity.0, material) }
+    }
+
+    /// Sends an event when this system returns. Systems later this frame, and every system
+    /// next frame, can read it.
+    pub fn send<T: Copy + 'static>(&mut self, event: Event<T>, value: &T) {
+        // SAFETY: `value` is `size_of::<T>()` readable bytes, the size the event was
+        // registered with, and the engine copies them.
+        unsafe { (api().event_send)(self.raw, event.id, std::ptr::from_ref(value).cast()) }
+    }
+
+    /// The next event this system hasn't read yet. Each system reads each event once, and a
+    /// reloaded system carries on where the old one stopped.
+    pub fn next_event<T: Copy + 'static>(&mut self, event: Event<T>) -> Option<T> {
+        let mut value = std::mem::MaybeUninit::<T>::uninit();
+        // SAFETY: the engine writes exactly the event's size, which is `size_of::<T>()`.
+        unsafe {
+            let found = (api().event_next)(self.raw, event.id, value.as_mut_ptr().cast());
+            (found != 0).then(|| value.assume_init())
+        }
+    }
+
+    /// Makes the entity a camera (it also needs a `Transform`), when this system returns.
+    pub fn set_camera(&mut self, entity: Entity, camera: &Camera) {
+        // SAFETY: `camera` is valid for the call, and the engine copies it.
+        unsafe { (api().set_camera)(self.raw, entity.0, camera) }
+    }
+
+    /// Makes the entity a sun-like light shining along its transform's forward direction.
+    pub fn set_light(&mut self, entity: Entity, light: &Light) {
+        // SAFETY: as above.
+        unsafe { (api().set_light)(self.raw, entity.0, light) }
+    }
+
+    /// Sets the light arriving from every direction.
+    pub fn set_ambient(&mut self, color: [f32; 3], intensity: f32) {
+        // SAFETY: `color` is three floats.
+        unsafe { (api().set_ambient)(self.raw, color.as_ptr(), intensity) }
+    }
+
+    pub fn set_window_title(&mut self, title: &str) {
+        // SAFETY: the engine copies the text before returning.
+        unsafe { (api().set_window_title)(self.raw, title.as_ptr(), title.len()) }
+    }
+
+    /// Makes the entity solid. Does nothing in an app without physics.
+    pub fn set_collider(&mut self, entity: Entity, collider: &Collider) {
+        // SAFETY: `collider` is valid for the call, and the engine copies it.
+        unsafe { (api().set_collider)(self.raw, entity.0, collider) }
+    }
+
+    /// Makes an entity with a collider move.
+    pub fn set_body(&mut self, entity: Entity, body: &Body) {
+        // SAFETY: as above.
+        unsafe { (api().set_body)(self.raw, entity.0, body) }
+    }
+
+    /// A sudden push on a dynamic body, in newton-seconds.
+    pub fn apply_impulse(&mut self, entity: Entity, impulse: [f32; 3]) {
+        // SAFETY: `impulse` is three floats.
+        unsafe { (api().apply_impulse)(self.raw, entity.0, impulse.as_ptr()) }
+    }
+
+    pub fn set_velocity(&mut self, entity: Entity, velocity: [f32; 3]) {
+        // SAFETY: `velocity` is three floats.
+        unsafe { (api().set_velocity)(self.raw, entity.0, velocity.as_ptr()) }
+    }
+
+    /// The body's velocity, or `None` if the entity has no body.
+    pub fn velocity(&self, entity: Entity) -> Option<[f32; 3]> {
+        let mut velocity = [0.0; 3];
+        // SAFETY: `velocity` has room for the three floats the engine writes.
+        let found = unsafe { (api().velocity)(self.raw, entity.0, velocity.as_mut_ptr()) };
+        (found != 0).then_some(velocity)
+    }
+
+    /// The first collider a ray meets within `max_distance`, as of the last physics step.
+    pub fn raycast(&self, origin: [f32; 3], direction: [f32; 3], max_distance: f32) -> Option<RayHit> {
+        let mut hit = std::mem::MaybeUninit::<RayHit>::uninit();
+        // SAFETY: the engine writes `hit` whenever it returns nonzero.
+        unsafe {
+            let found = (api().raycast)(
+                self.raw,
+                origin.as_ptr(),
+                direction.as_ptr(),
+                max_distance,
+                hit.as_mut_ptr(),
+            );
+            (found != 0).then(|| hit.assume_init())
+        }
     }
 
     /// Creates an entity. It can be given components right away; it appears in queries once

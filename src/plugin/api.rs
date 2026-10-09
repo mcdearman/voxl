@@ -13,13 +13,18 @@ use std::{
 
 use voxl_plugin::sys::{self, VoxlApi, VoxlApp, VoxlComponent, VoxlEntity, VoxlSystem};
 
-use super::system::{check_queries, Context, DynamicSystem, Term};
+use super::{
+    events::PluginEvents,
+    system::{check_queries, Context, DynamicSystem, Term},
+};
 use crate::{
     app::Stage,
     assets::{Assets, Handle},
     ecs::{DropFn, Entity, System, World},
     input::{ButtonInput, KeyCode, Mouse, MouseButton},
-    render::{Color, Material, Mesh, Mesh3d, Vertex},
+    physics::{Collider, PhysicsWorld, RigidBody},
+    render::{AmbientLight, Camera, Color, DirectionalLight, Material, Mesh, Mesh3d, Vertex},
+    window::Window,
 };
 
 /// A block of plugin state that outlives reloads.
@@ -91,6 +96,19 @@ pub(crate) static API: VoxlApi = VoxlApi {
     mesh_create,
     set_mesh,
     set_material,
+    event_register,
+    event_send,
+    event_next,
+    set_camera,
+    set_light,
+    set_ambient,
+    set_window_title,
+    set_collider,
+    set_body,
+    apply_impulse,
+    set_velocity,
+    velocity,
+    raycast,
 };
 
 /// Runs `body`, turning a panic into `fallback` so it never unwinds into the plugin.
@@ -700,5 +718,310 @@ unsafe extern "C" fn set_material(
         context.queue.push(move |world| {
             world.insert(entity, material);
         });
+    })
+}
+
+unsafe extern "C" fn event_register(
+    app: *mut VoxlApp,
+    name: *const u8,
+    name_len: usize,
+    size: usize,
+) -> sys::VoxlEvent {
+    guard("event_register", 0, || {
+        let (Some(registrar), Some(name)) =
+            (app.cast::<Registrar>().as_mut(), text(name, name_len))
+        else {
+            return 0;
+        };
+        let Some(events) = registrar.world.get_resource_mut::<PluginEvents>() else {
+            return 0;
+        };
+        match events.register(name, size) {
+            Ok(id) => id + 1,
+            Err(err) => {
+                log::error!(target: "plugin", "{}: {err}", registrar.plugin);
+                0
+            }
+        }
+    })
+}
+
+unsafe extern "C" fn event_send(
+    system: *mut VoxlSystem,
+    event: sys::VoxlEvent,
+    value: *const c_void,
+) {
+    guard("event_send", (), || {
+        let (Some(context), Some(id)) = (context(system), event.checked_sub(1)) else {
+            return;
+        };
+        let size = context
+            .world()
+            .get_resource::<PluginEvents>()
+            .and_then(|e| e.size(id));
+        let Some(size) = size.filter(|size| *size == 0 || !value.is_null()) else {
+            log::error!(target: "plugin", "event_send: unknown event or null value");
+            return;
+        };
+        let bytes = if size == 0 {
+            Vec::new()
+        } else {
+            std::slice::from_raw_parts(value.cast::<u8>(), size).to_vec()
+        };
+        // Sent when the system returns, like its other changes: systems later this frame
+        // and every system next frame will find it.
+        context.queue.push(move |world| {
+            if let Some(events) = world.get_resource_mut::<PluginEvents>() {
+                events.send(id, &bytes);
+            }
+        });
+    })
+}
+
+unsafe extern "C" fn event_next(
+    system: *mut VoxlSystem,
+    event: sys::VoxlEvent,
+    value: *mut c_void,
+) -> u8 {
+    guard("event_next", 0, || {
+        let (Some(context), Some(id)) = (context(system), event.checked_sub(1)) else {
+            return 0;
+        };
+        let Some(bytes) = context.next_event(id) else {
+            return 0;
+        };
+        if !bytes.is_empty() {
+            if value.is_null() {
+                return 0;
+            }
+            std::ptr::copy_nonoverlapping(bytes.as_ptr(), value.cast::<u8>(), bytes.len());
+        }
+        1
+    })
+}
+
+unsafe extern "C" fn set_camera(
+    system: *mut VoxlSystem,
+    entity: VoxlEntity,
+    camera: *const sys::VoxlCamera,
+) {
+    guard("set_camera", (), || {
+        let (Some(context), Some(camera)) = (context(system), camera.as_ref()) else {
+            return;
+        };
+        let camera = Camera {
+            fov_y: camera.fov_y,
+            near: camera.near,
+            active: camera.active != 0,
+        };
+        let entity = Entity::from_bits(entity);
+        context.queue.push(move |world| {
+            world.insert(entity, camera);
+        });
+    })
+}
+
+unsafe extern "C" fn set_light(
+    system: *mut VoxlSystem,
+    entity: VoxlEntity,
+    light: *const sys::VoxlLight,
+) {
+    guard("set_light", (), || {
+        let (Some(context), Some(light)) = (context(system), light.as_ref()) else {
+            return;
+        };
+        let [r, g, b] = light.color;
+        let light = DirectionalLight {
+            color: Color::rgb(r, g, b),
+            intensity: light.intensity,
+            shadows: light.shadows != 0,
+        };
+        let entity = Entity::from_bits(entity);
+        context.queue.push(move |world| {
+            world.insert(entity, light);
+        });
+    })
+}
+
+/// # Safety
+/// `values` must be readable for three floats, or null.
+unsafe fn vec3(values: *const f32) -> Option<glam::Vec3> {
+    (!values.is_null()).then(|| glam::Vec3::from_slice(std::slice::from_raw_parts(values, 3)))
+}
+
+unsafe extern "C" fn set_ambient(system: *mut VoxlSystem, color: *const f32, intensity: f32) {
+    guard("set_ambient", (), || {
+        let (Some(context), Some(color)) = (context(system), vec3(color)) else {
+            return;
+        };
+        context.queue.push(move |world| {
+            world.insert_resource(AmbientLight {
+                color: Color::rgb(color.x, color.y, color.z),
+                intensity,
+            });
+        });
+    })
+}
+
+unsafe extern "C" fn set_window_title(system: *mut VoxlSystem, title: *const u8, len: usize) {
+    guard("set_window_title", (), || {
+        let (Some(context), Some(title)) = (context(system), text(title, len)) else {
+            return;
+        };
+        // Nothing to do in an app without a window.
+        if let Some(window) = context.world().get_resource::<Window>() {
+            window.set_title(title);
+        }
+    })
+}
+
+unsafe extern "C" fn set_collider(
+    system: *mut VoxlSystem,
+    entity: VoxlEntity,
+    collider: *const sys::VoxlCollider,
+) {
+    guard("set_collider", (), || {
+        let (Some(context), Some(raw)) = (context(system), collider.as_ref()) else {
+            return;
+        };
+        let [x, y, z] = raw.size;
+        let collider = match raw.shape {
+            sys::VOXL_COLLIDER_SPHERE => Collider::sphere(x),
+            sys::VOXL_COLLIDER_BOX => Collider::cuboid(glam::Vec3::new(x, y, z)),
+            sys::VOXL_COLLIDER_CAPSULE => Collider::capsule(y, x),
+            sys::VOXL_COLLIDER_GROUND => Collider::ground(),
+            other => {
+                log::error!(target: "plugin", "set_collider: unknown shape {other}");
+                return;
+            }
+        };
+        let mut collider = collider
+            .with_friction(raw.friction)
+            .with_restitution(raw.restitution);
+        if raw.sensor != 0 {
+            collider = collider.as_sensor();
+        }
+        let entity = Entity::from_bits(entity);
+        context.queue.push(move |world| {
+            world.insert(entity, collider);
+        });
+    })
+}
+
+unsafe extern "C" fn set_body(
+    system: *mut VoxlSystem,
+    entity: VoxlEntity,
+    body: *const sys::VoxlBody,
+) {
+    guard("set_body", (), || {
+        let (Some(context), Some(raw)) = (context(system), body.as_ref()) else {
+            return;
+        };
+        let mut body = match raw.kind {
+            sys::VOXL_BODY_DYNAMIC => RigidBody::dynamic(),
+            sys::VOXL_BODY_KINEMATIC => RigidBody::kinematic(),
+            sys::VOXL_BODY_ANIMATED => RigidBody::animated(),
+            other => {
+                log::error!(target: "plugin", "set_body: unknown kind {other}");
+                return;
+            }
+        };
+        if raw.mass > 0.0 {
+            body = body.with_mass(raw.mass);
+        }
+        body.linear_velocity = raw.velocity.into();
+        body.lock_rotation = raw.lock_rotation != 0;
+        let entity = Entity::from_bits(entity);
+        context.queue.push(move |world| {
+            world.insert(entity, body);
+        });
+    })
+}
+
+unsafe extern "C" fn apply_impulse(
+    system: *mut VoxlSystem,
+    entity: VoxlEntity,
+    impulse: *const f32,
+) {
+    guard("apply_impulse", (), || {
+        let (Some(context), Some(impulse)) = (context(system), vec3(impulse)) else {
+            return;
+        };
+        let entity = Entity::from_bits(entity);
+        context.queue.push(move |world| {
+            if let Some(body) = world.get_mut::<RigidBody>(entity) {
+                body.apply_impulse(impulse);
+            }
+        });
+    })
+}
+
+unsafe extern "C" fn set_velocity(
+    system: *mut VoxlSystem,
+    entity: VoxlEntity,
+    velocity: *const f32,
+) {
+    guard("set_velocity", (), || {
+        let (Some(context), Some(velocity)) = (context(system), vec3(velocity)) else {
+            return;
+        };
+        let entity = Entity::from_bits(entity);
+        context.queue.push(move |world| {
+            if let Some(body) = world.get_mut::<RigidBody>(entity) {
+                body.linear_velocity = velocity;
+                body.wake();
+            }
+        });
+    })
+}
+
+unsafe extern "C" fn velocity(system: *mut VoxlSystem, entity: VoxlEntity, out: *mut f32) -> u8 {
+    guard("velocity", 0, || {
+        let Some(context) = context(system) else {
+            return 0;
+        };
+        // No plugin can hold a pointer to a body (it isn't a component they can query), so a
+        // shared look at it can't alias anything.
+        let body = context.world().get::<RigidBody>(Entity::from_bits(entity));
+        let (Some(body), false) = (body, out.is_null()) else {
+            return 0;
+        };
+        std::slice::from_raw_parts_mut(out, 3).copy_from_slice(&body.linear_velocity.to_array());
+        1
+    })
+}
+
+unsafe extern "C" fn raycast(
+    system: *mut VoxlSystem,
+    origin: *const f32,
+    direction: *const f32,
+    max_distance: f32,
+    hit: *mut sys::VoxlRayHit,
+) -> u8 {
+    guard("raycast", 0, || {
+        let (Some(context), Some(origin), Some(direction)) =
+            (context(system), vec3(origin), vec3(direction))
+        else {
+            return 0;
+        };
+        let Some(direction) = direction.try_normalize() else {
+            return 0;
+        };
+        let found = context
+            .world()
+            .get_resource::<PhysicsWorld>()
+            .and_then(|physics| physics.raycast(origin, direction, max_distance, None));
+        let Some(found) = found else {
+            return 0;
+        };
+        if let Some(hit) = hit.as_mut() {
+            *hit = sys::VoxlRayHit {
+                entity: found.entity.to_bits(),
+                point: found.point.into(),
+                normal: found.normal.into(),
+                distance: found.distance,
+            };
+        }
+        1
     })
 }
