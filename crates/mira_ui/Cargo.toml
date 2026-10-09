@@ -7,8 +7,8 @@ edition = "2021"
 [dependencies]
 mira = { path = "../.." }
 # Pinned to the revision that can draw over a host's frame and say which events it took.
-armature = { git = "https://github.com/mcdearman/armature", rev = "40f9c52087f273369520448741b2ec3fbc57a67a" }
-armature-render = { git = "https://github.com/mcdearman/armature", rev = "40f9c52087f273369520448741b2ec3fbc57a67a" }
+armature = { git = "https://github.com/mcdearman/armature", rev = "c4c566ad577c2aed5114cfabdb1e2f325cead990" }
+armature-render = { git = "https://github.com/mcdearman/armature", rev = "c4c566ad577c2aed5114cfabdb1e2f325cead990" }
 wgpu = "30.0.1"
 winit = "0.30.12"
 anyhow = "1"

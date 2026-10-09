@@ -35,8 +35,9 @@ paused. Everything else on this page is still to come.
 ### The agent
 
 The Agent panel is a conversation with an AI agent that is working on the game in the
-window: write to it, Enter sends, and its answer appears as it is written, with a line for
-each tool it uses. Stop stops it.
+window: write to it, Enter sends, and its answer appears as it is written, as Markdown.
+Each use of a tool is a row of its own that opens to show what the tool was given and what
+came back, with the picture if it was a screenshot. Stop stops it.
 
 The agent is a program of its own that the window runs, behind a small interface
 (`mira_editor::agent::Agent`: ask, stop), so another can be put there with
@@ -49,8 +50,9 @@ step and change the game, the same as an agent outside ([MCP.md](MCP.md)). It ma
 the project's files.
 
 What it can't do yet: anything that needs a yes from you, such as changing a file or
-running a command, is refused, because the window has nowhere yet to ask. Its answers are
-shown as plain text. Both wait on the next Neo pieces.
+running a command, is refused: Neo now has the row for asking, but how Claude Code hands
+such a question to the program that runs it is not written down for its command line, so
+that part waits on finding out.
 
 The reading of Claude Code's output was written from its documentation and tested against
 a stand-in program that prints the same lines; it has not yet been run against Claude Code
@@ -105,8 +107,8 @@ Agreed in outline with the Neo session (October 2026); built there, not here.
    view: numbers that drag, vectors, entity references, a colour picker. The view itself is
    generated on mira's side from reflection.
 4. **Dragging between panels.**
-5. **A transcript** for the agent window (the plain one and its prompt are done, Neo
-   `d6c11d1`; Markdown, folding rows, pictures and approve/refuse are next there): streamed Markdown, rows that fold for what the
+5. **A transcript** for the agent window (done, Neo `4e205a6`, but for soft wrap in the
+   prompt): streamed Markdown, rows that fold for what the
    agent did, pictures inline, an input that grows and sends on Enter.
 
 mira's signal graph stays the Armature widget it is; such a widget goes into a Neo app

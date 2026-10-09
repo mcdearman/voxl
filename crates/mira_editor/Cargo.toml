@@ -6,7 +6,9 @@ description = "mira's engine app: a game shown and worked on inside a Neo window
 
 [dependencies]
 mira = { path = "../.." }
-neo = { git = "https://github.com/mcdearman/neo", rev = "d6c11d16eff982f3f0158dc31a8a1119a8d177f0" }
+neo = { git = "https://github.com/mcdearman/neo", rev = "4e205a6dab5f44ec01d2301e96fee4bcad66f243" }
+
+image = { version = "0.25", default-features = false, features = ["png"] }
 
 [dev-dependencies]
 anyhow = "1"

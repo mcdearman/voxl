@@ -19,8 +19,19 @@ use mira::reflect::{json, Value};
 pub enum Heard {
     /// More of its answer, to go on the end of what it has said so far.
     Text(String),
-    /// Something it did, in a line: a tool it used.
-    Did(String),
+    /// It has begun to use a tool: a name for this use of it, to tell the uses apart, and
+    /// the tool's name.
+    Tool { id: String, name: String },
+    /// More of what it is giving the tool, as it writes it.
+    Given { id: String, more: String },
+    /// What came back from the tool: words, whether it failed, and a picture if it sent
+    /// one (width, height, and four bytes a pixel).
+    Back {
+        id: String,
+        text: String,
+        failed: bool,
+        picture: Option<(u32, u32, Vec<u8>)>,
+    },
     /// It has finished.
     Done,
     /// It could not go on, and why.
@@ -126,6 +137,77 @@ struct Reading {
     /// whole answer is taken from the last line instead.
     streamed: bool,
     ended: bool,
+    /// The tool it is giving something to just now.
+    tool: Option<String>,
+}
+
+/// The bytes that base64 text stands for, or nothing if it isn't base64.
+fn from_base64(text: &str) -> Option<Vec<u8>> {
+    let mut bytes = Vec::with_capacity(text.len() * 3 / 4);
+    let (mut held, mut bits) = (0u32, 0);
+    for letter in text.bytes().filter(|letter| !letter.is_ascii_whitespace()) {
+        let six = match letter {
+            b'A'..=b'Z' => letter - b'A',
+            b'a'..=b'z' => letter - b'a' + 26,
+            b'0'..=b'9' => letter - b'0' + 52,
+            b'+' => 62,
+            b'/' => 63,
+            b'=' => break,
+            _ => return None,
+        };
+        held = held << 6 | six as u32;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            bytes.push((held >> bits) as u8);
+        }
+    }
+    Some(bytes)
+}
+
+/// What a tool sent back, out of the line that carries it: every `tool_result` in it.
+fn results(line: &Value) -> Vec<Heard> {
+    let Some(Value::List(blocks)) = line.get_path("message.content") else {
+        return Vec::new();
+    };
+    let text_of = |value: &Value, path: &str| match value.get_path(path) {
+        Some(Value::Text(text)) => Some(text.clone()),
+        _ => None,
+    };
+    blocks
+        .iter()
+        .filter(|block| text_of(block, "type").as_deref() == Some("tool_result"))
+        .filter_map(|block| {
+            let (mut text, mut picture) = (String::new(), None);
+            match block.get_path("content") {
+                Some(Value::Text(whole)) => text = whole.clone(),
+                Some(Value::List(parts)) => {
+                    for part in parts {
+                        match text_of(part, "type").as_deref() {
+                            Some("text") => text += &text_of(part, "text").unwrap_or_default(),
+                            Some("image") => {
+                                picture = text_of(part, "source.data")
+                                    .and_then(|data| from_base64(&data))
+                                    .and_then(|bytes| image::load_from_memory(&bytes).ok())
+                                    .map(|picture| {
+                                        let picture = picture.to_rgba8();
+                                        (picture.width(), picture.height(), picture.into_raw())
+                                    });
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                _ => {}
+            }
+            Some(Heard::Back {
+                id: text_of(block, "tool_use_id")?,
+                text,
+                failed: block.get_path("is_error") == Some(&Value::Bool(true)),
+                picture,
+            })
+        })
+        .collect()
 }
 
 /// What one line of Claude Code's streamed output says, and the conversation's name if the
@@ -142,24 +224,41 @@ fn read_line(line: &str, reading: &mut Reading) -> (Vec<Heard>, Option<String>) 
     let mut heard = Vec::new();
     match (text("type"), text("event.type")) {
         (Some("stream_event"), Some("content_block_delta")) => {
-            if let (Some("text_delta"), Some(more)) =
-                (text("event.delta.type"), text("event.delta.text"))
-            {
-                reading.streamed = true;
-                heard.push(Heard::Text(more.to_owned()));
+            match (text("event.delta.type"), &reading.tool) {
+                (Some("text_delta"), _) => {
+                    if let Some(more) = text("event.delta.text") {
+                        reading.streamed = true;
+                        heard.push(Heard::Text(more.to_owned()));
+                    }
+                }
+                (Some("input_json_delta"), Some(tool)) => {
+                    if let Some(more) = text("event.delta.partial_json") {
+                        heard.push(Heard::Given {
+                            id: tool.clone(),
+                            more: more.to_owned(),
+                        });
+                    }
+                }
+                _ => {}
             }
         }
         (Some("stream_event"), Some("content_block_start")) => {
-            if let (Some("tool_use"), Some(name)) = (
+            reading.tool = None;
+            if let (Some("tool_use"), Some(id), Some(name)) = (
                 text("event.content_block.type"),
+                text("event.content_block.id"),
                 text("event.content_block.name"),
             ) {
-                // mira's own tools by their own names; a break, so that what it says after
-                // is a new paragraph and not run on to what it said before.
+                // mira's own tools by their own names.
                 let name = name.strip_prefix("mcp__mira__").unwrap_or(name);
-                heard.push(Heard::Did(name.to_owned()));
+                reading.tool = Some(id.to_owned());
+                heard.push(Heard::Tool {
+                    id: id.to_owned(),
+                    name: name.to_owned(),
+                });
             }
         }
+        (Some("user"), _) => heard.extend(results(&line)),
         (Some("result"), _) => {
             reading.ended = true;
             let failed = line.get_path("is_error") == Some(&Value::Bool(true))
@@ -285,6 +384,7 @@ mod tests {
             r#"{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"on a site."}},"session_id":"abc"}"#,
             r#"{"type":"stream_event","event":{"type":"content_block_start","content_block":{"type":"tool_use","id":"t1","name":"mcp__mira__mira_signals","input":{}}},"session_id":"abc"}"#,
             r#"{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"input_json_delta","partial_json":"{}"}},"session_id":"abc"}"#,
+            r#"{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","content":"door.open = true"}]}}"#,
             // The same words again, whole: already heard.
             r#"{"type":"assistant","message":{"content":[{"type":"text","text":"Blue is on a site."}]},"session_id":"abc"}"#,
             "not a line of it at all",
@@ -295,11 +395,71 @@ mod tests {
             [
                 Heard::Text("Blue is ".into()),
                 Heard::Text("on a site.".into()),
-                Heard::Did("mira_signals".into()),
+                Heard::Tool {
+                    id: "t1".into(),
+                    name: "mira_signals".into()
+                },
+                Heard::Given {
+                    id: "t1".into(),
+                    more: "{}".into()
+                },
+                Heard::Back {
+                    id: "t1".into(),
+                    text: "door.open = true".into(),
+                    failed: false,
+                    picture: None
+                },
                 Heard::Done,
             ]
         );
         assert_eq!(session.as_deref(), Some("abc"));
+
+        // What a tool sends back may be parts: words, and a picture as base64.
+        let png = {
+            let mut bytes = Vec::new();
+            let dot = image::RgbaImage::from_pixel(2, 1, image::Rgba([255, 0, 0, 255]));
+            image::DynamicImage::ImageRgba8(dot)
+                .write_to(
+                    &mut std::io::Cursor::new(&mut bytes),
+                    image::ImageFormat::Png,
+                )
+                .unwrap();
+            bytes
+        };
+        let encoded = {
+            const LETTERS: &[u8] =
+                b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+            let mut text = String::new();
+            for chunk in png.chunks(3) {
+                let held = chunk
+                    .iter()
+                    .fold(0u32, |held, byte| held << 8 | *byte as u32)
+                    << (8 * (3 - chunk.len()));
+                for place in 0..4 {
+                    if place <= chunk.len() {
+                        text.push(LETTERS[(held >> (18 - 6 * place) & 63) as usize] as char);
+                    } else {
+                        text.push('=');
+                    }
+                }
+            }
+            text
+        };
+        assert_eq!(from_base64(&encoded), Some(png));
+        assert_eq!(from_base64("not base64!"), None);
+        let line = format!(
+            r#"{{"type":"user","message":{{"content":[{{"type":"tool_result","tool_use_id":"t2","is_error":true,"content":[{{"type":"text","text":"the frame"}},{{"type":"image","source":{{"type":"base64","media_type":"image/png","data":"{encoded}"}}}}]}}]}}}}"#
+        );
+        let (heard, _) = all(&[&line]);
+        assert_eq!(
+            heard,
+            [Heard::Back {
+                id: "t2".into(),
+                text: "the frame".into(),
+                failed: true,
+                picture: Some((2, 1, vec![255, 0, 0, 255, 255, 0, 0, 255]))
+            }]
+        );
 
         // Nothing streamed: the answer is taken whole from the end.
         let (heard, _) =

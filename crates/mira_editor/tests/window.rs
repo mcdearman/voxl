@@ -9,10 +9,13 @@
 //!
 //! `MIRA_EDITOR_SHOT=<path>` also saves a picture of the window at the end.
 
-use std::time::Duration;
+use std::{sync::mpsc::Sender, time::Duration};
 
 use mira::{live::Live, prelude::Transform};
-use mira_editor::Editor;
+use mira_editor::{
+    agent::{Agent, Heard},
+    Editor,
+};
 use neo::testing::Harness;
 use neo::{Event, Key, Point, PointerButton, Size};
 
@@ -21,6 +24,43 @@ mod game;
 
 const TICK: Duration = Duration::from_millis(16);
 
+/// An agent that answers anything the same way: some words, a look at the game, more words.
+struct Scripted;
+
+impl Agent for Scripted {
+    fn ask(&mut self, _asked: &str, heard: Sender<Heard>) {
+        let tool = || "look-1".to_owned();
+        // A small picture, as a screenshot would come back.
+        let picture: Vec<u8> = (0..48 * 27)
+            .flat_map(|at| [(at % 48 * 5) as u8, 140, (at / 48 * 9) as u8, 255])
+            .collect();
+        for said in [
+            Heard::Text("**Blue** is on a site, so the clock is stopped:\n\n".into()),
+            Heard::Text("- `blue.contesting` is true\n- `red.clock.running` is false\n".into()),
+            Heard::Tool {
+                id: tool(),
+                name: "mira_screenshot".into(),
+            },
+            Heard::Given {
+                id: tool(),
+                more: r#"{"width": 480}"#.into(),
+            },
+            Heard::Back {
+                id: tool(),
+                text: "the frame".into(),
+                failed: false,
+                picture: Some((48, 27, picture)),
+            },
+            Heard::Text("The clock is `red.clock`; it runs again when the scout leaves.".into()),
+            Heard::Done,
+        ] {
+            let _ = heard.send(said);
+        }
+    }
+
+    fn stop(&mut self) {}
+}
+
 #[test]
 fn the_app_is_worked_by_clicking_on_it() {
     if !std::env::var("MIRA_FRAME_TESTS").is_ok_and(|asked| asked != "0") {
@@ -28,8 +68,11 @@ fn the_app_is_worked_by_clicking_on_it() {
         return;
     }
     let game = game::build(false).expect("the game");
-    let mut window = Harness::new(Editor::new(game), Size::new(1100.0, 700.0))
-        .expect("a graphics card is needed for this test");
+    let mut window = Harness::new(
+        Editor::new(game).with_agent(Scripted),
+        Size::new(1100.0, 700.0),
+    )
+    .expect("a graphics card is needed for this test");
     let paused =
         |window: &Harness<Editor>| window.app().game().world.resource::<Live>().is_paused();
     for _ in 0..20 {
@@ -101,22 +144,22 @@ fn the_app_is_worked_by_clicking_on_it() {
         "ten steps of a tenth: from {before} to {after}"
     );
 
-    // Something written in the agent's panel and sent with Enter joins the conversation;
-    // with no agent given to the app, the answer says so.
+    // Something written in the agent's panel and sent with Enter joins the conversation,
+    // and what the agent says and does comes after it.
     window.click(Point::new(350.0, 670.0));
     window.type_text("Why is the clock stopped?");
     window.frame(TICK, 1.0);
     window.key(Key::Enter, Default::default());
     window.frame(TICK, 1.0);
     window.frame(TICK, 1.0);
-    let said: Vec<&str> = window
-        .app()
-        .said()
-        .iter()
-        .map(|said| said.text.as_str())
-        .collect();
-    assert_eq!(said.first(), Some(&"Why is the clock stopped?"), "{said:?}");
-    assert!(said.len() == 2 && said[1].contains("no agent"), "{said:?}");
+    let all = window.app().said();
+    let said: Vec<&str> = all.iter().map(|said| said.text.as_str()).collect();
+    assert_eq!(said.len(), 4, "{said:?}");
+    assert_eq!(
+        (said[0], said[2]),
+        ("Why is the clock stopped?", "mira_screenshot")
+    );
+    assert!(said[1].starts_with("**Blue**") && said[3].contains("red.clock"));
 
     // Further down the inspector, for the picture: the entity's colour.
     window.event(Event::Wheel {

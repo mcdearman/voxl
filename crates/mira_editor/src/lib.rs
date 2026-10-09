@@ -71,6 +71,8 @@ pub enum Message {
     Ask,
     /// The agent is told to stop.
     Stop,
+    /// A use of a tool in the conversation was opened, or shut.
+    Unfolded(String, bool),
 }
 
 /// The panels, by the names the layout knows them by.
@@ -183,7 +185,7 @@ pub struct Editor {
     /// The agent, what has been said with it, what is being written to it, and whether it
     /// is at work on something.
     agent: Box<dyn Agent>,
-    said: Vec<Said>,
+    said: Vec<Entry<String, Message>>,
     writing: Document,
     working: bool,
     heard: (Sender<Heard>, Receiver<Heard>),
@@ -227,9 +229,29 @@ impl Editor {
         self
     }
 
-    /// What has been said between the person and the agent.
-    pub fn said(&self) -> &[Said] {
-        &self.said
+    /// What has been said between the person and the agent, a use of a tool as a note of
+    /// the tool's name.
+    pub fn said(&self) -> Vec<Said> {
+        self.said
+            .iter()
+            .filter_map(|entry| match entry {
+                Entry::Said(said) => Some(said.clone()),
+                Entry::Tool(tool) => Some(Said::new(Speaker::Note, tool.name.clone())),
+                Entry::Ask(_) => None,
+            })
+            .collect()
+    }
+
+    /// The row for one use of a tool.
+    fn tool(&mut self, id: &str) -> Option<&mut ToolRow<String>> {
+        self.said.iter_mut().rev().find_map(|entry| match entry {
+            Entry::Tool(tool) if tool.id == id => Some(tool),
+            _ => None,
+        })
+    }
+
+    fn note(&mut self, who: Speaker, text: impl Into<String>) {
+        self.said.push(Entry::Said(Said::new(who, text.into())));
     }
 
     /// Takes in what the agent has said since last looked. Says whether there was anything.
@@ -240,14 +262,41 @@ impl Editor {
             match heard {
                 // Its answer grows where it stands, until something else is said.
                 Heard::Text(more) => match self.said.last_mut() {
-                    Some(last) if last.who == Speaker::Them => last.text += &more,
-                    _ => self.said.push(Said::new(Speaker::Them, more)),
+                    Some(Entry::Said(last)) if last.who == Speaker::Them => last.text += &more,
+                    _ => self.note(Speaker::Them, more),
                 },
-                Heard::Did(what) => self.said.push(Said::new(Speaker::Note, what)),
+                // A use of a tool is a row of its own, filled in as more is known of it.
+                Heard::Tool { id, name } => {
+                    self.said.push(Entry::Tool(ToolRow::new(id, name, "")));
+                }
+                Heard::Given { id, more } => {
+                    if let Some(tool) = self.tool(&id) {
+                        tool.input += &more;
+                        // Shut, the row says what the tool was given, as far as fits.
+                        tool.summary = tool.input.chars().take(60).collect();
+                    }
+                }
+                Heard::Back {
+                    id,
+                    text,
+                    failed,
+                    picture,
+                } => {
+                    if let Some(tool) = self.tool(&id) {
+                        tool.result = text;
+                        tool.state = if failed {
+                            ToolState::Failed
+                        } else {
+                            ToolState::Done
+                        };
+                        tool.image = picture
+                            .map(|(width, height, pixels)| Image::new(width, height, pixels));
+                    }
+                }
                 Heard::Done => self.working = false,
                 Heard::Failed(why) => {
                     self.working = false;
-                    self.said.push(Said::new(Speaker::Note, why));
+                    self.note(Speaker::Note, why);
                 }
             }
         }
@@ -374,7 +423,9 @@ impl Editor {
                 column()
                     .width(Length::Fill)
                     .height(Length::Fill)
-                    .push(container(transcript(&self.said)).height(Length::Fill))
+                    .push(
+                        container(conversation(&self.said, Message::Unfolded)).height(Length::Fill),
+                    )
                     .push(
                         container(row().spacing(8.0).align(Align::End).push(asking).push(stop))
                             .padding(8.0),
@@ -851,14 +902,19 @@ impl App for Editor {
                     return;
                 }
                 self.writing = Document::new("");
-                self.said.push(Said::new(Speaker::You, asked.clone()));
+                self.note(Speaker::You, asked.clone());
                 self.working = true;
                 self.agent.ask(&asked, self.heard.0.clone());
+            }
+            Message::Unfolded(id, open) => {
+                if let Some(tool) = self.tool(&id) {
+                    tool.open = open;
+                }
             }
             Message::Stop => {
                 self.agent.stop();
                 if std::mem::take(&mut self.working) {
-                    self.said.push(Said::new(Speaker::Note, "Stopped."));
+                    self.note(Speaker::Note, "Stopped.");
                 }
             }
             Message::Arranged(layout) => {
@@ -1144,7 +1200,7 @@ mod tests {
 
     impl Agent for Scripted {
         fn ask(&mut self, asked: &str, heard: Sender<Heard>) {
-            let _ = heard.send(Heard::Did(format!("asked: {asked}")));
+            let _ = heard.send(Heard::Text(format!("asked: {asked}. ")));
             for said in self.0.drain(..) {
                 let _ = heard.send(said);
             }
@@ -1161,7 +1217,20 @@ mod tests {
         let script = vec![
             Heard::Text("The clock ".into()),
             Heard::Text("is paused.".into()),
-            Heard::Did("mira_signals".into()),
+            Heard::Tool {
+                id: "t1".into(),
+                name: "mira_signals".into(),
+            },
+            Heard::Given {
+                id: "t1".into(),
+                more: "{\"only\": \"true\"}".into(),
+            },
+            Heard::Back {
+                id: "t1".into(),
+                text: "blue.contesting = true".into(),
+                failed: false,
+                picture: Some((1, 1, vec![9, 9, 9, 255])),
+            },
             Heard::Text("Blue is on a site.".into()),
             Heard::Done,
         ];
@@ -1183,8 +1252,8 @@ mod tests {
         assert_eq!(editor.writing.text(), "And now?");
 
         assert!(editor.listen());
-        let said: Vec<(Speaker, &str)> = editor
-            .said()
+        let all = editor.said();
+        let said: Vec<(Speaker, &str)> = all
             .iter()
             .map(|said| (said.who, said.text.as_str()))
             .collect();
@@ -1192,14 +1261,28 @@ mod tests {
             said,
             [
                 (Speaker::You, "Why is the clock stopped?"),
-                (Speaker::Note, "asked: Why is the clock stopped?"),
                 // What comes in pieces is one answer, until something else happens.
-                (Speaker::Them, "The clock is paused."),
+                (
+                    Speaker::Them,
+                    "asked: Why is the clock stopped?. The clock is paused."
+                ),
                 (Speaker::Note, "mira_signals"),
                 (Speaker::Them, "Blue is on a site."),
             ]
         );
         assert!(!editor.working && !editor.listen());
+        // The use of the tool is a row: what it was given, what came back, and its picture;
+        // it opens and shuts.
+        let Some(Entry::Tool(tool)) = editor.said.get(2) else {
+            panic!("a row for the tool");
+        };
+        assert_eq!(
+            (tool.summary.as_str(), tool.result.as_str()),
+            ("{\"only\": \"true\"}", "blue.contesting = true")
+        );
+        assert!(tool.state == ToolState::Done && tool.image.is_some() && !tool.open);
+        editor.update(Message::Unfolded("t1".into(), true));
+        assert!(matches!(&editor.said[2], Entry::Tool(tool) if tool.open));
 
         // Stopped while at work, it is told so and the conversation says so; when not at
         // work, stopping says nothing.
@@ -1207,7 +1290,11 @@ mod tests {
         editor.update(Message::Stop);
         assert_eq!(stops.get(), 1);
         assert_eq!(
-            editor.said().last().map(|said| said.text.as_str()),
+            editor
+                .said()
+                .last()
+                .map(|said| said.text.clone())
+                .as_deref(),
             Some("Stopped.")
         );
         let length = editor.said().len();
