@@ -51,6 +51,7 @@ fn style(&self, _: Scheme) -> Style {
 | `button(label, message)` | sends `message` on a click, or Enter or Space with focus |
 | `toggle(label, on, message)` | a switch |
 | `slider(range, value, message)` | dragging, clicking the track, and arrow keys |
+| `field(hint, value, message)` | a line of text to type into: caret, selection, word jumps, clipboard; `.on_submit(message)` for Enter, `.width(..)`, `.autofocus()` |
 | `bar(fraction)` | health, progress, a clock |
 | `column()`, `row()`, `stack()` | Armature's own layout |
 
@@ -114,12 +115,18 @@ interface layer:
 
 Input played from outside (`mira-debug input`, an agent's `mira_input`) reaches the interface
 too: a pointer position and a button press are put among the window's events, so a click an
-agent makes lands on a panel as a person's would.
+agent makes lands on a panel as a person's would. Text is typed the same way
+(`InjectedInput::type_text`, or `text` in `mira_input`): it goes to the field that has the
+keyboard, as finished text, and a line break in it is Enter. Click the field first. A hidden
+window's interface always counts as having the keyboard, since nobody else is typing.
+
+A field keeps what is typed from the game: while it has the keyboard, the keys it uses are
+taken out of `ButtonInput`, so typing a name does not also walk the player about.
 
 ## What isn't here yet
 
-- More controls: a text field, a list, a dropdown, tabs; text entry is what the signal panel
-  needs next, to name signals and type numbers.
+- More controls: a list, a dropdown, tabs. The signal panel does not use the text field
+  yet: naming signals and typing numbers there comes next.
 - Interface in the world (a health bar over a unit), gamepad focus, and laying out for
   different screen sizes.
 - In the signal panel: naming a new signal, choosing timers and comparisons, and typing a

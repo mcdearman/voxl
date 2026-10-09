@@ -12,6 +12,7 @@
 //!             .push(bar(self.clock / self.limit))
 //!             .push(slider(10.0..=120.0, self.limit, Msg::Limit))
 //!             .push(toggle("Show rules", self.rules, Msg::Rules))
+//!             .push(field("Your name", &self.name, Msg::Name).on_submit(Msg::Join))
 //!             .push(button("Restart", Msg::Restart)),
 //!     ))
 //! }
@@ -24,7 +25,7 @@
 use std::ops::RangeInclusive;
 
 use armature::{
-    controls::{SliderLogic, SliderState},
+    controls::{byte_at, char_at, FieldAction, FieldLogic, FieldState, SliderLogic, SliderState},
     Color, CursorIcon, Cx, DrawCx, Element, Event, EventCx, FontFamily, Key, Limits, Point,
     PointerButton, Rect, Size, Status, Style, TextLayout, TextStyle, Widget,
 };
@@ -549,6 +550,209 @@ impl<M: 'static> Widget<M> for Slider<M> {
                 .event(cx, event, bounds, bounds.x + KNOB * 0.5, bounds.w - KNOB);
         if let Some(value) = change.value {
             cx.emit((self.on_change)(value));
+        }
+        status
+    }
+}
+
+// --- field ---
+
+/// A line of text to type into. Made by [`field`].
+pub struct Field<M> {
+    value: String,
+    hint: String,
+    on_input: fn(String) -> M,
+    on_submit: Option<M>,
+    width: f32,
+    autofocus: bool,
+    text: Option<TextLayout>,
+    hint_text: Option<TextLayout>,
+}
+
+const FIELD_INSET: f32 = 8.0;
+
+/// A line of text to type into. The interface keeps the text: every edit sends the whole
+/// new text through `on_input`, and what the interface then passes as `value` is what shows.
+/// `hint` shows, dimmed, while there is none. Clicking gives it the keyboard, and clicking
+/// elsewhere or Escape takes it away; while it has it, what is typed is the field's and not
+/// the game's.
+pub fn field<M: Clone + 'static>(
+    hint: impl Into<String>,
+    value: impl Into<String>,
+    on_input: fn(String) -> M,
+) -> Field<M> {
+    Field {
+        value: value.into(),
+        hint: hint.into(),
+        on_input,
+        on_submit: None,
+        width: 180.0,
+        autofocus: false,
+        text: None,
+        hint_text: None,
+    }
+}
+
+impl<M> Field<M> {
+    /// What to send when Enter is pressed.
+    pub fn on_submit(mut self, message: M) -> Self {
+        self.on_submit = Some(message);
+        self
+    }
+
+    /// How wide the field is, in logical pixels. 180 unless said.
+    pub fn width(mut self, width: f32) -> Self {
+        self.width = width;
+        self
+    }
+
+    /// Takes the keyboard, with its text selected, the first time it appears: for a field
+    /// that is shown because someone asked to type.
+    pub fn autofocus(mut self) -> Self {
+        self.autofocus = true;
+        self
+    }
+
+    fn logic(&self) -> FieldLogic<'_> {
+        FieldLogic {
+            value: &self.value,
+            secure: false,
+            arrows: false,
+        }
+    }
+
+    /// Where the text starts, given how far it has slid.
+    fn origin(&self, bounds: Rect, scroll: f32) -> Point {
+        let height = self.text.as_ref().map_or(0.0, |text| text.size().h);
+        Point::new(
+            bounds.x + FIELD_INSET - scroll,
+            bounds.y + ((bounds.h - height) * 0.5).round(),
+        )
+    }
+
+    /// How far along the text the caret before this character is.
+    fn caret_x(&self, character: usize) -> f32 {
+        self.text
+            .as_ref()
+            .map_or(0.0, |text| text.caret(byte_at(&self.value, character)).x)
+    }
+
+    /// The character nearest a point.
+    fn hit(&self, bounds: Rect, scroll: f32, point: Point) -> usize {
+        let Some(text) = &self.text else { return 0 };
+        let origin = self.origin(bounds, scroll);
+        let across = Point::new(point.x - origin.x, text.line_height() * 0.5);
+        char_at(&self.value, text.hit(across))
+    }
+}
+
+impl<M: Clone + 'static> From<Field<M>> for Element<M> {
+    fn from(field: Field<M>) -> Self {
+        Element::new(field)
+    }
+}
+
+impl<M: Clone + 'static> Widget<M> for Field<M> {
+    fn layout(&mut self, cx: &mut Cx, limits: Limits) -> Size {
+        let style = Theme::of(cx).body();
+        self.text = Some(cx.text().layout(&self.value, &style, None));
+        self.hint_text = Some(cx.text().layout(&self.hint, &style, None));
+        self.logic().sync(cx, self.autofocus);
+        let height = (style.size * style.line_height + 10.0).round();
+        Size::new(self.width.min(limits.max.w), height)
+    }
+
+    fn focusable(&self) -> bool {
+        true
+    }
+
+    fn draw(&self, cx: &mut DrawCx) {
+        let theme = Theme::of(cx);
+        let bounds = cx.bounds();
+        let now = cx.now();
+        let focused = cx.is_focused();
+        let (cursor, anchor, hovered, blink) = {
+            let state = cx.state::<FieldState>();
+            (state.cursor, state.anchor, state.hovered, state.blink(now))
+        };
+        let edge = if focused {
+            (2.0, theme.accent)
+        } else {
+            (1.0, theme.edge)
+        };
+        let fill = if hovered && !focused {
+            lift(theme.control, 0.06)
+        } else {
+            theme.control
+        };
+        cx.scene.fill(bounds, theme.radius * 0.5, fill, Some(edge));
+
+        let inner = bounds.w - FIELD_INSET * 2.0;
+        let caret = self.caret_x(cursor);
+        let scroll = cx.state::<FieldState>().keep_caret_visible(caret, inner);
+        let origin = self.origin(bounds, scroll);
+        let height = self.text.as_ref().map_or(0.0, |text| text.size().h);
+        cx.scene.push_clip(Rect::new(
+            bounds.x + FIELD_INSET - 1.0,
+            bounds.y,
+            inner + 3.0,
+            bounds.h,
+        ));
+        if focused && cursor != anchor {
+            let (from, to) = (
+                self.caret_x(cursor.min(anchor)),
+                self.caret_x(cursor.max(anchor)),
+            );
+            cx.scene.fill(
+                Rect::new(origin.x + from, origin.y, to - from, height),
+                3.0,
+                theme.accent.with_alpha(0.3),
+                None,
+            );
+        }
+        match (&self.text, &self.hint_text) {
+            (_, Some(hint)) if self.value.is_empty() => cx.scene.text(hint, origin, theme.dim),
+            (Some(text), _) => cx.scene.text(text, origin, theme.text),
+            _ => {}
+        }
+        if focused {
+            let (showing, next) = blink;
+            if showing {
+                cx.scene.fill(
+                    Rect::new(
+                        (origin.x + caret).round() - 0.75,
+                        origin.y + 1.0,
+                        1.5,
+                        height - 2.0,
+                    ),
+                    0.75,
+                    theme.accent,
+                    None,
+                );
+            }
+            cx.request_redraw_after(next);
+        }
+        cx.scene.pop_clip();
+    }
+
+    fn event(&mut self, cx: &mut EventCx<M>, event: &Event) -> Status {
+        let bounds = cx.bounds();
+        let scroll = cx.state::<FieldState>().scroll;
+        let (status, action) = self
+            .logic()
+            .event(cx, event, bounds, |point| self.hit(bounds, scroll, point));
+        match action {
+            Some(FieldAction::Edit(value)) => {
+                let message = (self.on_input)(value.clone());
+                self.value = value;
+                cx.emit(message);
+            }
+            Some(FieldAction::Submit) => {
+                if let Some(message) = self.on_submit.clone() {
+                    cx.emit(message);
+                }
+            }
+            Some(FieldAction::Cancel | FieldAction::Arrow(_)) | None => {}
         }
         status
     }

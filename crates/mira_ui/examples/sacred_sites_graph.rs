@@ -5,7 +5,7 @@
 //! cargo run -p mira_ui --example sacred_sites_graph
 //! ```
 //!
-//! Bottom right, the round: the clock as a bar, a slider for how long red must hold out, and
+//! Bottom right, the round: the clock as a bar, a slider and a field for how long red must hold out, and
 //! buttons to pause and to start again. Top left, the signal graph (F1, or the switch, hides
 //! it): drag its ports to rewire the rules. Both are ordinary Armature interfaces; see
 //! `docs/UI.md`.
@@ -14,7 +14,8 @@ use mira::{live::Live, prelude::*};
 use mira_ui::{
     armature::{App as Interface, Element, Scheme, Style},
     kit::{
-        anchored, bar, button, caption, column, heading, panel, row, slider, toggle, Anchor, Theme,
+        anchored, bar, button, caption, column, field, heading, panel, row, slider, toggle, Anchor,
+        Theme,
     },
     signal_graph::SignalGraph,
     UiHost, UiPlugin,
@@ -33,12 +34,16 @@ struct Round {
     won: bool,
     paused: bool,
     rules_shown: bool,
+    /// What has been typed as a new limit, until Enter sets it.
+    typed: String,
     asked: Vec<Ask>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 enum Ask {
     Limit(f32),
+    Typed(String),
+    SetTyped,
     Pause(bool),
     Rules(bool),
     Restart,
@@ -48,7 +53,17 @@ impl Interface for Round {
     type Message = Ask;
 
     fn update(&mut self, ask: Ask) {
-        self.asked.push(ask);
+        match ask {
+            // Only digits make a number of seconds.
+            Ask::Typed(text) => self.typed = text.chars().filter(char::is_ascii_digit).collect(),
+            Ask::SetTyped => {
+                if let Ok(seconds) = self.typed.parse::<f32>() {
+                    self.asked.push(Ask::Limit(seconds.clamp(10.0, 120.0)));
+                }
+                self.typed.clear();
+            }
+            ask => self.asked.push(ask),
+        }
     }
 
     fn style(&self, _: Scheme) -> Style {
@@ -76,6 +91,10 @@ impl Interface for Round {
                         self.clock, self.limit
                     )))
                     .push(slider(10.0..=120.0, self.limit, Ask::Limit))
+                    .push(
+                        field("Seconds, then Enter", &self.typed, Ask::Typed)
+                            .on_submit(Ask::SetTyped),
+                    )
                     .push(toggle("Paused", self.paused, Ask::Pause))
                     .push(toggle("Show the rules", self.rules_shown, Ask::Rules))
                     .push(row().spacing(8.0).push(button("New round", Ask::Restart))),
@@ -110,6 +129,7 @@ fn carry_out(world: &mut World) {
             Ask::Pause(true) => world.resource_mut::<Live>().pause(),
             Ask::Pause(false) => world.resource_mut::<Live>().resume(),
             Ask::Restart => world.resource_mut::<Signals>().set("restart", true),
+            Ask::Typed(_) | Ask::SetTyped => {}
             Ask::Rules(shown) => {
                 if let Some(graph) = world.get_resource_mut::<UiHost<SignalGraph>>() {
                     graph.app().set_hidden(!shown);

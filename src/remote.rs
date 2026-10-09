@@ -670,9 +670,14 @@ fn handle(app: &mut App, request: &Value) -> Answer {
                 injected.play(Played::Motion(motion));
                 played += 1;
             }
+            if let Some(Value::Text(text)) = request.field("text") {
+                injected.type_text(text.clone());
+                played += 1;
+            }
             if played == 0 {
                 return Err(
-                    "give a `key`, a `mouse_button`, `mouse_motion` or `mouse_position`".to_owned(),
+                    "give a `key`, a `mouse_button`, `mouse_motion`, `mouse_position` or `text`"
+                        .to_owned(),
                 );
             }
             Ok(Value::Int(played))
