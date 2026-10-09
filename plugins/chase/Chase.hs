@@ -62,10 +62,10 @@ data Game = Game
   , seed :: Ptr Word32
   }
 
-foreign export ccall voxl_hs_main :: Ptr () -> IO CInt
+foreign export ccall "voxl_hs_main" pluginMain :: Ptr () -> IO CInt
 
-voxl_hs_main :: Ptr () -> IO CInt
-voxl_hs_main = plugin $ \app -> do
+pluginMain :: Ptr () -> IO CInt
+pluginMain = plugin $ \app -> do
   game <-
     Game
       <$> lookupComponent app "voxl.Transform"

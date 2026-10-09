@@ -42,6 +42,11 @@ plugins/pulse/build.sh
 if command -v ghc >/dev/null 2>&1; then
     plugins/swirl/build.sh
     plugins/chase/build.sh
+    # The Haskell is kept free of hlint hints (CI has hlint; locally it runs if installed).
+    if command -v hlint >/dev/null 2>&1; then
+        step "hlint"
+        hlint bindings plugins
+    fi
 elif [ "${VOXL_REQUIRE_GHC:-0}" = 1 ]; then
     echo "GHC is required (VOXL_REQUIRE_GHC=1) but not installed" >&2
     exit 1

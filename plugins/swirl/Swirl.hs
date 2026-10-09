@@ -35,10 +35,10 @@ instance Storable Orbit where
   peek ptr = Orbit <$> peek (castPtr ptr)
   poke ptr (Orbit angle) = poke (castPtr ptr) angle
 
-foreign export ccall voxl_hs_main :: Ptr () -> IO CInt
+foreign export ccall "voxl_hs_main" pluginMain :: Ptr () -> IO CInt
 
-voxl_hs_main :: Ptr () -> IO CInt
-voxl_hs_main = plugin $ \app -> do
+pluginMain :: Ptr () -> IO CInt
+pluginMain = plugin $ \app -> do
   transform <- lookupComponent app "voxl.Transform"
   cell <- lookupComponent app "demo.Cell"
   orbit <- registerComponent app "swirl.Orbit"
