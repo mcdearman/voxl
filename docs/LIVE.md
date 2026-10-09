@@ -129,16 +129,22 @@ answered at the start of a frame, whether or not the game is paused.
 
 | Command | Arguments | Answer |
 | --- | --- | --- |
-| `status` | | frame, seconds, time scale, paused, failures, entities |
+| `status` | | frame, seconds, time scale, paused, frames of stepping left, failures, entities |
 | `pause`, `resume` | | |
 | `step` | `frames` (1) | runs that many frames, then pauses |
+| `run_until` | `signal`, `max_frames` (600) | steps until the signal is true or the frames run out; `status` then says `reached` |
+| `input` | `key` or `mouse_button` with `action` (tap, press, release) and `frames`; `mouse_motion`, `mouse_position` | plays input at the start of the next simulated frame |
 | `time_scale` | `scale` | |
 | `record` | `on`, `every` (frames), `keep` | what recording is set to |
 | `history` | | the moments that can be gone back to |
 | `rewind` | `frames` (60) or `to_frame` | steps back, pauses, and says where it landed |
 | `failures` | | every caught failure, with its stack |
+| `watch` | `on` (true) | from then on, events are sent to this connection as they happen |
 | `systems` | `stage` (all) | each stage's systems in order, with constraints and timings |
 | `types` | | the names of registered components and resources |
+| `schema` | `name` | the shape of a registered type |
+| `unregistered` | | components and resources the world holds that are not registered, and so can't be reached by name |
+| `describe` | `limit` (40) | the scene in words: the camera, then each placed entity with where it is and where on screen it shows |
 | `entities` | `with` (a component), `limit` (200) | entities and what each has |
 | `get` | `entity`, `component` (all) | the component's value, or every component's |
 | `set` | `entity`, `component`, `value`, `path` (the whole component) | |
@@ -154,6 +160,18 @@ answered at the start of a frame, whether or not the game is paused.
 | `signal_connect` | `name`, `input`, `to` | |
 | `signal_define` | `name`, `op`, `inputs`, and `value` or `seconds` where the op has one | |
 | `signal_remove` | `name` | |
+
+A client can also ask to be told what happens instead of asking over and over. After
+`{"cmd": "watch"}` the game sends that connection a line whenever a system fails (with its
+stack), a signal changes value, or the game pauses or resumes; requests on the same connection
+are still answered, in among the news. `{"cmd": "watch", "on": false}` stops it.
+`mira-debug events` prints them as they come:
+
+```text
+{"event": "signal", "name": "blue.contesting", "value": true}
+{"event": "failure", "failure": {"system": "chase::move_player", "message": "…", "stack": […]}}
+{"event": "paused", "frame": 812}
+```
 
 Entities are their numbers as `entities` lists them. Values have the shape they have in a
 [scene file](SCENES.md). The operations are `constant`, `and`, `or`, `not`, `count`, `sum`,

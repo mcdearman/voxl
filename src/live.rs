@@ -59,6 +59,10 @@ pub struct Live {
     paused_by_failure: bool,
     steps: u32,
     resume: bool,
+    /// A signal that ends stepping early when it becomes true.
+    until: Option<String>,
+    /// Whether the last `step_until` ended because its signal became true.
+    reached: bool,
     /// Whether the frame now running is one in which the simulation is held still.
     pub(crate) holding: bool,
     failures: Vec<Failure>,
@@ -79,6 +83,8 @@ impl Default for Live {
             paused_by_failure: false,
             steps: 0,
             resume: false,
+            until: None,
+            reached: false,
             holding: false,
             failures: Vec::new(),
         }
@@ -100,6 +106,7 @@ impl Live {
         self.paused = false;
         self.paused_by_failure = false;
         self.steps = 0;
+        self.until = None;
         self.resume = true;
     }
 
@@ -107,6 +114,44 @@ impl Live {
     pub fn step_frames(&mut self, frames: u32) {
         self.paused = true;
         self.steps += frames;
+    }
+
+    /// Runs the simulation until the named signal is true, or for `max_frames` frames if it
+    /// doesn't come true, and pauses. `reached` says afterwards which it was.
+    pub fn step_until(&mut self, signal: &str, max_frames: u32) {
+        self.paused = true;
+        self.steps = max_frames;
+        self.until = Some(signal.to_owned());
+        self.reached = false;
+    }
+
+    /// How many frames of stepping are still to run.
+    pub fn steps_left(&self) -> u32 {
+        self.steps
+    }
+
+    /// Whether the last [`Live::step_until`] ended because its signal came true.
+    pub fn reached(&self) -> bool {
+        self.reached
+    }
+
+    /// The signal a `step_until` is waiting for, while it is.
+    pub(crate) fn until(&self) -> Option<&str> {
+        self.until.as_deref()
+    }
+
+    /// Ends a `step_until`: early if its signal has come true, or because its frames ran out.
+    pub(crate) fn check_until(&mut self, came_true: bool) {
+        if self.until.is_none() {
+            return;
+        }
+        if came_true {
+            self.steps = 0;
+            self.reached = true;
+        }
+        if self.steps == 0 {
+            self.until = None;
+        }
     }
 
     /// Every failure since the game started, oldest first.

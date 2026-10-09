@@ -13,7 +13,8 @@ pub const CASCADES: usize = 4;
 /// Uniform buffer offsets for dynamic bindings must be 256-byte aligned.
 const SLOT: u64 = 256;
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, crate::reflect::Reflect)]
+#[reflect(name = "mira.ShadowSettings", default)]
 pub struct ShadowSettings {
     pub enabled: bool,
     /// Width and height of each cascade's map.

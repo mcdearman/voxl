@@ -5,7 +5,7 @@ pub use winit::{event::MouseButton, keyboard::KeyCode};
 
 use crate::{
     app::{App, Plugin, Stage},
-    ecs::ResMut,
+    ecs::{ResMut, World},
 };
 
 /// Pressed state for keys or mouse buttons. `just_*` sets are cleared at the end of each frame.
@@ -89,6 +89,174 @@ fn clear_input(
     mouse.scroll = Vec2::ZERO;
 }
 
+/// Something played from outside the window: by a test, a debugger, or an agent.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Played {
+    Key(KeyCode, bool),
+    Button(MouseButton, bool),
+    /// Raw mouse motion, as mouselook reads it.
+    Motion(Vec2),
+    /// Where the cursor is, in physical pixels.
+    Cursor(Vec2),
+}
+
+/// Input waiting to be played into the game. It arrives at the start of the next frame the
+/// simulation runs, so what is played into a paused game is there, pressed that very frame,
+/// when the game is stepped. A resource.
+#[derive(Default)]
+pub struct InjectedInput {
+    now: Vec<Played>,
+    /// What to play after this many more frames: the releases of taps, mostly.
+    later: Vec<(u32, Played)>,
+}
+
+impl InjectedInput {
+    /// Plays something at the start of the next frame.
+    pub fn play(&mut self, played: Played) {
+        self.now.push(played);
+    }
+
+    /// Plays something after the next `frames` frames have run.
+    pub fn play_after(&mut self, frames: u32, played: Played) {
+        self.later.push((frames, played));
+    }
+
+    /// Presses a key and lets it go `frames` frames later.
+    pub fn tap(&mut self, key: KeyCode, frames: u32) {
+        self.play(Played::Key(key, true));
+        self.play_after(frames.max(1), Played::Key(key, false));
+    }
+
+    /// What is due this frame; the rest moves a frame closer.
+    fn due(&mut self) -> Vec<Played> {
+        let mut due = std::mem::take(&mut self.now);
+        self.later.retain_mut(|(frames, played)| {
+            if *frames == 0 {
+                due.push(*played);
+                return false;
+            }
+            *frames -= 1;
+            true
+        });
+        due
+    }
+}
+
+/// Plays injected input into the input resources. Called at the start of a frame in which
+/// the simulation runs.
+pub(crate) fn play_injected(world: &mut World) {
+    let Some(injected) = world.get_resource_mut::<InjectedInput>() else {
+        return;
+    };
+    for played in injected.due() {
+        match played {
+            Played::Key(key, true) => world.resource_mut::<ButtonInput<KeyCode>>().press(key),
+            Played::Key(key, false) => world.resource_mut::<ButtonInput<KeyCode>>().release(key),
+            Played::Button(button, true) => world
+                .resource_mut::<ButtonInput<MouseButton>>()
+                .press(button),
+            Played::Button(button, false) => world
+                .resource_mut::<ButtonInput<MouseButton>>()
+                .release(button),
+            Played::Motion(delta) => world.resource_mut::<Mouse>().delta += delta,
+            Played::Cursor(position) => world.resource_mut::<Mouse>().position = Some(position),
+        }
+    }
+}
+
+/// The key with this name, as winit names keys: `KeyW`, `Space`, `ArrowLeft`, `Digit1`,
+/// `ShiftLeft`, `F5`, …
+pub fn key_named(name: &str) -> Option<KeyCode> {
+    use KeyCode::*;
+    const KEYS: &[KeyCode] = &[
+        KeyA,
+        KeyB,
+        KeyC,
+        KeyD,
+        KeyE,
+        KeyF,
+        KeyG,
+        KeyH,
+        KeyI,
+        KeyJ,
+        KeyK,
+        KeyL,
+        KeyM,
+        KeyN,
+        KeyO,
+        KeyP,
+        KeyQ,
+        KeyR,
+        KeyS,
+        KeyT,
+        KeyU,
+        KeyV,
+        KeyW,
+        KeyX,
+        KeyY,
+        KeyZ,
+        Digit0,
+        Digit1,
+        Digit2,
+        Digit3,
+        Digit4,
+        Digit5,
+        Digit6,
+        Digit7,
+        Digit8,
+        Digit9,
+        ArrowUp,
+        ArrowDown,
+        ArrowLeft,
+        ArrowRight,
+        Space,
+        Enter,
+        Escape,
+        Tab,
+        Backspace,
+        Delete,
+        ShiftLeft,
+        ShiftRight,
+        ControlLeft,
+        ControlRight,
+        AltLeft,
+        AltRight,
+        SuperLeft,
+        SuperRight,
+        Minus,
+        Equal,
+        Comma,
+        Period,
+        Slash,
+        Semicolon,
+        Quote,
+        Backquote,
+        BracketLeft,
+        BracketRight,
+        Backslash,
+        Home,
+        End,
+        PageUp,
+        PageDown,
+        Insert,
+        F1,
+        F2,
+        F3,
+        F4,
+        F5,
+        F6,
+        F7,
+        F8,
+        F9,
+        F10,
+        F11,
+        F12,
+    ];
+    KEYS.iter()
+        .copied()
+        .find(|key| format!("{key:?}").eq_ignore_ascii_case(name))
+}
+
 pub struct InputPlugin;
 
 impl Plugin for InputPlugin {
@@ -96,6 +264,7 @@ impl Plugin for InputPlugin {
         app.init_resource::<ButtonInput<KeyCode>>()
             .init_resource::<ButtonInput<MouseButton>>()
             .init_resource::<Mouse>()
+            .init_resource::<InjectedInput>()
             .add_systems(Stage::Last, clear_input);
     }
 }

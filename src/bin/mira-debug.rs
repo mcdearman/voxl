@@ -10,6 +10,7 @@
 //! mira-debug --at 127.0.0.1:7878 pause
 //! mira-debug watch                     # the signal graph, redrawn as the game runs
 //! mira-debug watch every=0.5
+//! mira-debug events                    # failures, signal changes and pauses, as they happen
 //! ```
 //!
 //! The first word is the command and the rest are its arguments. A value that reads as JSON
@@ -38,6 +39,9 @@ fn main() -> ExitCode {
     };
     if command == "watch" {
         return watch(&address, &args[1..]);
+    }
+    if command == "events" {
+        return events(&address);
     }
     let mut request = vec![("cmd".to_owned(), Value::Text(command.clone()))];
     for arg in &args[1..] {
@@ -131,5 +135,32 @@ fn watch(address: &str, args: &[String]) -> ExitCode {
         }
         let _ = std::io::stdout().flush();
         std::thread::sleep(Duration::from_secs_f64(every.max(0.02)));
+    }
+}
+
+/// Prints what happens in the game as it happens, one event a line, until interrupted.
+fn events(address: &str) -> ExitCode {
+    let listen = || -> std::io::Result<()> {
+        let mut stream = TcpStream::connect(address)?;
+        stream.write_all(b"{\"cmd\": \"watch\"}\n")?;
+        for line in BufReader::new(stream).lines() {
+            let line = line?;
+            // The first line answers the request; the rest are events.
+            match json::parse(&line) {
+                Ok(event) if event.field("event").is_some() => {
+                    print!("{}", json::to_line(&event) + "\n")
+                }
+                _ => {}
+            }
+            std::io::stdout().flush()?;
+        }
+        Ok(())
+    };
+    match listen() {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(err) => {
+            eprintln!("no answer from a game at {address}: {err}");
+            ExitCode::FAILURE
+        }
     }
 }

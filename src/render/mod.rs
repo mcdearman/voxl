@@ -916,7 +916,10 @@ impl Plugin for RenderPlugin {
             .register_type::<Lods>()
             .register_type::<NotShadowCaster>()
             .register_resource_type::<AmbientLight>()
-            .register_resource_type::<Fog>();
+            .register_resource_type::<Fog>()
+            .register_resource_type::<PostProcess>()
+            .register_resource_type::<ShadowSettings>()
+            .register_resource_type::<VolumetricLight>();
         app.init_resource::<Assets<Mesh>>()
             .init_resource::<Assets<Image>>()
             .init_resource::<AmbientLight>()

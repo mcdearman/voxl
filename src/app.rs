@@ -181,6 +181,9 @@ impl App {
                 }
             }
         }
+        if frame != Frame::Hold {
+            crate::input::play_injected(&mut self.world);
+        }
         for stage in EARLY_STAGES {
             self.run_stage(stage);
         }
@@ -213,6 +216,15 @@ impl App {
             // Every system that failed has been replaced by new code.
             live.failures_repaired();
         }
+        // Signals are as of the last frame run, which is the one a step just finished.
+        let waited_for = live.until().map(str::to_owned);
+        let came_true = waited_for.is_some_and(|name| {
+            self.world
+                .get_resource::<crate::signal::Signals>()
+                .is_some_and(|signals| signals.is_true(&name))
+        });
+        let live = self.world.resource_mut::<Live>();
+        live.check_until(came_true);
         live.begin_frame()
     }
 

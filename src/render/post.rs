@@ -8,7 +8,8 @@ use super::{
 const BLOOM_LEVELS: u32 = 6;
 
 /// How the HDR image becomes the displayed one.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, crate::reflect::Reflect)]
+#[reflect(name = "mira.PostProcess", default)]
 pub struct PostProcess {
     /// Multiplies the scene's light before the tone curve. Photographic sky images are
     /// relative, so each scene picks its own.

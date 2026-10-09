@@ -76,8 +76,9 @@ for problem in &spawned.skipped {
   saved by name (`{"$asset": "image", "name": "textures/bricks.png"}`) and loaded again when
   the scene is, so a scene file works in a later run.
 - **Levels keep their settings.** Registered resources are saved too, and replace the world's
-  when the scene is spawned: `Fog` and `AmbientLight` to begin with, and any of yours after
-  `app.register_resource_type::<Weather>()`. A prefab (`Scene::capture_tree`) carries none.
+  when the scene is spawned: `Fog`, `AmbientLight`, `PostProcess` (exposure, bloom, grading),
+  `ShadowSettings`, `VolumetricLight` and the voxel world's `VoxelSettings`, and any of yours
+  after `app.register_resource_type::<Weather>()`. A prefab (`Scene::capture_tree`) carries none.
 - **Files are plain JSON**, indented, with fields in a stable order, so they diff cleanly and
   any tool can read them.
 
@@ -139,7 +140,8 @@ value.set_path("translation.1", Value::Float(4.0));
   hold a skeleton and clips from a model file, so save the model's name and spawn it again.
 - Voxel terrain is not part of a scene. Edited chunks are saved to a file of their own; see
   [VOXELS.md](VOXELS.md).
-- Only `Fog` and `AmbientLight` are registered among the engine's resources. A plugin's
+- Among the engine's resources only its settings are registered (see above); `mira-debug
+  unregistered` lists what a running game holds that isn't. A plugin's
   components are saved once the plugin
   [describes](PLUGINS.md#describing-components) them.
 - There are no prefabs (a scene used as a template, with overrides) yet.

@@ -114,8 +114,7 @@ being able to see inside.
       despawn, save the scene, pause and step, see failures with their stacks, reload
       plugins, read and rewire the signal graph
 - [x] A command-line client for it (`mira-debug`)
-- [ ] The same protocol under the editor (Phase 5); pushing changes to a client that is
-      watching, instead of being asked
+- [ ] The same protocol under the editor (Phase 5)
 - [ ] Hot reload of the host's own Rust systems, not only plugins (the engine as a library the
       game reloads)
 - [x] Rewind: snapshots of the world every few frames (reflection makes them); step back to
@@ -146,17 +145,22 @@ game's state, change it, and control time and code. The means is the Model Conte
       chosen size
 - [ ] Screenshots from a chosen camera or a free viewpoint, with debug overlays (entity ids,
       bounds, colliders, the signal graph); loading a scene
-- [ ] The scene in words: a compact description (what is where, what is on screen, what
-      changed since last asked) for when an image is more than is needed
+- [x] The scene in words: where the camera is and what there is, on screen first and nearest
+      first (`describe`), for when an image is more than is needed
+- [ ] What changed since last asked; sizes and what hides what
 - [x] The schema of every registered type, so an agent knows what it may read and write and
       in what shape
-- [ ] Total knowledge: a check that reports engine state that is not reflected, and so
-      invisible
-- [ ] Events pushed, not polled: failures, signal changes, log lines, a plugin reloading
-- [ ] Launching and owning a game: start it headless or windowed, step it deterministically
-      (fixed timestep, seeded), run to a condition ("until this signal is true"), shut it down
-- [ ] Input from the agent: keys, mouse and gamepad injected as if played, so an agent can
-      play-test what it built
+- [x] A report of state that is not reflected, and so invisible (`unregistered`)
+- [ ] Total knowledge: registering what that report lists in the engine itself (the
+      renderer's and physics' resources, `GlobalTransform`, animation)
+- [x] Events pushed, not polled, over the debug connection: failures, signal changes, pauses
+      (`watch`, `mira-debug events`)
+- [ ] The same events through MCP; log lines and plugin reloads as events
+- [x] Running to a condition: step frames and wait for them, or run until a signal is true
+- [x] Input from the agent: keys and mouse injected as if played, so an agent can play-test
+      what it built
+- [ ] Launching and owning a game: start it headless or windowed, seeded, and shut it down;
+      gamepad and text input
 - [ ] Editing through the same door: write a prefab or a scene, define signals, build and
       reload a plugin, and see the result, without leaving the conversation
 - [ ] The same tools from inside the editor (Phase 5), so a person and an agent can work on
@@ -383,5 +387,5 @@ project grows.
    seen in screenshots to fix alongside: the built-in sky is dull next to the sun it comes
    with; and objects that move every frame smear under temporal anti-aliasing (it has no
    motion vectors).
-3. The rest of Phase 1C (headless stepping, input from an agent, pushed events); then table
-   storage, observers and relations (Phase 2).
+3. The rest of Phase 1C (pushed events, launching a game, screenshot viewpoints and
+   overlays); then table storage, observers and relations (Phase 2).

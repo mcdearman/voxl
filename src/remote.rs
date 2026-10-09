@@ -21,7 +21,8 @@ use std::{
 
 use crate::{
     app::{App, Stage},
-    ecs::Entity,
+    ecs::{ComponentKey, Entity},
+    input::{key_named, InjectedInput, Played},
     live::{History, Live},
     reflect::{json, Scene, Schema, TypeRegistry, Value},
     signal::{Compare, Op, Signal, Signals},
@@ -32,6 +33,92 @@ use crate::{
 struct Client {
     stream: TcpStream,
     unread: Vec<u8>,
+    /// What this client last knew, if it asked to be told of changes.
+    watching: Option<Known>,
+}
+
+/// The state a watching client has been told of, to tell it only what is new.
+struct Known {
+    failures: usize,
+    paused: bool,
+    signals: Vec<(String, Signal)>,
+}
+
+impl Known {
+    fn of(app: &App) -> Self {
+        let live = app.world.resource::<Live>();
+        Self {
+            failures: live.failures().len(),
+            paused: live.is_paused(),
+            signals: app
+                .world
+                .get_resource::<Signals>()
+                .map_or(Vec::new(), |signals| {
+                    signals
+                        .graph()
+                        .into_iter()
+                        .map(|node| (node.name, node.value))
+                        .collect()
+                }),
+        }
+    }
+
+    /// What has happened since this was last brought up to date, oldest first.
+    fn news(&mut self, app: &App) -> Vec<Value> {
+        let now = Self::of(app);
+        let mut news = Vec::new();
+        let event = |kind: &str, mut fields: Vec<(&'static str, Value)>| {
+            fields.insert(0, ("event", Value::Text(kind.to_owned())));
+            map(fields)
+        };
+        let live = app.world.resource::<Live>();
+        for failure in live.failures().iter().skip(self.failures) {
+            news.push(event("failure", vec![("failure", failure_value(failure))]));
+        }
+        for (name, value) in &now.signals {
+            let before = self
+                .signals
+                .iter()
+                .find(|(known, _)| known == name)
+                .map(|(_, v)| *v);
+            if before != Some(*value) {
+                let value = match value {
+                    Signal::Bool(b) => Value::Bool(*b),
+                    Signal::Number(n) => Value::Float(*n),
+                };
+                news.push(event(
+                    "signal",
+                    vec![("name", Value::Text(name.clone())), ("value", value)],
+                ));
+            }
+        }
+        if now.paused != self.paused {
+            let frame = app
+                .world
+                .get_resource::<Time>()
+                .map_or(0, Time::frame_count);
+            news.push(event(
+                if now.paused { "paused" } else { "resumed" },
+                vec![("frame", Value::Int(frame as i64))],
+            ));
+        }
+        *self = now;
+        news
+    }
+}
+
+fn failure_value(failure: &crate::live::Failure) -> Value {
+    map([
+        ("system", Value::Text(failure.system.clone())),
+        ("stage", Value::Text(format!("{:?}", failure.stage))),
+        ("frame", Value::Int(failure.frame as i64)),
+        ("message", Value::Text(failure.message.clone())),
+        ("location", Value::Text(failure.location.clone())),
+        (
+            "stack",
+            texts(failure.stack.lines().map(|line| line.trim().to_owned())),
+        ),
+    ])
 }
 
 /// Listens for debuggers. Held by the app; made by [`App::listen_for_debugger`].
@@ -59,6 +146,7 @@ impl DebugServer {
                 self.clients.push(Client {
                     stream,
                     unread: Vec::new(),
+                    watching: None,
                 });
             }
         }
@@ -285,6 +373,188 @@ pub fn schema_value(schema: &Schema) -> Value {
     }
 }
 
+/// The scene in words: where the camera is, and what there is, nearest first, with where on
+/// the screen each thing appears. For when a picture is more than is needed, or there is no
+/// window to take one of.
+fn describe(app: &mut App, limit: usize) -> String {
+    use crate::{
+        render::{Camera, Mesh, Mesh3d},
+        transform::GlobalTransform,
+        window::Window,
+    };
+    use std::fmt::Write;
+
+    let mut out = String::new();
+    let time = app.world.get_resource::<Time>();
+    let frame = time.map_or(0, Time::frame_count);
+    let paused = app.world.resource::<Live>().is_paused();
+    let _ = writeln!(
+        out,
+        "frame {frame}, {}, {} entities",
+        if paused { "paused" } else { "running" },
+        app.world.entity_count()
+    );
+
+    let aspect = app
+        .world
+        .get_resource::<Window>()
+        .map(|window| window.size())
+        .filter(|size| size.y > 0)
+        .map_or(16.0 / 9.0, |size| size.x as f32 / size.y as f32);
+    let camera = app
+        .world
+        .query::<(Entity, &Camera, &GlobalTransform)>()
+        .iter()
+        .find(|(_, camera, _)| camera.active)
+        .map(|(entity, camera, at)| (entity, camera.projection(aspect) * at.0.inverse(), *at));
+    let eye = match &camera {
+        Some((entity, _, at)) => {
+            let (p, f) = (at.translation(), at.forward());
+            let _ = writeln!(
+                out,
+                "camera #{} at ({:.1}, {:.1}, {:.1}) looking along ({:.2}, {:.2}, {:.2})",
+                entity.to_bits(),
+                p.x,
+                p.y,
+                p.z,
+                f.x,
+                f.y,
+                f.z
+            );
+            Some(p)
+        }
+        None => {
+            let _ = writeln!(out, "no active camera; distances are from the origin");
+            None
+        }
+    };
+
+    // Each placed entity: where it is, where it shows, and what it is made of.
+    let placed: Vec<(Entity, glam::Vec3)> = app
+        .world
+        .query::<(Entity, &GlobalTransform)>()
+        .iter()
+        .map(|(entity, at)| (entity, at.translation()))
+        .collect();
+    let mut lines: Vec<(bool, f32, String)> = Vec::new();
+    let registry = app.world.resource::<TypeRegistry>();
+    let server = app.world.get_resource::<crate::asset_server::AssetServer>();
+    for (entity, position) in placed {
+        if camera
+            .as_ref()
+            .is_some_and(|(camera, ..)| *camera == entity)
+        {
+            continue;
+        }
+        let distance = position.distance(eye.unwrap_or(glam::Vec3::ZERO));
+        let (seen, place) = match &camera {
+            Some((_, view_projection, _)) => {
+                let clip = *view_projection * position.extend(1.0);
+                let (x, y) = (clip.x / clip.w, clip.y / clip.w);
+                if clip.w <= 0.0 {
+                    (false, "behind the camera".to_owned())
+                } else if x.abs() > 1.0 || y.abs() > 1.0 {
+                    let side = if x < -1.0 {
+                        "to the left"
+                    } else if x > 1.0 {
+                        "to the right"
+                    } else if y > 1.0 {
+                        "above"
+                    } else {
+                        "below"
+                    };
+                    (false, format!("out of view {side}"))
+                } else {
+                    let across = if x < -0.33 {
+                        "left"
+                    } else if x > 0.33 {
+                        "right"
+                    } else {
+                        "centre"
+                    };
+                    let up = if y > 0.33 {
+                        "top"
+                    } else if y < -0.33 {
+                        "bottom"
+                    } else {
+                        "middle"
+                    };
+                    (true, format!("on screen, {up} {across}"))
+                }
+            }
+            None => (false, "not drawn".to_owned()),
+        };
+        let mut made_of: Vec<String> = registry
+            .iter()
+            .filter(|component| (component.get)(&app.world, entity).is_some())
+            .map(|component| component.name.trim_start_matches("mira.").to_owned())
+            .filter(|name| name != "Transform")
+            .collect();
+        let mesh = app
+            .world
+            .get::<Mesh3d>(entity)
+            .and_then(|mesh| server?.name_of::<Mesh>(mesh.0));
+        if let (Some(mesh), Some(slot)) = (mesh, made_of.iter_mut().find(|name| *name == "Mesh3d"))
+        {
+            *slot = format!("Mesh3d {mesh}");
+        }
+        lines.push((
+            seen,
+            distance,
+            format!(
+                "#{} at ({:.1}, {:.1}, {:.1}), {distance:.1} away, {place}: {}",
+                entity.to_bits(),
+                position.x,
+                position.y,
+                position.z,
+                if made_of.is_empty() {
+                    "nothing registered".to_owned()
+                } else {
+                    made_of.join(", ")
+                }
+            ),
+        ));
+    }
+    // What can be seen first, then nearest first.
+    lines.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.total_cmp(&b.1)));
+    let (total, on_screen) = (lines.len(), lines.iter().filter(|line| line.0).count());
+    let _ = writeln!(out, "{total} placed entities, {on_screen} on screen");
+    for (_, _, line) in lines.iter().take(limit) {
+        let _ = writeln!(out, "{line}");
+    }
+    if total > limit {
+        let _ = writeln!(
+            out,
+            "… and {} more (raise `limit` to list them)",
+            total - limit
+        );
+    }
+    out
+}
+
+/// Plays a key or button going down, coming up, or both a few frames apart.
+fn play_button(
+    injected: &mut InjectedInput,
+    action: &str,
+    frames: u32,
+    played: impl Fn(bool) -> Played,
+) -> Result<(), String> {
+    match action {
+        "press" => injected.play(played(true)),
+        "release" => injected.play(played(false)),
+        "tap" => {
+            injected.play(played(true));
+            injected.play_after(frames, played(false));
+        }
+        other => {
+            return Err(format!(
+                "there is no action `{other}`; use press, release or tap"
+            ))
+        }
+    }
+    Ok(())
+}
+
 /// Carries out one request.
 fn handle(app: &mut App, request: &Value) -> Answer {
     let done = Ok(Value::Bool(true));
@@ -292,6 +562,7 @@ fn handle(app: &mut App, request: &Value) -> Answer {
         "status" => {
             let live = app.world.resource::<Live>();
             let (paused, failures) = (live.is_paused(), live.failures().len());
+            let (stepping, reached) = (live.steps_left(), live.reached());
             let time = app.world.get_resource::<Time>();
             Ok(map([
                 (
@@ -307,6 +578,8 @@ fn handle(app: &mut App, request: &Value) -> Answer {
                     Value::Float(time.map_or(1.0, |t| t.scale() as f64)),
                 ),
                 ("paused", Value::Bool(paused)),
+                ("stepping", Value::Int(stepping as i64)),
+                ("reached", Value::Bool(reached)),
                 ("failures", Value::Int(failures as i64)),
                 ("entities", Value::Int(app.world.entity_count() as i64)),
             ]))
@@ -328,6 +601,84 @@ fn handle(app: &mut App, request: &Value) -> Answer {
                 .resource_mut::<Live>()
                 .step_frames(frames.max(1.0) as u32);
             done
+        }
+        "run_until" => {
+            let signal = text(request, "signal")?;
+            if app.world.resource::<Signals>().get(signal).is_none() {
+                return Err(format!("there is no signal `{signal}`"));
+            }
+            let frames = request
+                .field("max_frames")
+                .and_then(Value::as_f64)
+                .unwrap_or(600.0);
+            app.world
+                .resource_mut::<Live>()
+                .step_until(signal, frames.max(1.0) as u32);
+            done
+        }
+        "input" => {
+            let injected = app
+                .world
+                .get_resource_mut::<InjectedInput>()
+                .ok_or("this game takes no input")?;
+            let frames = request
+                .field("frames")
+                .and_then(Value::as_f64)
+                .unwrap_or(1.0)
+                .max(1.0) as u32;
+            let action = match request.field("action") {
+                Some(Value::Text(action)) => action.as_str(),
+                None => "tap",
+                Some(_) => return Err("`action` is press, release or tap".to_owned()),
+            };
+            let mut played = 0;
+            if let Some(Value::Text(name)) = request.field("key") {
+                let key = key_named(name).ok_or_else(|| {
+                    format!("there is no key `{name}`; keys are named like KeyW, Space, ArrowLeft, Digit1, ShiftLeft")
+                })?;
+                play_button(injected, action, frames, |down| Played::Key(key, down))?;
+                played += 1;
+            }
+            if let Some(Value::Text(name)) = request.field("mouse_button") {
+                let button = match name.to_ascii_lowercase().as_str() {
+                    "left" => crate::input::MouseButton::Left,
+                    "right" => crate::input::MouseButton::Right,
+                    "middle" => crate::input::MouseButton::Middle,
+                    _ => {
+                        return Err(format!(
+                            "there is no mouse button `{name}`; use left, right or middle"
+                        ))
+                    }
+                };
+                play_button(injected, action, frames, |down| {
+                    Played::Button(button, down)
+                })?;
+                played += 1;
+            }
+            let pair = |key: &str| match request.field(key) {
+                Some(Value::List(pair)) if pair.len() == 2 => {
+                    match (pair[0].as_f64(), pair[1].as_f64()) {
+                        (Some(x), Some(y)) => Ok(Some(glam::Vec2::new(x as f32, y as f32))),
+                        _ => Err(format!("`{key}` is two numbers")),
+                    }
+                }
+                Some(_) => Err(format!("`{key}` is two numbers")),
+                None => Ok(None),
+            };
+            if let Some(motion) = pair("mouse_motion")? {
+                injected.play(Played::Motion(motion));
+                played += 1;
+            }
+            if let Some(position) = pair("mouse_position")? {
+                injected.play(Played::Cursor(position));
+                played += 1;
+            }
+            if played == 0 {
+                return Err(
+                    "give a `key`, a `mouse_button`, `mouse_motion` or `mouse_position`".to_owned(),
+                );
+            }
+            Ok(Value::Int(played))
         }
         "time_scale" => {
             let scale = number(request, "scale")? as f32;
@@ -390,19 +741,7 @@ fn handle(app: &mut App, request: &Value) -> Answer {
                 .resource::<Live>()
                 .failures()
                 .iter()
-                .map(|failure| {
-                    map([
-                        ("system", Value::Text(failure.system.clone())),
-                        ("stage", Value::Text(format!("{:?}", failure.stage))),
-                        ("frame", Value::Int(failure.frame as i64)),
-                        ("message", Value::Text(failure.message.clone())),
-                        ("location", Value::Text(failure.location.clone())),
-                        (
-                            "stack",
-                            texts(failure.stack.lines().map(|line| line.trim().to_owned())),
-                        ),
-                    ])
-                })
+                .map(failure_value)
                 .collect(),
         )),
         "systems" => {
@@ -487,6 +826,42 @@ fn handle(app: &mut App, request: &Value) -> Answer {
                 (None, None) => return Err(format!("there is no type `{name}`")),
             };
             Ok(schema_value(&schema))
+        }
+        "unregistered" => {
+            // What the world holds that can't be reached by name: invisible to scenes,
+            // to stepping back, and to whoever is on the other end of this connection.
+            let registry = app.world.resource::<TypeRegistry>();
+            let components = app
+                .world
+                .component_kinds()
+                .into_iter()
+                .filter(|(key, name, _)| match key {
+                    ComponentKey::Type(rust_type) => !registry.knows_type(*rust_type),
+                    ComponentKey::Dynamic(_) => registry.get(name).is_none(),
+                })
+                .map(|(_, name, entities)| {
+                    map([
+                        ("type", Value::Text(name)),
+                        ("entities", Value::Int(entities as i64)),
+                    ])
+                });
+            let resources = app
+                .world
+                .resource_kinds()
+                .into_iter()
+                .filter(|(rust_type, _)| !registry.knows_type(*rust_type))
+                .map(|(_, name)| name.to_owned());
+            Ok(map([
+                ("components", Value::List(components.collect())),
+                ("resources", texts(resources)),
+            ]))
+        }
+        "describe" => {
+            let limit = request
+                .field("limit")
+                .and_then(Value::as_f64)
+                .unwrap_or(40.0) as usize;
+            Ok(Value::Text(describe(app, limit)))
         }
         "screenshot" => {
             let path = text(request, "path")?;
@@ -703,6 +1078,8 @@ fn handle(app: &mut App, request: &Value) -> Answer {
                 Err(format!("there is no signal `{name}`"))
             }
         }
+        // Answered by the server itself when it comes over a socket.
+        "watch" => Err("watching needs a connection that stays open".to_owned()),
         other => Err(format!("there is no command `{other}`")),
     }
 }
@@ -858,8 +1235,37 @@ impl App {
             return;
         };
         for (client, line) in server.requests() {
-            let answer = respond(self, &line);
+            // `watch` is about the connection, which only the server knows.
+            let watch = json::parse(&line).ok().and_then(|request| {
+                let on = match request.field("cmd") {
+                    Some(Value::Text(cmd)) if cmd == "watch" => {
+                        !matches!(request.field("on"), Some(Value::Bool(false)))
+                    }
+                    _ => return None,
+                };
+                Some((on, request.field("id").cloned()))
+            });
+            let answer = match watch {
+                Some((on, id)) => {
+                    server.clients[client].watching = on.then(|| Known::of(self));
+                    let mut fields = Vec::new();
+                    fields.extend(id.map(|id| ("id".to_owned(), id)));
+                    fields.push(("ok".to_owned(), Value::Bool(on)));
+                    json::to_line(&Value::Map(fields))
+                }
+                None => respond(self, &line),
+            };
             server.answer(client, &answer);
+        }
+        // Tell the clients that asked what has changed since the last frame.
+        for client in 0..server.clients.len() {
+            let news = match &mut server.clients[client].watching {
+                Some(known) => known.news(self),
+                None => continue,
+            };
+            for event in news {
+                server.answer(client, &json::to_line(&event));
+            }
         }
         server.drop_closed();
         // A request may have replaced the server; the one that was serving stays.
@@ -1221,5 +1627,200 @@ mod tests {
             std::thread::sleep(Duration::from_millis(5));
         }
         assert!(app.debug.as_ref().unwrap().clients.is_empty());
+    }
+    #[test]
+    fn a_watching_client_is_told_what_happens() {
+        fn fragile(broken: Option<Res<Broken>>) {
+            assert!(broken.is_none(), "it broke");
+        }
+        struct Broken;
+
+        let mut app = app();
+        app.world.resource_mut::<Live>().catch_failures = true;
+        app.add_systems(Stage::Update, fragile);
+        let address = app.listen_for_debugger("127.0.0.1:0").unwrap();
+        let mut stream = TcpStream::connect(address).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_millis(20)))
+            .unwrap();
+        let mut lines = BufReader::new(stream.try_clone().unwrap());
+        // Runs frames until a whole line has arrived, or says what did instead.
+        let mut next = |app: &mut App| {
+            let mut line = String::new();
+            for _ in 0..300 {
+                app.update();
+                if lines.read_line(&mut line).is_ok() && line.ends_with('\n') {
+                    return json::parse(&line).unwrap();
+                }
+            }
+            panic!("nothing arrived; so far {line:?}");
+        };
+        let event = |value: &Value| match value.field("event") {
+            Some(Value::Text(kind)) => kind.clone(),
+            _ => panic!("not an event: {value:?}"),
+        };
+
+        stream
+            .write_all(b"{\"id\": 1, \"cmd\": \"watch\"}\n")
+            .unwrap();
+        assert_eq!(next(&mut app).field("ok"), Some(&Value::Bool(true)));
+        // `warm` comes true on its own as the frames go by: the first thing worth telling.
+        let told = next(&mut app);
+        assert_eq!(event(&told), "signal");
+        assert_eq!(told.field("name"), Some(&Value::Text("warm".into())));
+        assert_eq!(told.field("value"), Some(&Value::Bool(true)));
+
+        // A system fails: the failure with its stack, then the pause it caused.
+        app.world.insert_resource(Broken);
+        let told = next(&mut app);
+        assert_eq!(event(&told), "failure");
+        assert_eq!(
+            told.get_path("failure.message"),
+            Some(&Value::Text("it broke".into()))
+        );
+        assert_eq!(event(&next(&mut app)), "paused");
+
+        // Requests are still answered on the same connection, in among the news.
+        app.world.remove_resource::<Broken>();
+        stream.write_all(b"{\"cmd\": \"resume\"}\n").unwrap();
+        assert_eq!(next(&mut app).field("ok"), Some(&Value::Bool(true)));
+        assert_eq!(event(&next(&mut app)), "resumed");
+        // And no more once it asks not to be told.
+        stream
+            .write_all(b"{\"cmd\": \"watch\", \"on\": false}\n")
+            .unwrap();
+        assert_eq!(next(&mut app).field("ok"), Some(&Value::Bool(false)));
+        app.world.resource_mut::<Signals>().set("quiet", true);
+        stream
+            .write_all(b"{\"id\": 9, \"cmd\": \"status\"}\n")
+            .unwrap();
+        assert_eq!(
+            next(&mut app).field("id"),
+            Some(&Value::Int(9)),
+            "the next line is the answer"
+        );
+        assert!(refused(&mut app, "{'cmd': 'watch'}").contains("stays open"));
+    }
+    #[test]
+    fn the_scene_is_described_in_words() {
+        use crate::render::{Camera, Material};
+
+        let mut app = app();
+        app.register_type::<Camera>().register_type::<Material>();
+        let camera = app
+            .world
+            .spawn((Transform::from_xyz(0.0, 1.0, 0.0), Camera::default()));
+        let ahead = app
+            .world
+            .spawn((Transform::from_xyz(0.0, 1.0, -5.0), Material::default()));
+        let far = app.world.spawn(Transform::from_xyz(0.2, 1.0, -40.0));
+        let aside = app.world.spawn(Transform::from_xyz(-300.0, 1.0, -5.0));
+        let behind = app.world.spawn(Transform::from_xyz(0.0, 1.0, 8.0));
+        let low = app.world.spawn(Transform::from_xyz(3.0, -1.0, -6.0));
+        app.update();
+
+        let Value::Text(words) = ask(&mut app, "{'cmd': 'describe'}") else {
+            panic!("text");
+        };
+        let lines: Vec<&str> = words.lines().collect();
+        assert_eq!(lines[0], "frame 1, running, 6 entities");
+        assert!(
+            lines[1].starts_with(&format!(
+                "camera #{} at (0.0, 1.0, 0.0) looking along (0.00, 0.00, -1.00)",
+                camera.to_bits()
+            )),
+            "{}",
+            lines[1]
+        );
+        assert_eq!(lines[2], "5 placed entities, 3 on screen");
+        // On screen first, nearest first; then the rest, nearest first.
+        let line = |entity: Entity| {
+            let tag = format!("#{} ", entity.to_bits());
+            lines
+                .iter()
+                .position(|line| line.starts_with(&tag))
+                .unwrap_or_else(|| panic!("{tag} in {words}"))
+        };
+        assert_eq!(
+            [line(ahead), line(low), line(far), line(behind), line(aside)],
+            [3, 4, 5, 6, 7],
+            "{words}"
+        );
+        assert_eq!(
+            lines[3],
+            format!(
+                "#{} at (0.0, 1.0, -5.0), 5.0 away, on screen, middle centre: Material",
+                ahead.to_bits()
+            )
+        );
+        assert!(
+            lines[4].contains("on screen, bottom right: nothing registered"),
+            "{}",
+            lines[4]
+        );
+        assert!(
+            lines[6].contains("behind the camera") && lines[7].contains("out of view to the left"),
+            "{words}"
+        );
+
+        // A long scene is cut short, and says so; with no camera, it still says what is where.
+        let Value::Text(short) = ask(&mut app, "{'cmd': 'describe', 'limit': 2}") else {
+            panic!("text");
+        };
+        assert!(
+            short.ends_with("… and 3 more (raise `limit` to list them)\n"),
+            "{short}"
+        );
+        app.world.despawn(camera);
+        let Value::Text(blind) = ask(&mut app, "{'cmd': 'describe'}") else {
+            panic!("text");
+        };
+        assert!(
+            blind.contains("no active camera") && blind.contains("not drawn"),
+            "{blind}"
+        );
+    }
+    #[test]
+    fn state_that_cannot_be_seen_is_reported() {
+        struct Secret(#[allow(dead_code)] u32);
+        impl crate::ecs::Component for Secret {}
+        struct Hidden;
+
+        let mut app = app();
+        app.world.spawn((Transform::IDENTITY, Secret(1)));
+        app.world.spawn(Secret(2));
+        app.world.insert_resource(Hidden);
+        app.update();
+        let report = ask(&mut app, "{'cmd': 'unregistered'}");
+        let Some(Value::List(components)) = report.field("components") else {
+            panic!("components: {report:?}");
+        };
+        let named = |part: &str| {
+            components.iter().find(|component| {
+                matches!(component.field("type"), Some(Value::Text(name)) if name.ends_with(part))
+            })
+        };
+        assert_eq!(
+            named("::Secret").unwrap().field("entities"),
+            Some(&Value::Int(2))
+        );
+        assert!(
+            named("::Transform").is_none(),
+            "registered types are not listed"
+        );
+        assert!(
+            named("::GlobalTransform").is_some(),
+            "the engine's own gaps show too"
+        );
+        let Some(Value::List(resources)) = report.field("resources") else {
+            panic!("resources");
+        };
+        let has = |part: &str| {
+            resources
+                .iter()
+                .any(|name| matches!(name, Value::Text(name) if name.ends_with(part)))
+        };
+        assert!(has("::Hidden") && has("Frames"));
+        assert!(!has("Fog"), "a registered resource is not listed");
     }
 }

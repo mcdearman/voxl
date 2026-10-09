@@ -20,6 +20,7 @@ use super::{
 };
 
 pub(crate) struct ResourceCell {
+    type_name: &'static str,
     value: UnsafeCell<Box<dyn Any>>,
     ticks: UnsafeCell<ComponentTicks>,
 }
@@ -338,6 +339,39 @@ impl World {
 
     // --- resources ---
 
+    /// Every kind of component the world holds: its key, its name (the Rust type, or the
+    /// name a runtime-defined component was given) and how many entities have it.
+    pub fn component_kinds(&self) -> Vec<(ComponentKey, String, usize)> {
+        let mut kinds: Vec<_> = self
+            .storages
+            .iter()
+            .map(|(key, storage)| {
+                let name = match storage.type_name() {
+                    "" => self
+                        .named
+                        .iter()
+                        .find(|named| named.key == *key)
+                        .map_or("(unnamed)".to_owned(), |named| named.name.clone()),
+                    name => name.to_owned(),
+                };
+                (*key, name, storage.entities().len())
+            })
+            .collect();
+        kinds.sort_by(|a, b| a.1.cmp(&b.1));
+        kinds
+    }
+
+    /// Every resource the world holds, by type.
+    pub fn resource_kinds(&self) -> Vec<(TypeId, &'static str)> {
+        let mut kinds: Vec<_> = self
+            .resources
+            .iter()
+            .map(|(id, cell)| (*id, cell.type_name))
+            .collect();
+        kinds.sort_by_key(|kind| kind.1);
+        kinds
+    }
+
     /// Says that systems using this resource must run on the main thread: for things the
     /// operating system ties to the thread that made them. Other systems are unaffected.
     pub fn pin_to_main_thread<R: 'static>(&mut self) {
@@ -359,6 +393,7 @@ impl World {
             }
             Entry::Vacant(entry) => {
                 entry.insert(ResourceCell {
+                    type_name: type_name::<R>(),
                     value: UnsafeCell::new(Box::new(value)),
                     ticks: UnsafeCell::new(ComponentTicks::new(tick)),
                 });
