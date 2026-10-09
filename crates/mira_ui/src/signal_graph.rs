@@ -6,7 +6,11 @@
 //! app.add_plugins(mira_ui::signal_graph::plugin());
 //! ```
 //!
-//! - Drag from an input (the dot on a box's left edge) to another box to rewire it.
+//! - Drag from an input (the dot on a box's left edge) to another box to rewire it; drop the
+//!   wire on nothing to take that input away.
+//! - Drag from an output (the dot on the right edge) to another box to give it one more input.
+//! - Right-click a box to change its operation (and, or, not, count, sum); right-click the
+//!   panel's background for a new constant. Backspace over a box removes it.
 //! - Click a box's lamp to force the signal true, again for false, again to let it go.
 //! - Click a constant's value to flip it; scroll over a number to change it.
 //! - Drag a box by its body to move it; drag the title to move the whole panel.
@@ -23,7 +27,7 @@ use armature::{
 use mira::{
     app::{App as Game, Plugin, Stage},
     ecs::World,
-    signal::{NodeInfo, Signal, Signals},
+    signal::{NodeInfo, Op, Signal, Signals},
 };
 
 use crate::{UiHost, UiPlugin};
@@ -38,9 +42,28 @@ pub enum Edit {
         to: String,
     },
     /// Hold a signal's output at a value, or let it go.
-    Force { node: String, value: Option<Signal> },
-    /// Give a constant a new value.
-    Set { node: String, value: Signal },
+    Force {
+        node: String,
+        value: Option<Signal>,
+    },
+    /// Give a constant a new value, or make a new constant.
+    Set {
+        node: String,
+        value: Signal,
+    },
+    /// Give a node a whole new list of inputs: one more, or one fewer.
+    Inputs {
+        node: String,
+        inputs: Vec<String>,
+    },
+    /// Change how a node is worked out.
+    Op {
+        node: String,
+        op: Op,
+    },
+    Remove {
+        node: String,
+    },
 }
 
 /// What the pointer is doing.
@@ -49,19 +72,13 @@ enum Held {
     #[default]
     Nothing,
     /// Moving a box; the offset is from its corner to the pointer.
-    Node {
-        name: String,
-        grip: Point,
-    },
+    Node { name: String, grip: Point },
     /// Pulling a wire out of an input.
-    Wire {
-        node: String,
-        input: usize,
-    },
+    Wire { node: String, input: usize },
+    /// Pulling a new wire out of an output.
+    Output { node: String },
     /// Moving the panel.
-    Panel {
-        grip: Point,
-    },
+    Panel { grip: Point },
 }
 
 /// The panel's state.
@@ -111,6 +128,7 @@ pub enum Message {
 pub enum HeldAt {
     Node { name: String, grip: Point },
     Wire { node: String, input: usize },
+    Output { node: String },
     Panel { grip: Point },
 }
 
@@ -132,18 +150,34 @@ impl App for SignalGraph {
                             .insert(name.clone(), Point::new(at.x.max(0.0), at.y.max(0.0)));
                     }
                     Held::Panel { grip } => self.origin = Point::new(at.x - grip.x, at.y - grip.y),
-                    Held::Wire { .. } | Held::Nothing => {}
+                    Held::Wire { .. } | Held::Output { .. } | Held::Nothing => {}
                 }
             }
             Message::Hold(at) => {
                 self.held = match at {
                     HeldAt::Node { name, grip } => Held::Node { name, grip },
                     HeldAt::Wire { node, input } => Held::Wire { node, input },
+                    HeldAt::Output { node } => Held::Output { node },
                     HeldAt::Panel { grip } => Held::Panel { grip },
                 }
             }
             Message::Release => self.held = Held::Nothing,
-            Message::Edit(edit) => self.edits.push(edit),
+            Message::Edit(edit) => {
+                // A constant made here appears where it was asked for.
+                if let Edit::Set { node, .. } = &edit {
+                    if !self.nodes.iter().any(|known| known.name == *node) {
+                        let at = Point::new(
+                            (self.pointer.x - self.origin.x - PAD).max(0.0),
+                            (self.pointer.y - self.origin.y - TITLE - PAD).max(0.0),
+                        );
+                        self.placed.insert(node.clone(), at);
+                    }
+                }
+                if let Edit::Remove { node } = &edit {
+                    self.placed.remove(node);
+                }
+                self.edits.push(edit)
+            }
         }
     }
 
@@ -161,7 +195,25 @@ impl App for SignalGraph {
     }
 
     fn on_key(&self, key: &KeyEvent) -> Option<Message> {
-        (key.pressed && !key.repeat && key.key == Key::F(1)).then_some(Message::Toggle)
+        if !key.pressed || key.repeat {
+            return None;
+        }
+        match key.key {
+            Key::F(1) => Some(Message::Toggle),
+            // Over a box that isn't a source, these take it out of the graph.
+            Key::Backspace | Key::Delete if !self.hidden => {
+                let plan = Plan::of(&self.nodes, &self.placed, self.origin);
+                let over = (0..self.nodes.len())
+                    .find(|&index| plan.boxes[index].contains(self.pointer))?;
+                let node = &self.nodes[over];
+                (node.kind != "source").then(|| {
+                    Message::Edit(Edit::Remove {
+                        node: node.name.clone(),
+                    })
+                })
+            }
+            _ => None,
+        }
     }
 }
 
@@ -190,6 +242,15 @@ fn apply_edits(world: &mut World) {
                 signals.force(&node, value);
             }
             Edit::Set { node, value } => signals.set(&node, value),
+            Edit::Inputs { node, inputs } => {
+                signals.set_inputs(&node, inputs);
+            }
+            Edit::Op { node, op } => {
+                signals.set_op(&node, op);
+            }
+            Edit::Remove { node } => {
+                signals.remove(&node);
+            }
         }
     }
 }
@@ -352,7 +413,6 @@ struct Circuit {
     title: Option<TextLayout>,
 }
 
-
 const LIT: Color = Color::hex(0x7ee08a);
 const DARK: Color = Color::hex(0x6b7280);
 const WARN: Color = Color::hex(0xff6b6b);
@@ -400,6 +460,40 @@ impl Circuit {
         scene.polyline(&points, thickness, colour);
     }
 
+    /// What a right-click at `at` does: on a box, the next operation; on the panel, a new
+    /// constant.
+    fn alter(&self, at: Point) -> Option<Message> {
+        for (index, node) in self.nodes.iter().enumerate() {
+            if !self.plan.boxes[index].contains(at) {
+                continue;
+            }
+            let op = match node.kind.as_str() {
+                "and" => Op::Or,
+                "or" => Op::Not,
+                "not" => Op::Count,
+                "count" => Op::Sum,
+                "sum" => Op::And,
+                // A constant, a source, a timer: not something to turn into something else.
+                _ => return Some(Message::Pointer(at)),
+            };
+            return Some(Message::Edit(Edit::Op {
+                node: node.name.clone(),
+                op,
+            }));
+        }
+        if !self.plan.panel.contains(at) {
+            return None;
+        }
+        let name = (1..)
+            .map(|n| format!("new.{n}"))
+            .find(|name| self.index(name).is_none())
+            .expect("there is always another number");
+        Some(Message::Edit(Edit::Set {
+            node: name,
+            value: Signal::Bool(false),
+        }))
+    }
+
     /// What a press at `at` is on, most particular thing first.
     fn press(&self, at: Point) -> Option<Message> {
         for (index, node) in self.nodes.iter().enumerate() {
@@ -414,6 +508,13 @@ impl Circuit {
                         input,
                     }));
                 }
+            }
+        }
+        for (index, node) in self.nodes.iter().enumerate() {
+            if near(at, self.plan.output(index), PORT + 5.0) {
+                return Some(Message::Hold(HeldAt::Output {
+                    node: node.name.clone(),
+                }));
             }
         }
         for (index, node) in self.nodes.iter().enumerate() {
@@ -497,7 +598,7 @@ impl Widget<Message> for Circuit {
                 ..name
             };
             cx.text().layout(
-                "Signals      drag an input to rewire  ·  click a lamp to force  ·  F1 hides",
+                "Signals      drag ports to wire  ·  click a lamp to force  ·  right-click to change  ·  F1 hides",
                 &title,
                 None,
             )
@@ -552,6 +653,11 @@ impl Widget<Message> for Circuit {
                 }
             }
         }
+        if let Held::Output { node } = &self.held {
+            if let Some(index) = self.index(node) {
+                self.wire(cx.scene, self.plan.output(index), self.pointer, GOLD, 2.5);
+            }
+        }
         // The wire being pulled follows the pointer.
         if let Held::Wire { node, input } = &self.held {
             if let Some(index) = self.index(node) {
@@ -566,7 +672,8 @@ impl Widget<Message> for Circuit {
             let b = self.plan.boxes[index];
             let on = node.value.is_true();
             let source = node.kind == "source";
-            let aimed_at = matches!(self.held, Held::Wire { .. }) && b.contains(self.pointer);
+            let aimed_at = matches!(self.held, Held::Wire { .. } | Held::Output { .. })
+                && b.contains(self.pointer);
             let border = if node.problem.is_some() {
                 (1.5, WARN)
             } else if aimed_at {
@@ -653,6 +760,17 @@ impl Widget<Message> for Circuit {
                 }
                 None => Status::Ignored,
             },
+            Event::PointerPressed {
+                pos,
+                button: PointerButton::Secondary,
+            } => match self.alter(*pos) {
+                Some(message) => {
+                    cx.emit(Message::Pointer(*pos));
+                    cx.emit(message);
+                    Status::Captured
+                }
+                None => Status::Ignored,
+            },
             Event::PointerReleased {
                 pos,
                 button: PointerButton::Primary,
@@ -660,17 +778,51 @@ impl Widget<Message> for Circuit {
                 if self.held == Held::Nothing {
                     return Status::Ignored;
                 }
-                // A wire let go over a box is connected to it.
-                if let Held::Wire { node, input } = &self.held {
-                    let over =
-                        (0..self.nodes.len()).find(|&index| self.plan.boxes[index].contains(*pos));
-                    if let Some(over) = over.filter(|&over| self.nodes[over].name != *node) {
-                        cx.emit(Message::Edit(Edit::Connect {
-                            node: node.clone(),
-                            input: *input,
-                            to: self.nodes[over].name.clone(),
-                        }));
+                let over =
+                    (0..self.nodes.len()).find(|&index| self.plan.boxes[index].contains(*pos));
+                match &self.held {
+                    // A wire let go over a box is connected to it; let go over nothing, the
+                    // input it came from is taken away.
+                    Held::Wire { node, input } => match over {
+                        Some(over) if self.nodes[over].name != *node => {
+                            cx.emit(Message::Edit(Edit::Connect {
+                                node: node.clone(),
+                                input: *input,
+                                to: self.nodes[over].name.clone(),
+                            }))
+                        }
+                        Some(_) => {}
+                        None => {
+                            if let Some(index) = self.index(node) {
+                                let mut inputs = self.nodes[index].inputs.clone();
+                                if *input < inputs.len() {
+                                    inputs.remove(*input);
+                                }
+                                cx.emit(Message::Edit(Edit::Inputs {
+                                    node: node.clone(),
+                                    inputs,
+                                }));
+                            }
+                        }
+                    },
+                    // An output let go over a box that is worked out from others becomes
+                    // one more of its inputs.
+                    Held::Output { node } => {
+                        let target = over.map(|over| &self.nodes[over]).filter(|target| {
+                            target.name != *node
+                                && target.kind != "source"
+                                && target.kind != "constant"
+                        });
+                        if let Some(target) = target {
+                            let mut inputs = target.inputs.clone();
+                            inputs.push(node.clone());
+                            cx.emit(Message::Edit(Edit::Inputs {
+                                node: target.name.clone(),
+                                inputs,
+                            }));
+                        }
                     }
+                    _ => {}
                 }
                 cx.emit(Message::Release);
                 Status::Captured
@@ -912,6 +1064,9 @@ mod tests {
                 Edit::Connect { node, input, to } => assert!(signals.connect(&node, input, &to)),
                 Edit::Force { node, value } => assert!(signals.force(&node, value)),
                 Edit::Set { node, value } => signals.set(&node, value),
+                Edit::Inputs { node, inputs } => assert!(signals.set_inputs(&node, inputs)),
+                Edit::Op { node, op } => assert!(signals.set_op(&node, op)),
+                Edit::Remove { node } => assert!(signals.remove(&node)),
             }
         }
         world.resource_scope(|world, signals: &mut Signals| signals.update(world, 0.0));
@@ -921,5 +1076,87 @@ mod tests {
             "not held, since held is forced false"
         );
         assert_eq!(signals.number("limit"), 61.0);
+    }
+    #[test]
+    fn the_graph_itself_can_be_changed_from_the_panel() {
+        let circuit = circuit(graph(), Held::Nothing);
+        let index = |name: &str| circuit.index(name).unwrap();
+        let middle = |name: &str| {
+            let b = circuit.plan.boxes[index(name)];
+            Point::new(b.x + b.w * 0.5, b.y + b.h * 0.75)
+        };
+        // An output port starts a new wire.
+        assert!(matches!(
+            circuit.press(circuit.plan.output(index("held"))),
+            Some(Message::Hold(HeldAt::Output { node })) if node == "held"
+        ));
+        // A right-click on a box moves it on to the next operation; on something that has
+        // no next (a source, a constant) it changes nothing; on the panel it makes a constant.
+        assert!(matches!(
+            circuit.alter(middle("running")),
+            Some(Message::Edit(Edit::Op { node, op: Op::Or })) if node == "running"
+        ));
+        assert!(matches!(
+            circuit.alter(middle("calm")),
+            Some(Message::Edit(Edit::Op { op: Op::Count, .. }))
+        ));
+        assert!(matches!(
+            circuit.alter(middle("held")),
+            Some(Message::Pointer(_))
+        ));
+        let empty = Point::new(
+            circuit.plan.panel.x + 4.0,
+            circuit.plan.panel.y + circuit.plan.panel.h - 4.0,
+        );
+        assert!(matches!(
+            circuit.alter(empty),
+            Some(Message::Edit(Edit::Set { node, value: Signal::Bool(false) })) if node == "new.1"
+        ));
+        assert!(circuit.alter(Point::new(5000.0, 5000.0)).is_none());
+
+        // The panel puts a new constant where it was asked for, and removes with Backspace
+        // what the pointer is over, unless that is a source.
+        let mut panel = SignalGraph {
+            nodes: graph(),
+            ..Default::default()
+        };
+        panel.update(Message::Pointer(Point::new(330.0, 260.0)));
+        panel.update(Message::Edit(Edit::Set {
+            node: "new.1".into(),
+            value: Signal::Bool(false),
+        }));
+        assert_eq!(
+            panel.placed.get("new.1"),
+            Some(&Point::new(330.0 - 14.0 - PAD, 260.0 - 14.0 - TITLE - PAD))
+        );
+        let key = |key: Key| KeyEvent {
+            key,
+            pressed: true,
+            repeat: false,
+            modifiers: Default::default(),
+            text: None,
+        };
+        let plan = Plan::of(&panel.nodes, &panel.placed, panel.origin);
+        let over = |panel: &mut SignalGraph, name: &str| {
+            let b = plan.boxes[panel
+                .nodes
+                .iter()
+                .position(|node| node.name == name)
+                .unwrap()];
+            panel.update(Message::Pointer(Point::new(b.x + 20.0, b.y + 30.0)));
+        };
+        over(&mut panel, "calm");
+        assert!(
+            matches!(panel.on_key(&key(Key::Backspace)), Some(Message::Edit(Edit::Remove { node })) if node == "calm")
+        );
+        over(&mut panel, "held");
+        assert!(
+            panel.on_key(&key(Key::Backspace)).is_none(),
+            "a source is the game's, not the panel's"
+        );
+        assert!(matches!(
+            panel.on_key(&key(Key::F(1))),
+            Some(Message::Toggle)
+        ));
     }
 }

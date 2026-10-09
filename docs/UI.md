@@ -34,6 +34,13 @@ what is made from them to the right. A wire joins every input to the signal it r
 lit while that signal is true.
 
 - **Rewire:** drag from an input onto another box, and the input reads that signal instead.
+  Drop the wire on nothing and that input is taken away.
+- **Add an input:** drag from a box's output onto another box.
+- **Change a rule:** right-click a box to move it on to the next operation (and, or, not,
+  count, sum).
+- **Add and remove:** right-click the panel's background for a new constant, there; press
+  Backspace with the pointer over a box to remove it. Sources belong to the game's code and
+  can't be removed or changed, only forced.
 - **Force:** click a box's lamp to hold the signal true; again for false; again to let it go.
   A forced signal's lamp has a gold ring.
 - **Settings:** click a true-or-false constant's value to flip it; scroll over a number to
@@ -66,6 +73,6 @@ agent makes lands on a panel as a person's would.
   from Armature's controls, which need a style.
 - Interface in the world (a health bar over a unit), gamepad focus, and laying out for
   different screen sizes.
-- In the signal panel: adding and removing signals, changing a box's operation, typing a
+- In the signal panel: naming a new signal, choosing timers and comparisons, typing a
   number, and remembering where boxes were put. The layout is by column only, so wires cross.
 - Armature's glass (backdrop blur) can't see the game behind it, so it is left off.
