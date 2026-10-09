@@ -174,7 +174,8 @@ every frame or once; either way they are there again after a reload, with their 
 Rules worked out while the game ran can be kept. `signals.save_rules("rules.json")` writes
 every signal that isn't a source (its operation, inputs, and constants' values) and
 `signals.load_rules("rules.json")` defines them again, replacing rules of the same name;
-sources come from the game's code and are only named, as inputs. A file that can't be read
+sources come from the game's code and are only named, as inputs. Where boxes were put in the
+in-game panel is kept in the same file, under `layout`. A file that can't be read
 changes nothing and says which rule was wrong. From outside: `mira-debug signals_save
 path=rules.json` and `signals_load`.
 

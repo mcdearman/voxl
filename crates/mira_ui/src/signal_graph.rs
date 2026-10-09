@@ -64,6 +64,11 @@ pub enum Edit {
     Remove {
         node: String,
     },
+    /// Record where a box was put, so the graph is drawn the same way next time.
+    Place {
+        node: String,
+        at: [f32; 2],
+    },
 }
 
 /// What the pointer is doing.
@@ -161,7 +166,18 @@ impl App for SignalGraph {
                     HeldAt::Panel { grip } => Held::Panel { grip },
                 }
             }
-            Message::Release => self.held = Held::Nothing,
+            Message::Release => {
+                // A box that was moved is where it is from now on.
+                if let Held::Node { name, .. } = &self.held {
+                    if let Some(at) = self.placed.get(name) {
+                        self.edits.push(Edit::Place {
+                            node: name.clone(),
+                            at: [at.x, at.y],
+                        });
+                    }
+                }
+                self.held = Held::Nothing
+            }
             Message::Edit(edit) => {
                 // A constant made here appears where it was asked for.
                 if let Edit::Set { node, .. } = &edit {
@@ -219,9 +235,18 @@ impl App for SignalGraph {
 
 /// Reads the graph out of the world into the panel.
 pub fn sync(world: &World, panel: &mut SignalGraph) {
-    panel.nodes = world
-        .get_resource::<Signals>()
-        .map_or(Vec::new(), Signals::graph);
+    let Some(signals) = world.get_resource::<Signals>() else {
+        panel.nodes.clear();
+        return;
+    };
+    panel.nodes = signals.graph();
+    // Where boxes were put is kept with the rules; a box in hand is where the hand has it.
+    for node in &panel.nodes {
+        let held = matches!(&panel.held, Held::Node { name, .. } if *name == node.name);
+        if let (Some([x, y]), false) = (signals.place_of(&node.name), held) {
+            panel.placed.insert(node.name.clone(), Point::new(x, y));
+        }
+    }
 }
 
 /// Makes the panel's edits to the game's signals.
@@ -251,6 +276,7 @@ fn apply_edits(world: &mut World) {
             Edit::Remove { node } => {
                 signals.remove(&node);
             }
+            Edit::Place { node, at } => signals.place(&node, at),
         }
     }
 }
@@ -1007,6 +1033,14 @@ mod tests {
             "the pointer, less the grip and the panel's corner"
         );
         panel.update(Message::Release);
+        assert_eq!(
+            panel.take_edits(),
+            [Edit::Place {
+                node: "calm".into(),
+                at: [200.0, 100.0]
+            }],
+            "and the game is told, so it is there next time"
+        );
         panel.update(Message::Pointer(Point::new(900.0, 900.0)));
         assert_eq!(
             panel.placed.get("calm"),
@@ -1067,6 +1101,7 @@ mod tests {
                 Edit::Inputs { node, inputs } => assert!(signals.set_inputs(&node, inputs)),
                 Edit::Op { node, op } => assert!(signals.set_op(&node, op)),
                 Edit::Remove { node } => assert!(signals.remove(&node)),
+                Edit::Place { node, at } => signals.place(&node, at),
             }
         }
         world.resource_scope(|world, signals: &mut Signals| signals.update(world, 0.0));
