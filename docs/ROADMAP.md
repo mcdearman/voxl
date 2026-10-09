@@ -358,6 +358,8 @@ editor needs from it.
       its frames a texture for the host to show (`App::host`, `render::frame_texture`)
 - [x] The first app: a Neo window with the game in a viewport, and a bar to pause, resume
       and step it (`crates/mira_editor`)
+- [x] Panels in a dock, arranged by dragging and kept between runs; the game's entities and
+      signals listed live beside it
 
 - [ ] Viewport, entity tree, inspector generated from reflection, transform gizmos
 - [ ] Asset browser, drag to place, prefab editing

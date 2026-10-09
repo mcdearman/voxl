@@ -11,16 +11,22 @@
 //!
 //! The window is Neo's, and so are the loop and the graphics device. The game is hosted
 //! (`App::host`): it draws each frame into a texture, which the window shows in a viewport
-//! among its own controls. What is here so far is that viewport and a bar to pause, resume
-//! and step the game; see mira's `docs/EDITOR.md` for what is to come.
+//! among its own controls.
+//!
+//! The window is a dock of panels that can be dragged about, split and stacked as tabs:
+//! the game, its entities, its signals. How they are arranged is kept in `.mira/editor.layout`
+//! in the folder the app is run from. See mira's `docs/EDITOR.md` for what is to come.
 
 use std::time::{Duration, Instant};
 
 use mira::{
+    ecs::Entity,
     input::{ButtonInput, KeyCode, Mouse, MouseButton},
     live::Live,
     prelude::Vec2,
+    reflect::TypeRegistry,
     render::frame_texture,
+    signal::{Signal, Signals},
     time::Time,
 };
 use neo::prelude::*;
@@ -39,6 +45,70 @@ pub enum Message {
     Step,
     /// Hold the pointer in the viewport, for games that turn with the mouse, or stop.
     Mouselook,
+    /// The panels were rearranged.
+    Arranged(Dock),
+}
+
+/// The panels, by the names the layout knows them by.
+const GAME: &str = "Game";
+const ENTITIES: &str = "Entities";
+const SIGNALS: &str = "Signals";
+
+/// Where the arrangement of the panels is kept, in the folder the app is run from.
+const LAYOUT_FILE: &str = ".mira/editor.layout";
+
+/// The arrangement to start from: the game, with the lists down its right side.
+fn first_layout() -> Dock {
+    Dock::beside(
+        Dock::tabs([GAME]),
+        0.74,
+        Dock::above(Dock::tabs([ENTITIES]), 0.5, Dock::tabs([SIGNALS])),
+    )
+}
+
+/// The arrangement kept from last time, if it still has every panel and no others.
+fn kept_layout(kept: &str) -> Option<Dock> {
+    let layout = Dock::parse(kept.trim())?;
+    let mut panels = layout.panels();
+    panels.sort_unstable();
+    (panels == [ENTITIES, GAME, SIGNALS]).then_some(layout)
+}
+
+/// What the lists show of the game, read from it now and then.
+#[derive(Clone, Default, PartialEq)]
+struct Lists {
+    /// Every entity with a component the game has registered, and those components.
+    entities: Vec<(Entity, Vec<String>)>,
+    /// Every signal and its value.
+    signals: Vec<(String, Signal)>,
+}
+
+impl Lists {
+    fn of(game: &mira::app::App) -> Self {
+        let world = &game.world;
+        let mut entities: std::collections::BTreeMap<Entity, Vec<String>> = Default::default();
+        if let Some(registry) = world.get_resource::<TypeRegistry>() {
+            for component in registry.iter() {
+                for entity in (component.entities)(world) {
+                    let name = component.name.rsplit('.').next().unwrap_or(component.name);
+                    entities.entry(entity).or_default().push(name.to_owned());
+                }
+            }
+        }
+        let signals = world
+            .get_resource::<Signals>()
+            .map_or(Vec::new(), |signals| {
+                signals
+                    .graph()
+                    .into_iter()
+                    .map(|node| (node.name, node.value))
+                    .collect()
+            });
+        Self {
+            entities: entities.into_iter().collect(),
+            signals,
+        }
+    }
 }
 
 /// The app: a game, and the window's view of it.
@@ -55,6 +125,8 @@ pub struct Editor {
     mouselook: bool,
     /// What the bar says of the game, as last looked at.
     status: Status,
+    layout: Dock,
+    lists: Lists,
 }
 
 #[derive(Clone, Copy, Default, PartialEq)]
@@ -74,6 +146,11 @@ impl Editor {
             shown: None,
             mouselook: false,
             status: Status::default(),
+            layout: std::fs::read_to_string(LAYOUT_FILE)
+                .ok()
+                .and_then(|kept| kept_layout(&kept))
+                .unwrap_or_else(first_layout),
+            lists: Lists::default(),
         }
     }
 
@@ -159,6 +236,30 @@ impl Editor {
         }
     }
 
+    /// What a panel shows.
+    fn panel(&self, panel: &str) -> Element<Message> {
+        match panel {
+            GAME => viewport(self.shown.as_ref().map(|(_, image)| image))
+                .on_resize(Message::Resized)
+                .on_input(Message::Input)
+                // The game is always being drawn, running or held still.
+                .playing(true)
+                .capture(self.mouselook)
+                .into(),
+            ENTITIES => lines(self.lists.entities.iter().map(|(entity, components)| {
+                (format!("{}", entity.index()), components.join(", "), false)
+            })),
+            SIGNALS => lines(self.lists.signals.iter().map(|(name, value)| {
+                let shown = match value {
+                    Signal::Bool(value) => value.to_string(),
+                    Signal::Number(value) => format!("{value:.2}"),
+                };
+                (name.clone(), shown, value.is_true())
+            })),
+            _ => text("").into(),
+        }
+    }
+
     fn look(&self) -> Status {
         Status {
             paused: self
@@ -173,6 +274,23 @@ impl Editor {
                 .map_or(0, Time::frame_count),
         }
     }
+}
+
+/// A list of rows, each a name and what there is to say of it, scrolling when it is long.
+/// A row that is `lit` has its name in full strength; the rest are quieter.
+fn lines(rows: impl Iterator<Item = (String, String, bool)>) -> Element<Message> {
+    let mut list = column().spacing(4.0).width(Length::Fill);
+    for (name, said, lit) in rows {
+        let name = text(name).mono().no_wrap();
+        let name = if lit { name } else { name.tone(Tone::Muted) };
+        list = list.push(
+            row()
+                .spacing(10.0)
+                .push(name)
+                .push(text(said).mono().tone(Tone::Muted)),
+        );
+    }
+    scrollable(container(list).padding(10.0)).into()
 }
 
 /// The key the game knows a window's key by: where it is on the keyboard, as near as the
@@ -258,6 +376,15 @@ impl App for Editor {
             changed = true;
         }
         let status = self.look();
+        // The lists are read a few times a second: often enough to watch, and not a walk
+        // of every component on every frame.
+        if status.frame.is_multiple_of(10) || status.frame != self.status.frame && status.paused {
+            let lists = Lists::of(&self.game);
+            if lists != self.lists {
+                self.lists = lists;
+                changed = true;
+            }
+        }
         changed |= std::mem::replace(&mut self.status, status) != status;
         changed
     }
@@ -290,6 +417,12 @@ impl App for Editor {
                 }
             }
             Message::Mouselook => self.mouselook = !self.mouselook,
+            Message::Arranged(layout) => {
+                // Kept for next time; an arrangement that can't be written is still used.
+                let _ = std::fs::create_dir_all(".mira")
+                    .and_then(|()| std::fs::write(LAYOUT_FILE, layout.encode()));
+                self.layout = layout;
+            }
         }
     }
 
@@ -312,18 +445,17 @@ impl App for Editor {
                 "frame {frame}{}",
                 if paused { ", paused" } else { "" }
             )));
+        let panels = dock(
+            &self.layout,
+            |panel| panel.to_owned(),
+            |panel| self.panel(panel),
+            Message::Arranged,
+        );
         column()
             .width(Length::Fill)
             .height(Length::Fill)
             .push(container(bar).padding(8.0))
-            .push(Element::new(
-                viewport(self.shown.as_ref().map(|(_, image)| image))
-                    .on_resize(Message::Resized)
-                    .on_input(Message::Input)
-                    // The game is always being drawn, running or held still.
-                    .playing(true)
-                    .capture(self.mouselook),
-            ))
+            .push(panels)
             .into()
     }
 }
@@ -366,6 +498,40 @@ mod tests {
         assert_eq!(typed("ab"), None);
         assert_eq!(key_code(&key(Key::F(40))), None);
         assert_eq!(key_code(&key(Key::Other)), None);
+    }
+
+    #[test]
+    fn the_arrangement_is_kept_only_while_it_fits_the_panels_there_are() {
+        let first = first_layout();
+        assert_eq!(first.shown(), [GAME, ENTITIES, SIGNALS]);
+        // Written and read back, it is the same; rearranged, it is still taken.
+        assert_eq!(kept_layout(&first.encode()), Some(first.clone()));
+        let stacked = first.with(SIGNALS, ENTITIES, Side::Middle);
+        assert_eq!(
+            kept_layout(&format!("{}\n", stacked.encode())),
+            Some(stacked)
+        );
+        // One from a version with other panels, or no arrangement at all, is not.
+        assert_eq!(kept_layout(&Dock::tabs([GAME, "Console"]).encode()), None);
+        assert_eq!(kept_layout(&Dock::tabs([GAME]).encode()), None);
+        assert_eq!(kept_layout("not a layout"), None);
+    }
+
+    #[test]
+    fn the_lists_say_what_is_in_the_game() {
+        use mira::prelude::*;
+        let mut game = mira::app::App::new();
+        game.add_plugins(mira::transform::TransformPlugin).add_plugins(SignalPlugin);
+        let entity = game.world.spawn(Transform::IDENTITY);
+        game.world.resource_mut::<Signals>().set("open", true);
+        let lists = Lists::of(&game);
+        assert_eq!(lists.entities, [(entity, vec!["Transform".to_owned()])]);
+        assert_eq!(lists.signals, [("open".to_owned(), Signal::Bool(false))]);
+        game.update();
+        assert_eq!(
+            Lists::of(&game).signals,
+            [("open".to_owned(), Signal::Bool(true))]
+        );
     }
 
     #[test]
