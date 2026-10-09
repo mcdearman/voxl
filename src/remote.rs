@@ -23,7 +23,7 @@ use crate::{
     app::{App, Stage},
     ecs::{ComponentKey, Entity},
     input::{key_named, InjectedInput, Played},
-    live::{History, Live},
+    live::{FrameStats, History, Live},
     reflect::{json, Scene, Schema, TypeRegistry, Value},
     signal::{Compare, Op, Signal, Signals},
     time::Time,
@@ -827,6 +827,61 @@ fn handle(app: &mut App, request: &Value) -> Answer {
             };
             Ok(schema_value(&schema))
         }
+        "profile" => {
+            // Where the time goes: frames, then stages, then the systems that cost most.
+            let count = request
+                .field("systems")
+                .and_then(Value::as_f64)
+                .unwrap_or(10.0) as usize;
+            let millis = |time: Duration| Value::Float(time.as_secs_f64() * 1e3);
+            let stats = app.world.resource::<FrameStats>();
+            let mean = stats.mean();
+            let frames = map([
+                ("measured", Value::Int(stats.frames().count() as i64)),
+                ("mean_millis", millis(mean)),
+                ("worst_millis", millis(stats.worst())),
+                (
+                    "could_reach_fps",
+                    Value::Float(if mean.is_zero() {
+                        0.0
+                    } else {
+                        1.0 / mean.as_secs_f64()
+                    }),
+                ),
+            ]);
+            let stages = Value::Map(
+                stats
+                    .stages()
+                    .iter()
+                    .map(|(stage, took)| (format!("{stage:?}"), millis(*took)))
+                    .collect(),
+            );
+            let mut systems: Vec<(String, crate::ecs::SystemInfo)> = STAGES
+                .into_iter()
+                .flat_map(|stage| {
+                    app.systems(stage)
+                        .into_iter()
+                        .map(move |system| (format!("{stage:?}"), system))
+                })
+                .filter(|(_, system)| system.stats.runs > 0)
+                .collect();
+            systems.sort_by_key(|(_, system)| std::cmp::Reverse(system.stats.last));
+            let systems = systems.into_iter().take(count).map(|(stage, system)| {
+                let mean = system.stats.total / system.stats.runs.max(1) as u32;
+                map([
+                    ("system", Value::Text(system.name)),
+                    ("stage", Value::Text(stage)),
+                    ("last_millis", millis(system.stats.last)),
+                    ("mean_millis", millis(mean)),
+                    ("runs", Value::Int(system.stats.runs as i64)),
+                ])
+            });
+            Ok(map([
+                ("frames", frames),
+                ("stages", stages),
+                ("systems", Value::List(systems.collect())),
+            ]))
+        }
         "unregistered" => {
             // What the world holds that can't be reached by name: invisible to scenes,
             // to stepping back, and to whoever is on the other end of this connection.
@@ -1218,6 +1273,11 @@ impl App {
         log::info!("listening for debuggers on {address}");
         self.debug = Some(server);
         Ok(address)
+    }
+
+    /// Where the game is listening for debuggers, if it is.
+    pub fn debugger_address(&self) -> Option<SocketAddr> {
+        self.debug.as_ref()?.listener.local_addr().ok()
     }
 
     /// Listens where `MIRA_DEBUG` says (`MIRA_DEBUG=127.0.0.1:7878`), if it is set.
@@ -1822,5 +1882,42 @@ mod tests {
         };
         assert!(has("::Hidden") && has("Frames"));
         assert!(!has("Fog"), "a registered resource is not listed");
+    }
+    #[test]
+    fn the_profile_says_where_the_time_goes() {
+        let mut app = app();
+        app.add_systems(Stage::Update, |_: Res<Frames>| {
+            std::thread::sleep(Duration::from_millis(3));
+        });
+        for _ in 0..5 {
+            app.update();
+        }
+        let profile = ask(&mut app, "{'cmd': 'profile', 'systems': 2}");
+        assert_eq!(profile.get_path("frames.measured"), Some(&Value::Int(5)));
+        let number = |path: &str| profile.get_path(path).and_then(Value::as_f64).unwrap();
+        assert!(
+            number("frames.mean_millis") >= 3.0
+                && number("frames.worst_millis") >= number("frames.mean_millis")
+        );
+        assert!(number("frames.could_reach_fps") < 334.0);
+        assert!(number("stages.Update") >= 3.0, "{profile:?}");
+        assert!(number("stages.Update") <= number("frames.worst_millis"));
+        // The costliest system first, and only as many as asked for.
+        let Some(Value::List(systems)) = profile.field("systems") else {
+            panic!("systems");
+        };
+        assert_eq!(systems.len(), 2);
+        assert_eq!(
+            systems[0].field("stage"),
+            Some(&Value::Text("Update".into()))
+        );
+        assert!(
+            systems[0]
+                .field("last_millis")
+                .and_then(Value::as_f64)
+                .unwrap()
+                >= 3.0
+        );
+        assert_eq!(systems[0].field("runs"), Some(&Value::Int(5)));
     }
 }

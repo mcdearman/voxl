@@ -840,6 +840,7 @@ unsafe extern "C" fn set_camera(
             fov_y: camera.fov_y,
             near: camera.near,
             active: camera.active != 0,
+            ..Camera::default()
         };
         let entity = Entity::from_bits(entity);
         context.queue.push(move |world| {

@@ -105,6 +105,11 @@ const TOOLS: &[Tool] = &[
         arguments: &["stage?: string: one stage only, e.g. Update"],
     },
     Tool {
+        command: "profile",
+        about: "Where the time goes: how long recent frames took (mean and worst), what each stage took in the last frame, and the systems that cost the most. The frame time is the engine's own work, not the wait for the display.",
+        arguments: &["systems?: integer: how many of the costliest systems to list (default 10)"],
+    },
+    Tool {
         command: "failures",
         about: "Systems that have panicked or thrown, each with its message, source location and stack. A failure pauses the game; fix the code (plugins reload when saved) or call `resume`.",
         arguments: &[],

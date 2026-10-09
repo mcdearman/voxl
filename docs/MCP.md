@@ -33,7 +33,7 @@ Each tool is one command of the [debug connection](LIVE.md#the-debug-connection)
 | `mira_entities`, `mira_get`, `mira_set`, `mira_remove`, `mira_spawn`, `mira_despawn` | entities and their components, by name |
 | `mira_resource` | game-wide settings, read or set |
 | `mira_types`, `mira_schema`, `mira_unregistered` | what can be read and written, the shape of each type, and what can't be seen at all |
-| `mira_systems`, `mira_failures` | what runs, what it touches, how long it takes, what broke and where |
+| `mira_systems`, `mira_failures`, `mira_profile` | what runs, what it touches, what broke and where, and where the time goes |
 | `mira_pause`, `mira_resume`, `mira_step`, `mira_time_scale` | time; `mira_step` waits for its frames and answers with the status after them |
 | `mira_run_until` | runs until a [signal](SIGNALS.md) is true, then pauses: getting the game to a moment worth looking at |
 | `mira_input` | **playing the game**: keys, mouse buttons, mouse motion and position, as if at the keyboard |

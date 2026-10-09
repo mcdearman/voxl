@@ -1,8 +1,9 @@
-//! The sacred sites of Age of Empires 4, as signals, with no window: a game to watch from
-//! outside while it runs.
+//! The sacred sites of Age of Empires 4, as signals: a small game seen from above through an
+//! orthographic camera, to watch from outside while it runs.
 //!
 //! ```sh
 //! cargo run --example sacred_sites              # the game; listens on 127.0.0.1:7878
+//! cargo run --example sacred_sites -- --headless   # the same game with no window
 //! cargo run --bin mira-debug -- watch           # in another terminal: the signal graph, live
 //! cargo run --bin mira-debug -- signal_set name=win_after value=20
 //! cargo run --bin mira-debug -- signal_force name=blue.contesting value=false
@@ -11,6 +12,10 @@
 //! Red holds both sites, and wins when its clock reaches `win_after`. The clock stops while a
 //! blue unit stands on any site red holds. Two blue scouts wander on and off the sites; no
 //! code ever sets the clock or a paused flag. See `docs/SIGNALS.md`.
+//!
+//! On screen: the sites are slabs, red while red's clock runs and amber while a scout is on
+//! one; the bar along the bottom is the clock, filling toward `win_after`. All of it is drawn
+//! from the signals, so what you force or rewire from outside shows at once.
 
 use std::time::Duration;
 
@@ -69,9 +74,117 @@ fn announce(signals: Res<Signals>) {
     );
 }
 
+/// The bar that shows red's clock.
+#[derive(Component)]
+struct ClockBar;
+
+const BAR_LENGTH: f32 = 24.0;
+
+/// Gives the game's entities something to be seen by, and sets the camera above them.
+fn dress(
+    mut commands: Commands,
+    mut server: ResMut<AssetServer>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    sites: Query<Entity, With<Site>>,
+    units: Query<(Entity, &Team)>,
+) {
+    let cube = server.cube(&mut meshes, 1.0);
+    let ball = server.sphere(&mut meshes, 0.6);
+    let ground = server.plane(&mut meshes, 60.0);
+    let colour = |r, g, b| Material {
+        color: Color::rgb(r, g, b),
+        roughness: 0.8,
+        ..Default::default()
+    };
+    commands.spawn((
+        Transform::from_xyz(0.0, -0.05, 0.0),
+        Mesh3d(ground),
+        colour(0.25, 0.4, 0.22),
+    ));
+    for site in &sites {
+        // A site is a flat slab; `show` scales and colours it.
+        commands
+            .entity(site)
+            .insert((Mesh3d(cube), colour(0.7, 0.1, 0.1)));
+    }
+    for (unit, team) in &units {
+        let material = match team {
+            Team::Red => colour(0.85, 0.15, 0.15),
+            Team::Blue => colour(0.15, 0.3, 0.9),
+        };
+        commands.entity(unit).insert((Mesh3d(ball), material));
+    }
+    commands.spawn((
+        Transform::from_xyz(-BAR_LENGTH * 0.5, 0.3, 9.0),
+        Mesh3d(cube),
+        colour(0.9, 0.85, 0.3),
+        ClockBar,
+    ));
+    commands.spawn((
+        Transform::from_xyz(0.0, 30.0, 26.0).looking_at(Vec3::ZERO, Vec3::Y),
+        Camera::orthographic(26.0),
+    ));
+    commands.spawn((
+        Transform::IDENTITY.looking_at(Vec3::new(-0.4, -1.0, -0.3), Vec3::Y),
+        DirectionalLight::default(),
+    ));
+}
+
+/// Draws the state of the rules: nothing here is kept, it is all read from the signals.
+fn show(
+    signals: Res<Signals>,
+    window: Option<Res<Window>>,
+    mut sites: Query<(&Site, &mut Transform, &mut Material), Without<ClockBar>>,
+    mut bar: Query<&mut Transform, With<ClockBar>>,
+) {
+    let contested = signals.is_true("blue.contesting");
+    for (site, mut at, mut material) in &mut sites {
+        at.scale = Vec3::new(SITE_RADIUS * 2.0, 0.1, SITE_RADIUS * 2.0);
+        material.color = match (site.holder, contested) {
+            (Some(Team::Red), true) => Color::rgb(0.9, 0.6, 0.1),
+            (Some(Team::Red), false) => Color::rgb(0.7, 0.1, 0.1),
+            (Some(Team::Blue), _) => Color::rgb(0.1, 0.2, 0.7),
+            (None, _) => Color::rgb(0.5, 0.5, 0.5),
+        };
+    }
+    let (clock, win_after) = (signals.number("red.clock"), signals.number("win_after"));
+    let filled = if win_after > 0.0 {
+        (clock / win_after).clamp(0.0, 1.0) as f32
+    } else {
+        0.0
+    };
+    for mut at in &mut bar {
+        at.scale = Vec3::new((BAR_LENGTH * filled).max(0.01), 0.4, 0.6);
+        at.translation.x = -BAR_LENGTH * 0.5 + BAR_LENGTH * filled * 0.5;
+    }
+    if let Some(window) = window {
+        let state = if signals.is_true("red.wins") {
+            "red wins"
+        } else if contested {
+            "clock stopped: a scout is on a site"
+        } else {
+            "clock running"
+        };
+        window.set_title(&format!(
+            "sacred sites: {clock:.0} of {win_after:.0} s, {state}"
+        ));
+    }
+}
+
 fn main() -> anyhow::Result<()> {
+    let headless = std::env::args().any(|arg| arg == "--headless");
     let mut app = App::new();
-    app.add_plugins(TimePlugin).add_plugins(TransformPlugin);
+    if headless {
+        app.add_plugins(TimePlugin).add_plugins(TransformPlugin);
+    } else {
+        app.add_plugins(DefaultPlugins)
+            .insert_resource(WindowSettings {
+                title: "sacred sites".to_owned(),
+                ..Default::default()
+            })
+            .add_systems(Stage::Startup, dress)
+            .add_systems(Stage::Update, show);
+    }
     app.register_type::<Team>()
         .register_type::<Site>()
         .register_type::<Scout>();
@@ -127,10 +240,21 @@ fn main() -> anyhow::Result<()> {
         (wander, announce.run_if(signal_became_true("red.wins"))),
     );
 
-    let address = std::env::var("MIRA_DEBUG").unwrap_or_else(|_| "127.0.0.1:7878".to_owned());
-    let address = app.listen_for_debugger(&address)?;
+    // With a window the engine is already listening if `MIRA_DEBUG` was set; this game
+    // listens either way.
+    let address = match app.debugger_address() {
+        Some(address) => address,
+        None => {
+            let address =
+                std::env::var("MIRA_DEBUG").unwrap_or_else(|_| "127.0.0.1:7878".to_owned());
+            app.listen_for_debugger(&address)?
+        }
+    };
     println!("the sacred sites are running; watch them with:");
     println!("  cargo run --bin mira-debug -- --at {address} watch");
+    if !headless {
+        return app.run();
+    }
     loop {
         app.update();
         std::thread::sleep(Duration::from_millis(16));

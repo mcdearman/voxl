@@ -143,6 +143,7 @@ fn setup(mut commands: Commands, environment: Res<Environment>) {
             fov_y: 50f32.to_radians(),
             near: 0.1,
             active: true,
+            ..Default::default()
         },
         player,
     ));

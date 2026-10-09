@@ -48,12 +48,13 @@ pub struct CascadeData {
 }
 
 impl CascadeData {
-    /// `camera` is the camera's world transform; `tan_half_fov` is the tangent of half the
-    /// vertical field of view. `to_sun` is the direction toward the sun.
+    /// `camera` is the camera's world transform; `spread` is the tangent of half the vertical
+    /// field of view and half the view's height at the camera (see `Camera::spread`).
+    /// `to_sun` is the direction toward the sun.
     pub fn compute(
         settings: &ShadowSettings,
         camera: Mat4,
-        tan_half_fov: f32,
+        (tan_half_fov, half_height): (f32, f32),
         aspect: f32,
         near: f32,
         to_sun: Vec3,
@@ -63,11 +64,18 @@ impl CascadeData {
         let forward = -camera.z_axis.xyz().normalize();
         // Lateral extent per unit of depth, out to the frustum's corners.
         let spread = (tan_half_fov * tan_half_fov * (1.0 + aspect * aspect)).sqrt();
-        let up = if to_sun.y.abs() > 0.99 { Vec3::Z } else { Vec3::Y };
+        // And the extent it has at any depth: an orthographic view's half diagonal.
+        let base = half_height * (1.0 + aspect * aspect).sqrt();
+        let up = if to_sun.y.abs() > 0.99 {
+            Vec3::Z
+        } else {
+            Vec3::Y
+        };
         let light_view = Mat4::look_at_rh(Vec3::ZERO, -to_sun, up);
 
         let mut data = Self::default();
-        let ratio = (settings.max_distance / settings.first_split).powf(1.0 / (CASCADES - 1) as f32);
+        let ratio =
+            (settings.max_distance / settings.first_split).powf(1.0 / (CASCADES - 1) as f32);
         let mut slice_near = near;
         for i in 0..CASCADES {
             let slice_far = settings.first_split * ratio.powi(i as i32);
@@ -75,7 +83,8 @@ impl CascadeData {
             // field of view, never on where the camera looks.
             let s2 = spread * spread;
             let center_depth = ((slice_far + slice_near) * 0.5 * (1.0 + s2)).min(slice_far);
-            let radius = ((slice_far - center_depth).powi(2) + (slice_far * spread).powi(2)).sqrt();
+            let radius =
+                ((slice_far - center_depth).powi(2) + (slice_far * spread + base).powi(2)).sqrt();
             let radius = (radius * 16.0).ceil() / 16.0;
             let center = position + forward * center_depth;
 
@@ -228,17 +237,44 @@ mod tests {
     fn cascades_cover_what_the_camera_sees_and_ignore_where_it_looks() {
         let settings = ShadowSettings::default();
         let sun = Vec3::new(-0.5, 0.7, 0.4);
-        let a = CascadeData::compute(&settings, Mat4::IDENTITY, 0.5, 1.6, 0.1, sun);
+        let a = CascadeData::compute(&settings, Mat4::IDENTITY, (0.5, 0.0), 1.6, 0.1, sun);
         let turned = Mat4::from_rotation_y(1.0);
-        let b = CascadeData::compute(&settings, turned, 0.5, 1.6, 0.1, sun);
+        let b = CascadeData::compute(&settings, turned, (0.5, 0.0), 1.6, 0.1, sun);
         for i in 0..CASCADES {
-            assert!((a.texel_sizes[i] - b.texel_sizes[i]).abs() < 1e-5, "cascade {i} changed size");
+            assert!(
+                (a.texel_sizes[i] - b.texel_sizes[i]).abs() < 1e-5,
+                "cascade {i} changed size"
+            );
         }
         assert!((a.splits[3] - settings.max_distance).abs() < 1e-3);
         // A point in front of the camera, inside the first slice, lands inside cascade 0.
         let p = Vec3::new(0.5, -0.3, -5.0);
         let clip = a.matrices[0] * p.extend(1.0);
         let ndc = clip.truncate() / clip.w;
-        assert!(ndc.x.abs() <= 1.0 && ndc.y.abs() <= 1.0 && (0.0..=1.0).contains(&ndc.z), "{ndc}");
+        assert!(
+            ndc.x.abs() <= 1.0 && ndc.y.abs() <= 1.0 && (0.0..=1.0).contains(&ndc.z),
+            "{ndc}"
+        );
+    }
+    #[test]
+    fn an_orthographic_view_is_covered_too() {
+        use crate::render::Camera;
+
+        let settings = ShadowSettings::default();
+        let sun = Vec3::new(0.3, 0.8, 0.2);
+        let camera = Camera::orthographic(80.0);
+        let (aspect, eye) = (1.6, Mat4::from_translation(Vec3::new(5.0, 30.0, -2.0)));
+        let data = CascadeData::compute(&settings, eye, camera.spread(), aspect, camera.near, sun);
+        // The corners of the view at the far end of the first cascade's slice lie inside
+        // that cascade's light volume: an orthographic view is as wide there as anywhere.
+        let depth = data.splits[0];
+        for (x, y) in [(-1.0, -1.0), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)] {
+            let corner = eye.transform_point3(Vec3::new(x * 40.0 * aspect, y * 40.0, -depth));
+            let lit = data.matrices[0].project_point3(corner);
+            assert!(
+                lit.x.abs() <= 1.0 && lit.y.abs() <= 1.0,
+                "corner {corner} falls at {lit}"
+            );
+        }
     }
 }

@@ -138,6 +138,7 @@ answered at the start of a frame, whether or not the game is paused.
 | `record` | `on`, `every` (frames), `keep` | what recording is set to |
 | `history` | | the moments that can be gone back to |
 | `rewind` | `frames` (60) or `to_frame` | steps back, pauses, and says where it landed |
+| `profile` | `systems` (10) | frame times, what each stage took, and the costliest systems |
 | `failures` | | every caught failure, with its stack |
 | `watch` | `on` (true) | from then on, events are sent to this connection as they happen |
 | `systems` | `stage` (all) | each stage's systems in order, with constraints and timings |
@@ -178,8 +179,20 @@ Entities are their numbers as `entities` lists them. Values have the shape they 
 `select`, `timer`, `held_for`, `less`, `less_or_equal`, `equal`, `greater_or_equal`,
 `greater`.
 
+## Where the time goes
+
+```sh
+cargo run --bin mira-debug -- profile
+```
+
+answers with how long recent frames took (mean and worst of the last 240, and the frame rate
+that would allow), what each stage took in the last frame, and the systems that cost the
+most. The frame time is the engine's own work in a frame, not the wait for the display. From
+code it is the `FrameStats` resource and `App::systems`.
+
 ## What isn't here yet
 
+- A timeline of a frame (which system ran on which thread, when), and marks inside a system.
 - Tools on top of the connection: the signal graph viewer, an inspector, the editor.
 - A crash in a plugin's native code (a null pointer in C) is still a crash. Failures a plugin
   can report are caught: see below.

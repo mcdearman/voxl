@@ -106,7 +106,9 @@ the node's `problem`. `signals.to_value()` is the whole graph as plain data.
 
 With the game listening for debuggers ([LIVE.md](LIVE.md#the-debug-connection)), this draws
 the graph in a terminal and keeps it up to date as you play. The sacred-site game is an
-example to try it on (it has no window; it only runs and listens):
+example to try it on: two sites seen from above through an orthographic camera, scouts
+wandering on and off them, and a bar that fills as red's clock runs, all drawn from the
+signals (`--headless` runs the same game with no window):
 
 ```sh
 cargo run --example sacred_sites        # the game

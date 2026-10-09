@@ -49,7 +49,10 @@ Make the project safe to change quickly.
 - [x] CI on macOS and Linux: build, test, clippy, Miri on the ECS (written; not yet seen to
       pass on GitHub)
 - [ ] Image-diff tests: render fixed scenes with `MIRA_SCREENSHOT` and compare to stored frames
-- [ ] CPU and GPU frame profiler (spans per system, timestamp queries per pass), on screen
+- [x] CPU frame timings: per frame, per stage and per system, from the running game
+      (`FrameStats`, `mira-debug profile`)
+- [ ] A timeline of a frame across threads; GPU timings (timestamp queries per pass); shown
+      on screen
 - [ ] Benchmarks for ECS iteration, chunk meshing and a standard frame
 
 **Exit test:** a change that breaks rendering or halves ECS speed fails CI.
@@ -219,7 +222,9 @@ and see it change in the running scene.
 - [ ] Splitting one query's work across threads; relaxing "commands end a batch" where a
       later system needn't see them; a ThreadSanitizer run in CI
 - [ ] Table storage as an option beside sparse sets, chosen per component
-- [ ] Hooks and observers: run code when a component is added or removed
+- [x] Hooks: run code when a component is added or removed (`on_add`, `on_remove`)
+- [ ] Observers for other events (a component changing, custom events aimed at an entity);
+      hooks from plugins
 - [ ] Relations: `(ChildOf, e)`-style pairs, replacing `Parent`
 - [ ] One job system for systems, asset loading and voxel work
 
@@ -258,9 +263,12 @@ derived from other values, which the engine keeps true.
       constants, connect inputs, force outputs, define and remove nodes, while the game runs
 - [x] A signal graph viewer in the terminal (`mira-debug watch`): which signals are active as
       you play, what feeds what, what just changed; edited live from a second terminal
-- [ ] When there is a GUI (Chris, October 2026): `examples/sacred_sites` as a 3D game under an
-      orthographic camera, with the signal graph shown live inside it. Needs an orthographic
-      projection for `Camera`, and the GUI
+- [x] An orthographic camera (`Camera::orthographic(height)`), with shadows, sky and fog
+      working under it
+- [x] `examples/sacred_sites` as a 3D game under an orthographic camera, drawn from its
+      signals (the graph is watched from a terminal)
+- [ ] When there is a GUI (Chris, October 2026): the signal graph shown live inside that
+      game
 - [ ] The graphical viewer (Chris, October 2026): the graph laid out, signals and connections
       edited by hand while the game runs; a panel of the editor (Phase 5)
 

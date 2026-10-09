@@ -77,6 +77,32 @@ fn start(keys: Res<ButtonInput<KeyCode>>, mut next: ResMut<NextState<Game>>) {
 - An app can have several kinds of state at once (`Game` and `Network`, say); each is its
   own type.
 
+## Hooks
+
+Some things should happen exactly when a component arrives on an entity or leaves it, not a
+frame later when a system gets round to noticing. A hook is code the world runs at that
+moment:
+
+```rust
+app.on_add::<Burning>(|world, entity| {
+    world.insert(entity, Smoke::default());
+})
+.on_remove::<Burning>(|world, entity| {
+    world.remove::<Smoke>(entity);
+});
+```
+
+- `on_add` runs when a component is put on an entity that didn't have one (replacing one is
+  not an arrival), once everything inserted with it is in place.
+- `on_remove` runs just before a component leaves, whether it is removed or its entity is
+  despawned; the component is still there to be read.
+- A hook has the whole world, and may insert, remove, spawn and despawn; hooks for what it
+  changes run in turn. A hook is not told again about a departure it is already handling.
+- Changes made through `Commands` reach hooks when the commands are applied.
+
+Use a hook to keep two things in step; use a system with `Added<T>` or `Changed<T>` for work
+that can wait until its stage.
+
 ## Running at the same moment
 
 Systems that touch nothing in common run at the same moment, on several threads. Nothing has
@@ -117,6 +143,7 @@ system is suspended, the rest of its batch finishes, and the game pauses.
   batch but have a clashing one between them don't. Queued commands end a batch; there is no
   way yet to say that a later system needn't see them.
 - Work inside one system (a query over a million entities) is not split across threads.
+- Hooks are for components with a Rust type; a plugin can't yet hook its own.
 - A condition on a tuple is asked once per system, not once for the group.
 - Plugins written against the C interface can't yet give constraints or conditions for their
   own systems; the host can order around them by name.

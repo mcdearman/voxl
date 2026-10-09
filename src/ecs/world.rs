@@ -67,7 +67,23 @@ pub struct World {
     /// Resources that must only be used from the main thread, though their types could be
     /// shared: a window, say.
     main_thread: HashSet<TypeId>,
+    /// Code to run when a kind of component arrives on an entity or is about to leave one.
+    hooks: HashMap<ComponentKey, Hooks>,
+    /// Components that have just arrived and have hooks waiting to hear of it.
+    arrived: Vec<(ComponentKey, Entity)>,
+    /// Departures whose hooks are running, so that a hook which removes the very thing it
+    /// was told about isn't told again, and again.
+    departing: Vec<(ComponentKey, Entity)>,
     change_tick: AtomicU64,
+}
+
+/// Run with the world and the entity concerned.
+type Hook = std::sync::Arc<dyn Fn(&mut World, Entity) + Send + Sync>;
+
+#[derive(Default)]
+struct Hooks {
+    on_add: Vec<Hook>,
+    on_remove: Vec<Hook>,
 }
 
 impl Default for World {
@@ -86,6 +102,9 @@ impl World {
             next_dynamic: 0,
             resources: HashMap::new(),
             main_thread: HashSet::new(),
+            hooks: HashMap::new(),
+            arrived: Vec::new(),
+            departing: Vec::new(),
             change_tick: AtomicU64::new(1),
         }
     }
@@ -106,7 +125,85 @@ impl World {
     pub fn spawn<B: Bundle>(&mut self, bundle: B) -> Entity {
         let entity = self.entities_mut().alloc();
         bundle.insert_into(self, entity);
+        self.run_arrivals();
         entity
+    }
+
+    // --- hooks ---
+
+    /// Runs `hook` whenever a `C` is put on an entity that didn't have one (not when one is
+    /// replaced), once everything inserted with it is in place: the way to keep something
+    /// else in step with a component without a system that polls for it.
+    pub fn on_add<C: Component>(
+        &mut self,
+        hook: impl Fn(&mut World, Entity) + Send + Sync + 'static,
+    ) {
+        let hooks = self.hooks.entry(ComponentKey::of::<C>()).or_default();
+        hooks.on_add.push(std::sync::Arc::new(hook));
+    }
+
+    /// Runs `hook` just before a `C` leaves an entity, by removal or because the entity is
+    /// despawned. The component is still there to be read.
+    pub fn on_remove<C: Component>(
+        &mut self,
+        hook: impl Fn(&mut World, Entity) + Send + Sync + 'static,
+    ) {
+        let hooks = self.hooks.entry(ComponentKey::of::<C>()).or_default();
+        hooks.on_remove.push(std::sync::Arc::new(hook));
+    }
+
+    /// Notes that a component has just arrived, if anything wants to know.
+    pub(crate) fn arrived(&mut self, key: ComponentKey, entity: Entity) {
+        if self
+            .hooks
+            .get(&key)
+            .is_some_and(|hooks| !hooks.on_add.is_empty())
+        {
+            self.arrived.push((key, entity));
+        }
+    }
+
+    /// Tells the hooks about what has arrived since this last ran.
+    fn run_arrivals(&mut self) {
+        while !self.arrived.is_empty() {
+            for (key, entity) in std::mem::take(&mut self.arrived) {
+                let hooks = self
+                    .hooks
+                    .get(&key)
+                    .map_or(Vec::new(), |h| h.on_add.clone());
+                for hook in hooks {
+                    // A hook before this one may have removed it again, or the entity.
+                    if self.storages.get(&key).is_some_and(|s| s.contains(entity)) {
+                        hook(self, entity);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Tells the hooks that a component is about to leave an entity.
+    fn run_departure(&mut self, key: ComponentKey, entity: Entity) {
+        let Some(hooks) = self
+            .hooks
+            .get(&key)
+            .filter(|hooks| !hooks.on_remove.is_empty())
+        else {
+            return;
+        };
+        if !self.storages.get(&key).is_some_and(|s| s.contains(entity))
+            || self.departing.contains(&(key, entity))
+        {
+            return;
+        }
+        let hooks = hooks.on_remove.clone();
+        self.departing.push((key, entity));
+        for hook in hooks {
+            // An earlier hook may have taken it away already.
+            if self.storages.get(&key).is_some_and(|s| s.contains(entity)) {
+                hook(self, entity);
+            }
+        }
+        self.departing.retain(|leaving| *leaving != (key, entity));
     }
 
     pub fn spawn_empty(&mut self) -> Entity {
@@ -114,6 +211,16 @@ impl World {
     }
 
     pub fn despawn(&mut self, entity: Entity) -> bool {
+        if !self.contains_entity(entity) {
+            return false;
+        }
+        if !self.hooks.is_empty() {
+            let leaving: Vec<ComponentKey> = self.hooks.keys().copied().collect();
+            for key in leaving {
+                self.run_departure(key, entity);
+            }
+        }
+        // A hook may have despawned it already.
         if !self.entities_mut().free(entity) {
             return false;
         }
@@ -164,10 +271,12 @@ impl World {
             return false;
         }
         bundle.insert_into(self, entity);
+        self.run_arrivals();
         true
     }
 
     pub fn remove<C: Component>(&mut self, entity: Entity) -> Option<C> {
+        self.run_departure(ComponentKey::of::<C>(), entity);
         self.storage_mut::<C>()?.remove(entity)
     }
 
@@ -311,6 +420,7 @@ impl World {
     }
 
     pub(crate) fn remove_by_key(&mut self, entity: Entity, key: ComponentKey) {
+        self.run_departure(key, entity);
         if let Some(storage) = self.storages.get_mut(&key) {
             storage.remove_entity(entity);
         }

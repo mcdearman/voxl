@@ -504,3 +504,30 @@ fn the_look_of_a_level_is_part_of_it() {
         "a field left out takes its default"
     );
 }
+
+#[test]
+fn an_orthographic_camera_does_not_shrink_what_is_far() {
+    let camera = Camera::orthographic(20.0);
+    let projection = camera.projection(2.0);
+    // Ten metres up is the top of the view at any depth; twenty across is its edge.
+    for depth in [1.0, 50.0, 1500.0] {
+        let top = projection.project_point3(Vec3::new(0.0, 10.0, -depth));
+        let side = projection.project_point3(Vec3::new(20.0, 0.0, -depth));
+        assert!(
+            (top.y - 1.0).abs() < 1e-5 && (side.x - 1.0).abs() < 1e-5,
+            "{top} {side}"
+        );
+    }
+    // Depth is reversed, as for the perspective camera: 1 at the near plane, 0 at the far.
+    let depth = |z: f32| projection.project_point3(Vec3::new(0.0, 0.0, -z)).z;
+    assert!((depth(camera.near) - 1.0).abs() < 1e-5 && depth(camera.far).abs() < 1e-5);
+    assert!(depth(10.0) > depth(20.0));
+    // And it saves and loads like any camera; an old file without the field is perspective.
+    let saved = camera.to_value();
+    assert_eq!(
+        Camera::from_value(&saved).unwrap().orthographic_height,
+        Some(20.0)
+    );
+    let old = Value::Map(vec![("fov_y".into(), Value::Float(1.0))]);
+    assert_eq!(Camera::from_value(&old).unwrap().orthographic_height, None);
+}
