@@ -225,8 +225,8 @@ impl WorldRenderer {
         });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("world layout"),
-            bind_group_layouts: &[&view.layout, &layout],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[Some(&view.layout), Some(&layout)],
+            immediate_size: 0,
         });
         let pipeline = |entry: &str| {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -235,7 +235,7 @@ impl WorldRenderer {
                 vertex: wgpu::VertexState {
                     module: &shader,
                     entry_point: Some("vs_main"),
-                    buffers: &[WorldVertex::layout()],
+                    buffers: &[Some(WorldVertex::layout())],
                     compilation_options: Default::default(),
                 },
                 fragment: Some(wgpu::FragmentState {
@@ -254,7 +254,7 @@ impl WorldRenderer {
                 },
                 depth_stencil: Some(main_depth_state(true)),
                 multisample: main_multisample(false),
-                multiview: None,
+                multiview_mask: None,
                 cache: None,
             })
         };
@@ -271,8 +271,8 @@ impl WorldRenderer {
         });
         let shadow_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("world shadow layout"),
-            bind_group_layouts: &[&shadows.layout],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[Some(&shadows.layout)],
+            immediate_size: 0,
         });
         let shadow = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("world shadow pipeline"),
@@ -280,14 +280,14 @@ impl WorldRenderer {
             vertex: wgpu::VertexState {
                 module: &shadow_shader,
                 entry_point: Some("vs_main"),
-                buffers: &[WorldVertex::layout()],
+                buffers: &[Some(WorldVertex::layout())],
                 compilation_options: Default::default(),
             },
             fragment: None,
             primitive: Default::default(),
             depth_stencil: Some(shadow_depth_state()),
             multisample: Default::default(),
-            multiview: None,
+            multiview_mask: None,
             cache: None,
         });
 

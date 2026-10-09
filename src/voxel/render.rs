@@ -77,8 +77,8 @@ impl VoxelRenderer {
         });
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("voxel pipeline layout"),
-            bind_group_layouts: &[&view.layout, &texture_layout],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[Some(&view.layout), Some(&texture_layout)],
+            immediate_size: 0,
         });
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("voxel pipeline"),
@@ -86,7 +86,7 @@ impl VoxelRenderer {
             vertex: wgpu::VertexState {
                 module: &shader,
                 entry_point: Some("vs_main"),
-                buffers: &[VoxelVertex::layout()],
+                buffers: &[Some(VoxelVertex::layout())],
                 compilation_options: Default::default(),
             },
             fragment: Some(wgpu::FragmentState {
@@ -105,15 +105,15 @@ impl VoxelRenderer {
             },
             depth_stencil: Some(main_depth_state(true)),
             multisample: main_multisample(false),
-            multiview: None,
+            multiview_mask: None,
             cache: None,
         });
 
         let shadow_shader = crate::shader!("voxel_shadow.wgsl").module(device);
         let shadow_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("voxel shadow layout"),
-            bind_group_layouts: &[&shadows.layout],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[Some(&shadows.layout)],
+            immediate_size: 0,
         });
         let shadow_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("voxel shadow pipeline"),
@@ -121,14 +121,14 @@ impl VoxelRenderer {
             vertex: wgpu::VertexState {
                 module: &shadow_shader,
                 entry_point: Some("vs_main"),
-                buffers: &[VoxelVertex::layout()],
+                buffers: &[Some(VoxelVertex::layout())],
                 compilation_options: Default::default(),
             },
             fragment: None,
             primitive: Default::default(),
             depth_stencil: Some(shadow_depth_state()),
             multisample: Default::default(),
-            multiview: None,
+            multiview_mask: None,
             cache: None,
         });
         Self {

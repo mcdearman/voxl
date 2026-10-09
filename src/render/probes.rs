@@ -223,8 +223,8 @@ impl ProbeBaker {
         });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("probe bake"),
-            bind_group_layouts: &[view_layout, &layout],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[Some(view_layout), Some(&layout)],
+            immediate_size: 0,
         });
         let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("probe bake"),

@@ -151,13 +151,13 @@ pub(crate) fn reload_changed(world: &mut World) {
     }
     let device = world.resource::<Gpu>().device.clone();
     // Collect validation errors instead of letting wgpu panic on the first one.
-    device.push_error_scope(wgpu::ErrorFilter::Validation);
+    let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
     let rebuilds = world.resource::<ShaderReload>().0.clone();
     let installs: Vec<Install> = rebuilds
         .iter()
         .filter_map(|rebuild| rebuild(world))
         .collect();
-    match pollster::block_on(device.pop_error_scope()) {
+    match pollster::block_on(scope.pop()) {
         Some(error) => log::error!("shader not reloaded; still using the old one:\n{error}"),
         None => {
             for install in installs {

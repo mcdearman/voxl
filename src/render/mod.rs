@@ -505,8 +505,8 @@ fn sky_pipeline(gpu: &Gpu, view: &ViewBinding) -> wgpu::RenderPipeline {
     });
     let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("sky layout"),
-        bind_group_layouts: &[&view.layout],
-        push_constant_ranges: &[],
+        bind_group_layouts: &[Some(&view.layout)],
+        immediate_size: 0,
     });
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("sky pipeline"),
@@ -530,7 +530,7 @@ fn sky_pipeline(gpu: &Gpu, view: &ViewBinding) -> wgpu::RenderPipeline {
         primitive: Default::default(),
         depth_stencil: Some(main_depth_state(false)),
         multisample: main_multisample(false),
-        multiview: None,
+        multiview_mask: None,
         cache: None,
     })
 }
@@ -786,16 +786,17 @@ fn render(world: &mut World) {
     let gpu = world.resource::<Gpu>();
     // Without a frame to draw in (the window hidden, or the screen locked), draw off screen
     // instead, so the world still renders and screenshots can still be taken.
+    use wgpu::CurrentSurfaceTexture as Frame;
     let output = match gpu.surface.get_current_texture() {
-        Ok(output) => Some(output),
-        Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
+        Frame::Success(output) | Frame::Suboptimal(output) => Some(output),
+        Frame::Lost | Frame::Outdated => {
             world.resource_mut::<Gpu>().reconfigure();
             return;
         }
-        Err(wgpu::SurfaceError::Timeout) => return,
-        Err(err) => {
+        Frame::Timeout => return,
+        why @ (Frame::Occluded | Frame::Validation) => {
             if !world.contains_resource::<Offscreen>() {
-                log::warn!("no frame from the window ({err}); drawing off screen");
+                log::warn!("no frame from the window ({why:?}); drawing off screen");
             }
             None
         }
@@ -859,6 +860,7 @@ fn render(world: &mut World) {
                 }),
                 timestamp_writes: None,
                 occlusion_query_set: None,
+                multiview_mask: None,
             });
             pass.set_bind_group(0, &shadows.bind_group, &[ShadowMaps::offset(cascade)]);
             for draw in &world.resource::<ShadowDrawFunctions>().0 {
@@ -890,6 +892,7 @@ fn render(world: &mut World) {
             }),
             timestamp_writes: None,
             occlusion_query_set: None,
+            multiview_mask: None,
         });
         pass.set_bind_group(0, &world.resource::<ViewBinding>().bind_group, &[]);
         for draw in &world.resource::<DrawFunctions>().0 {
@@ -939,7 +942,7 @@ fn render(world: &mut World) {
         }
     }
     if let Some(output) = output {
-        output.present();
+        gpu.queue.present(output);
     }
     if path.is_some() {
         world.resource_mut::<Screenshot>().path = None;

@@ -86,8 +86,8 @@ impl Shafts {
         });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("light shafts"),
-            bind_group_layouts: &[view_layout, &layout],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[Some(view_layout), Some(&layout)],
+            immediate_size: 0,
         });
         let add = wgpu::BlendComponent {
             src_factor: wgpu::BlendFactor::One,
@@ -116,7 +116,7 @@ impl Shafts {
             primitive: Default::default(),
             depth_stencil: None,
             multisample: Default::default(),
-            multiview: None,
+            multiview_mask: None,
             cache: None,
         });
         Self {
@@ -166,6 +166,7 @@ impl Shafts {
             depth_stencil_attachment: None,
             timestamp_writes: None,
             occlusion_query_set: None,
+            multiview_mask: None,
         });
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, view, &[]);

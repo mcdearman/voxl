@@ -178,8 +178,8 @@ impl MeshRenderer {
 
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("mesh pipeline layout"),
-            bind_group_layouts: &[&view.layout, &material_layout],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[Some(&view.layout), Some(&material_layout)],
+            immediate_size: 0,
         });
         let pipeline = |masked: bool, double_sided: bool, decal: bool| {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -188,7 +188,7 @@ impl MeshRenderer {
                 vertex: wgpu::VertexState {
                     module: &shader,
                     entry_point: Some("vs_main"),
-                    buffers: &[Vertex::layout(), InstanceRaw::layout()],
+                    buffers: &[Some(Vertex::layout()), Some(InstanceRaw::layout())],
                     compilation_options: Default::default(),
                 },
                 fragment: Some(wgpu::FragmentState {
@@ -220,7 +220,7 @@ impl MeshRenderer {
                     main_depth_state(true)
                 }),
                 multisample: main_multisample(masked && !decal),
-                multiview: None,
+                multiview_mask: None,
                 cache: None,
             })
         };
@@ -228,8 +228,8 @@ impl MeshRenderer {
 
         let shadow_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("mesh shadow layout"),
-            bind_group_layouts: &[&shadows.layout, &material_layout],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[Some(&shadows.layout), Some(&material_layout)],
+            immediate_size: 0,
         });
         let shadow_pipeline = |masked: bool| {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -238,7 +238,7 @@ impl MeshRenderer {
                 vertex: wgpu::VertexState {
                     module: &shadow_shader,
                     entry_point: Some("vs_main"),
-                    buffers: &[Vertex::layout(), InstanceRaw::layout()],
+                    buffers: &[Some(Vertex::layout()), Some(InstanceRaw::layout())],
                     compilation_options: Default::default(),
                 },
                 fragment: masked.then(|| wgpu::FragmentState {
@@ -251,7 +251,7 @@ impl MeshRenderer {
                 primitive: wgpu::PrimitiveState::default(),
                 depth_stencil: Some(shadow_depth_state()),
                 multisample: Default::default(),
-                multiview: None,
+                multiview_mask: None,
                 cache: None,
             })
         };
@@ -262,7 +262,7 @@ impl MeshRenderer {
             address_mode_v: wgpu::AddressMode::Repeat,
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Linear,
             anisotropy_clamp: 16,
             ..Default::default()
         });

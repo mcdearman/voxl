@@ -248,8 +248,8 @@ pub fn init(world: &mut World, ground: &Ground, trampled: &(dyn Fn(Vec2) -> f32 
     });
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("grass pipeline layout"),
-        bind_group_layouts: &[&view.layout, &layout],
-        push_constant_ranges: &[],
+        bind_group_layouts: &[Some(&view.layout), Some(&layout)],
+        immediate_size: 0,
     });
     let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("grass pipeline"),
@@ -277,7 +277,7 @@ pub fn init(world: &mut World, ground: &Ground, trampled: &(dyn Fn(Vec2) -> f32 
         },
         depth_stencil: Some(main_depth_state(true)),
         multisample: main_multisample(false),
-        multiview: None,
+        multiview_mask: None,
         cache: None,
     });
     world.insert_resource(GrassRenderer {

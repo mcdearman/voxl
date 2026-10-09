@@ -101,7 +101,7 @@ impl TextureArray {
             address_mode_v: wgpu::AddressMode::Repeat,
             mag_filter,
             min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Linear,
             anisotropy_clamp: if smooth { 16 } else { 1 },
             ..Default::default()
         });
