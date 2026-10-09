@@ -8,6 +8,8 @@
 #include "HsFFI.h"
 #include "Rts.h"
 
+#include <stdlib.h>
+
 #include "voxl.h"
 
 /* Exported from Haskell: the plugin's own entry point, and two from the Voxl module. */
@@ -244,4 +246,37 @@ uint8_t voxl_hs_raycast(VoxlSystem *system, float ox, float oy, float oz, float 
     }
     out[6] = hit.distance;
     return 1;
+}
+
+/* Field names arrive end to end in `names`, with their lengths alongside. */
+int32_t voxl_hs_component_describe(VoxlApp *app, uint32_t component, const char *names,
+                                   const size_t *name_lens, const uint32_t *types,
+                                   const uint32_t *counts, const size_t *offsets, size_t count) {
+    VoxlField *fields = calloc(count ? count : 1, sizeof(VoxlField));
+    if (!fields) return -1;
+    for (size_t i = 0; i < count; i++) {
+        fields[i].name = names;
+        fields[i].name_len = name_lens[i];
+        fields[i].type = types[i];
+        fields[i].count = counts[i];
+        fields[i].offset = offsets[i];
+        names += name_lens[i];
+    }
+    int32_t status = api->component_describe(app, component, fields, count);
+    free(fields);
+    return status;
+}
+
+uint32_t voxl_hs_image_load(VoxlSystem *system, const char *name, size_t len) {
+    return api->image_load(system, name, len);
+}
+
+void voxl_hs_set_textures(VoxlSystem *system, VoxlEntity entity, uint32_t base_color,
+                          uint32_t normal, uint32_t metallic_roughness) {
+    api->set_textures(system, entity, base_color, normal, metallic_roughness);
+}
+
+VoxlEntity voxl_hs_spawn_model(VoxlSystem *system, const char *name, size_t len,
+                               const VoxlTransform *transform) {
+    return api->spawn_model(system, name, len, transform);
 }

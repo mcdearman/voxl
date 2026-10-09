@@ -24,7 +24,11 @@ use crate::{
     ecs::{DropFn, Entity, System, World},
     input::{ButtonInput, KeyCode, Mouse, MouseButton},
     physics::{Collider, PhysicsWorld, RigidBody},
-    render::{AmbientLight, Camera, Color, DirectionalLight, Material, Mesh, Mesh3d, Vertex},
+    reflect::{blob_component_type, BlobField, FieldKind, TypeRegistry},
+    render::{
+        AmbientLight, Camera, Color, DirectionalLight, Image, Material, Mesh, Mesh3d, Vertex,
+    },
+    transform::{Parent, Transform},
     window::Window,
 };
 
@@ -110,6 +114,10 @@ pub(crate) static API: VoxlApi = VoxlApi {
     set_velocity,
     velocity,
     raycast,
+    component_describe,
+    image_load,
+    set_textures,
+    spawn_model,
 };
 
 /// Runs `body`, turning a panic into `fallback` so it never unwinds into the plugin.
@@ -1034,5 +1042,172 @@ unsafe extern "C" fn raycast(
             };
         }
         1
+    })
+}
+
+unsafe extern "C" fn component_describe(
+    app: *mut VoxlApp,
+    component: VoxlComponent,
+    fields: *const sys::VoxlField,
+    field_count: usize,
+) -> i32 {
+    guard("component_describe", -1, || {
+        let Some(registrar) = app.cast::<Registrar>().as_mut() else {
+            return -1;
+        };
+        let plugin = registrar.plugin;
+        let fail = |why: &str| {
+            log::error!(target: "plugin", "{plugin}: component not described: {why}");
+            -1
+        };
+        let named = component_id(component).and_then(|id| registrar.world.named_component(id));
+        let Some(named) = named.cloned() else {
+            return fail("there is no such component");
+        };
+        if !matches!(named.key, crate::ecs::ComponentKey::Dynamic(_)) {
+            return fail("only a component defined by a plugin can be described");
+        }
+        if fields.is_null() && field_count > 0 {
+            return fail("its fields are missing");
+        }
+        let raw = if field_count == 0 {
+            &[][..]
+        } else {
+            std::slice::from_raw_parts(fields, field_count)
+        };
+        let mut described = Vec::with_capacity(raw.len());
+        for field in raw {
+            let Some(name) = text(field.name, field.name_len) else {
+                return fail("a field's name is missing or not UTF-8");
+            };
+            let kind = match field.field_type {
+                sys::VOXL_FIELD_F32 => FieldKind::F32,
+                sys::VOXL_FIELD_F64 => FieldKind::F64,
+                sys::VOXL_FIELD_I32 => FieldKind::I32,
+                sys::VOXL_FIELD_I64 => FieldKind::I64,
+                sys::VOXL_FIELD_U8 => FieldKind::U8,
+                sys::VOXL_FIELD_U32 => FieldKind::U32,
+                sys::VOXL_FIELD_BOOL => FieldKind::Bool,
+                sys::VOXL_FIELD_ENTITY => FieldKind::Entity,
+                _ => return fail("a field has an unknown type"),
+            };
+            described.push(BlobField {
+                name: name.to_owned(),
+                kind,
+                count: field.count as usize,
+                offset: field.offset,
+            });
+        }
+        match blob_component_type(&named.name, named.key, named.layout, described) {
+            Ok(component) => {
+                registrar.world.init_resource::<TypeRegistry>();
+                registrar
+                    .world
+                    .resource_mut::<TypeRegistry>()
+                    .insert(component);
+                0
+            }
+            Err(why) => fail(&why),
+        }
+    })
+}
+
+unsafe extern "C" fn image_load(
+    system: *mut VoxlSystem,
+    name: *const u8,
+    len: usize,
+) -> sys::VoxlImage {
+    guard("image_load", 0, || {
+        let (Some(context), Some(name)) = (context(system), text(name, len)) else {
+            return 0;
+        };
+        match context.load_image(name) {
+            Some(id) => id + 1,
+            None => {
+                log::error!(target: "plugin", "image_load: this app has no asset server");
+                0
+            }
+        }
+    })
+}
+
+unsafe extern "C" fn set_textures(
+    system: *mut VoxlSystem,
+    entity: VoxlEntity,
+    base_color: sys::VoxlImage,
+    normal: sys::VoxlImage,
+    metallic_roughness: sys::VoxlImage,
+) {
+    guard("set_textures", (), || {
+        let Some(context) = context(system) else {
+            return;
+        };
+        let handle = |image: sys::VoxlImage| image.checked_sub(1).map(Handle::<Image>::from_id);
+        let entity = Entity::from_bits(entity);
+        context.queue.push(move |world| {
+            let mut material = world.get::<Material>(entity).copied().unwrap_or_default();
+            material.base_color_texture = handle(base_color);
+            material.normal_texture = handle(normal);
+            material.metallic_roughness_texture = handle(metallic_roughness);
+            world.insert(entity, material);
+        });
+    })
+}
+
+unsafe extern "C" fn spawn_model(
+    system: *mut VoxlSystem,
+    name: *const u8,
+    len: usize,
+    transform: *const sys::VoxlTransform,
+) -> VoxlEntity {
+    guard("spawn_model", sys::VOXL_ENTITY_NONE, || {
+        let (Some(context), Some(name), Some(at)) =
+            (context(system), text(name, len), transform.as_ref())
+        else {
+            return sys::VOXL_ENTITY_NONE;
+        };
+        let transform = Transform {
+            translation: at.translation.into(),
+            rotation: glam::Quat::from_array(at.rotation.0),
+            scale: at.scale.into(),
+        };
+        let root = context.spawn();
+        let name = name.to_owned();
+        context.queue.push(move |world| {
+            if !world.contains_resource::<AssetServer>() {
+                log::error!(target: "plugin", "spawn_model: this app has no asset server");
+                return;
+            }
+            // The model file is read here, on the main thread, the first time it is asked for.
+            let model = world.resource_scope(|world, server: &mut AssetServer| {
+                world.resource_scope(|world, meshes: &mut Assets<Mesh>| {
+                    world.resource_scope(|_, images: &mut Assets<Image>| {
+                        server.load_gltf(&name, meshes, images)
+                    })
+                })
+            });
+            let model = match model {
+                Ok(model) => model,
+                Err(err) => {
+                    log::error!(target: "plugin", "spawn_model: {err:#}");
+                    return;
+                }
+            };
+            world.insert(root, transform);
+            for part in &model.parts {
+                let (scale, rotation, translation) = part.transform.to_scale_rotation_translation();
+                world.spawn((
+                    Transform {
+                        translation,
+                        rotation,
+                        scale,
+                    },
+                    Mesh3d(part.mesh),
+                    part.material,
+                    Parent(root),
+                ));
+            }
+        });
+        root.to_bits()
     })
 }

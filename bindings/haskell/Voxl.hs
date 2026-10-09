@@ -33,6 +33,9 @@ module Voxl
   , registerComponent
   , lookupComponent
   , statePtr
+  , FieldType (..)
+  , Field (..)
+  , describeComponent
     -- * Queries
   , Query
   , readC
@@ -81,6 +84,10 @@ module Voxl
   , meshCreate
   , setMesh
   , setMaterial
+  , Image
+  , loadImage
+  , setTextures
+  , spawnModel
     -- * Events
   , Event
   , registerEvent
@@ -199,6 +206,15 @@ foreign import ccall unsafe "voxl_hs_raycast"
   c_raycast ::
     Ptr () -> CFloat -> CFloat -> CFloat -> CFloat -> CFloat -> CFloat -> CFloat -> Ptr Word64 ->
     Ptr CFloat -> IO Word8
+foreign import ccall unsafe "voxl_hs_component_describe"
+  c_component_describe ::
+    Ptr () -> Word32 -> Ptr CChar -> Ptr CSize -> Ptr Word32 -> Ptr Word32 -> Ptr CSize -> CSize ->
+    IO CInt
+foreign import ccall unsafe "voxl_hs_image_load" c_image_load :: Ptr () -> Ptr CChar -> CSize -> IO Word32
+foreign import ccall unsafe "voxl_hs_set_textures"
+  c_set_textures :: Ptr () -> Word64 -> Word32 -> Word32 -> Word32 -> IO ()
+foreign import ccall unsafe "voxl_hs_spawn_model"
+  c_spawn_model :: Ptr () -> Ptr CChar -> CSize -> Ptr Transform -> IO Word64
 foreign import ccall unsafe "voxl_hs_spawn" c_spawn :: Ptr () -> IO Word64
 foreign import ccall unsafe "voxl_hs_despawn" c_despawn :: Ptr () -> Word64 -> IO ()
 foreign import ccall unsafe "voxl_hs_insert" c_insert :: Ptr () -> Word64 -> Word32 -> Ptr () -> IO ()
@@ -289,6 +305,42 @@ statePtr (App app) name = do
   let proxy = undefined :: a
   castPtr <$> withName name (\chars len ->
     c_state app chars len (fromIntegral (sizeOf proxy)) (fromIntegral (alignment proxy)))
+
+-- | What one field of a component holds.
+data FieldType
+  = FieldF32
+  | FieldF64
+  | FieldI32
+  | FieldI64
+  | FieldU8
+  | FieldU32
+  | -- | One byte; zero is false.
+    FieldBool
+  | -- | An 'Entity'. Scenes keep it pointing at the right entity.
+    FieldEntity
+  deriving (Eq, Show, Enum)
+
+-- | One field of a component: its name, what it holds, how many in a row (more than one for
+-- a vector or an array), and how many bytes into the component it starts.
+data Field = Field String FieldType Int Int
+  deriving (Eq, Show)
+
+-- | Says what fields a component this plugin registered has, as its 'Storable' instance lays
+-- them out. From then on the engine can save the component in scenes, load it back, and show
+-- it in an inspector. Bytes that no field covers aren't saved, and load as zero.
+describeComponent :: App -> Component a -> [Field] -> IO ()
+describeComponent (App app) (Component handle) fields =
+  withCStringLen (concat [name | Field name _ _ _ <- fields]) $ \(names, _) -> do
+    -- The length of each name in bytes, which is what the engine counts in.
+    lens <- mapM (\(Field name _ _ _) -> withCStringLen name (pure . fromIntegral . snd)) fields
+    status <-
+      withArrayLen (lens :: [CSize]) $ \count lensPtr ->
+        withArrayLen [fromIntegral (fromEnum kind) | Field _ kind _ _ <- fields] $ \_ types ->
+          withArrayLen [fromIntegral n | Field _ _ n _ <- fields] $ \_ counts ->
+            withArrayLen [fromIntegral offset | Field _ _ _ offset <- fields] $ \_ offsets ->
+              c_component_describe app handle names lensPtr types counts offsets (fromIntegral count)
+    when (status /= 0) $
+      ioError (userError "could not describe the component (see the engine's log)")
 
 -- | What a system asks of each entity it visits, and so what its function receives.
 --
@@ -796,6 +848,41 @@ instance Storable Contact where
     poke (castPtr (ptr `plusPtr` 16)) point
     poke (castPtr (ptr `plusPtr` 28)) normal
     poke (castPtr (ptr `plusPtr` 40)) push
+
+-- | An image, shared between the materials that use it. 'Storable', so it can be kept in a
+-- 'statePtr' block.
+newtype Image = Image Word32
+  deriving (Eq, Show)
+
+instance Storable Image where
+  sizeOf _ = 4
+  alignment _ = 4
+  peek ptr = Image <$> peek (castPtr ptr)
+  poke ptr (Image handle) = poke (castPtr ptr) handle
+
+-- | Loads an image by name: a PNG or JPEG path relative to the app's asset folder, with
+-- @?linear@ appended for data such as normal maps. The same name always gives the same image.
+-- It arrives a moment later; until then it draws as plain white.
+loadImage :: System -> String -> IO Image
+loadImage (System system) name = do
+  handle <- withName name (c_image_load system)
+  when (handle == 0) $ ioError (userError ("could not load `" ++ name ++ "` (no asset server?)"))
+  pure (Image handle)
+
+-- | Sets the textures of the entity's material, when this system returns: its colour, its
+-- normal map, and its roughness and metalness.
+setTextures :: System -> Entity -> Maybe Image -> Maybe Image -> Maybe Image -> IO ()
+setTextures (System system) (Entity entity) baseColor normal metallicRoughness =
+  c_set_textures system entity (raw baseColor) (raw normal) (raw metallicRoughness)
+  where
+    raw = maybe 0 (\(Image handle) -> handle)
+
+-- | Spawns a glTF model (@.gltf@ or @.glb@) by name: a new entity at the transform, with a
+-- child for each part of the model. The parts appear when this system returns.
+spawnModel :: System -> String -> Transform -> IO Entity
+spawnModel (System system) name at =
+  withName name $ \chars len ->
+    Foreign.with at (fmap Entity . c_spawn_model system chars len)
 
 -- What the engine calls for every Haskell system: `user` is the stable pointer to its
 -- function. An exception must not escape into the engine, so it is logged instead.

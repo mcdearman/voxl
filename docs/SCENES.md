@@ -96,5 +96,6 @@ value.set_path("translation.1", Value::Float(4.0));
   which only holds within a run.
 - Registered so far: `Transform`, `Parent`, `Camera`, `DirectionalLight`, `Mesh3d` and
   `Material`. Physics, animation and voxel components are not.
-- Resources and plugin-defined components are not captured.
+- Resources are not captured. A plugin's components are, once the plugin
+  [describes](PLUGINS.md#describing-components) them.
 - There are no prefabs (a scene used as a template, with overrides) yet.

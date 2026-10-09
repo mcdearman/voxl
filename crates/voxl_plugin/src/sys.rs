@@ -85,6 +85,27 @@ pub struct VoxlMaterial {
     pub metallic: f32,
 }
 
+pub const VOXL_FIELD_F32: u32 = 0;
+pub const VOXL_FIELD_F64: u32 = 1;
+pub const VOXL_FIELD_I32: u32 = 2;
+pub const VOXL_FIELD_I64: u32 = 3;
+pub const VOXL_FIELD_U8: u32 = 4;
+pub const VOXL_FIELD_U32: u32 = 5;
+pub const VOXL_FIELD_BOOL: u32 = 6;
+pub const VOXL_FIELD_ENTITY: u32 = 7;
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct VoxlField {
+    pub name: *const u8,
+    pub name_len: usize,
+    pub field_type: u32,
+    pub count: u32,
+    pub offset: usize,
+}
+
+pub type VoxlImage = u32;
+
 pub type VoxlEvent = u32;
 
 #[repr(C)]
@@ -290,12 +311,17 @@ pub struct VoxlApi {
     pub event_next:
         unsafe extern "C" fn(system: *mut VoxlSystem, event: VoxlEvent, value: *mut c_void) -> u8,
 
-    pub set_camera:
-        unsafe extern "C" fn(system: *mut VoxlSystem, entity: VoxlEntity, camera: *const VoxlCamera),
+    pub set_camera: unsafe extern "C" fn(
+        system: *mut VoxlSystem,
+        entity: VoxlEntity,
+        camera: *const VoxlCamera,
+    ),
     pub set_light:
         unsafe extern "C" fn(system: *mut VoxlSystem, entity: VoxlEntity, light: *const VoxlLight),
-    pub set_ambient: unsafe extern "C" fn(system: *mut VoxlSystem, color: *const f32, intensity: f32),
-    pub set_window_title: unsafe extern "C" fn(system: *mut VoxlSystem, title: *const u8, len: usize),
+    pub set_ambient:
+        unsafe extern "C" fn(system: *mut VoxlSystem, color: *const f32, intensity: f32),
+    pub set_window_title:
+        unsafe extern "C" fn(system: *mut VoxlSystem, title: *const u8, len: usize),
 
     pub set_collider: unsafe extern "C" fn(
         system: *mut VoxlSystem,
@@ -317,6 +343,29 @@ pub struct VoxlApi {
         max_distance: f32,
         hit: *mut VoxlRayHit,
     ) -> u8,
+
+    pub component_describe: unsafe extern "C" fn(
+        app: *mut VoxlApp,
+        component: VoxlComponent,
+        fields: *const VoxlField,
+        field_count: usize,
+    ) -> i32,
+
+    pub image_load:
+        unsafe extern "C" fn(system: *mut VoxlSystem, name: *const u8, len: usize) -> VoxlImage,
+    pub set_textures: unsafe extern "C" fn(
+        system: *mut VoxlSystem,
+        entity: VoxlEntity,
+        base_color: VoxlImage,
+        normal: VoxlImage,
+        metallic_roughness: VoxlImage,
+    ),
+    pub spawn_model: unsafe extern "C" fn(
+        system: *mut VoxlSystem,
+        name: *const u8,
+        len: usize,
+        transform: *const VoxlTransform,
+    ) -> VoxlEntity,
 }
 
 /// `voxl.Transform`: 48 bytes, 16-byte aligned.
