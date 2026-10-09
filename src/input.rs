@@ -105,6 +105,8 @@ pub enum Played {
     Motion(Vec2),
     /// Where the cursor is, in physical pixels.
     Cursor(Vec2),
+    /// The wheel turned, in lines: up and to the left are positive.
+    Scroll(Vec2),
 }
 
 /// Input waiting to be played into the game. It arrives at the start of the next frame the
@@ -202,6 +204,14 @@ pub(crate) fn play_injected(world: &mut World, running: bool) {
                 });
             }
             Played::Motion(delta) => world.resource_mut::<Mouse>().delta += delta,
+            Played::Scroll(lines) => {
+                world.resource_mut::<Mouse>().scroll += lines;
+                heard.push(winit::event::WindowEvent::MouseWheel {
+                    device_id: winit::event::DeviceId::dummy(),
+                    delta: winit::event::MouseScrollDelta::LineDelta(lines.x, lines.y),
+                    phase: winit::event::TouchPhase::Moved,
+                });
+            }
             Played::Cursor(position) => {
                 world.resource_mut::<Mouse>().position = Some(position);
                 heard.push(winit::event::WindowEvent::CursorMoved {

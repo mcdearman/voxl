@@ -166,6 +166,7 @@ const TOOLS: &[Tool] = &[
             "frames?: integer: how long a tap is held (default 1)",
             "mouse_motion?: array: [dx, dy] of raw mouse movement, as mouselook reads it",
             "mouse_position?: array: [x, y] of the cursor in pixels",
+            "mouse_scroll?: array: [x, y] lines the wheel turns, where the cursor is; positive y scrolls up",
             "text?: string: text to type into whichever field of the game's interface has the keyboard (click the field first); a line break in it is Enter. It arrives even while the game is paused, and the game's own keys do not see it",
         ],
     },
@@ -760,7 +761,7 @@ mod tests {
             input::{ButtonInput, InputPlugin, KeyCode},
             window::WindowEvents,
         };
-        use winit::event::{Ime, WindowEvent};
+        use winit::event::{Ime, MouseScrollDelta, WindowEvent};
 
         let mut app = App::new();
         app.add_plugins(TimePlugin)
@@ -773,10 +774,20 @@ mod tests {
         tool(&mut game, "mira_pause", "{}");
         let (_, failed) = tool(&mut game, "mira_input", r#"{"text": "45\n"}"#);
         assert!(!failed);
+        tool(&mut game, "mira_input", r#"{"mouse_scroll": [0, -3]}"#);
         game.0.update();
         let heard = &game.0.world.resource::<WindowEvents>().0;
         assert!(
-            matches!(&heard[..], [WindowEvent::Ime(Ime::Commit(text))] if text == "45\n"),
+            matches!(
+                &heard[..],
+                [
+                    WindowEvent::Ime(Ime::Commit(text)),
+                    WindowEvent::MouseWheel {
+                        delta: MouseScrollDelta::LineDelta(_, lines),
+                        ..
+                    }
+                ] if text == "45\n" && *lines == -3.0
+            ),
             "{heard:?}"
         );
         assert_eq!(

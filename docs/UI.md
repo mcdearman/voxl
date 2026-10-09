@@ -52,6 +52,10 @@ fn style(&self, _: Scheme) -> Style {
 | `toggle(label, on, message)` | a switch |
 | `slider(range, value, message)` | dragging, clicking the track, and arrow keys |
 | `field(hint, value, message)` | a line of text to type into: caret, selection, word jumps, clipboard; `.on_submit(message)` for Enter, `.width(..)`, `.autofocus()` |
+| `tabs(labels, chosen, message)` | a row of tabs: the pages of a menu |
+| `choice(options, chosen, message)` | one option at a time between two arrows: a difficulty, a screen size |
+| `list(items, chosen, message)` | rows to pick one of; up and down arrows with focus |
+| `scroll(height, child)` | a window onto something taller, scrolled by the wheel or its bar |
 | `bar(fraction)` | health, progress, a clock |
 | `column()`, `row()`, `stack()` | Armature's own layout |
 
@@ -121,7 +125,8 @@ interface layer:
 
 Input played from outside (`mira-debug input`, an agent's `mira_input`) reaches the interface
 too: a pointer position and a button press are put among the window's events, so a click an
-agent makes lands on a panel as a person's would. Text is typed the same way
+agent makes lands on a panel as a person's would, and the wheel (`mouse_scroll`) scrolls
+what the pointer is over. Text is typed the same way
 (`InjectedInput::type_text`, or `text` in `mira_input`): it goes to the field that has the
 keyboard, as finished text, and a line break in it is Enter. Click the field first. A hidden
 window's interface always counts as having the keyboard, since nobody else is typing.
@@ -131,7 +136,9 @@ taken out of `ButtonInput`, so typing a name does not also walk the player about
 
 ## What isn't here yet
 
-- More controls: a list, a dropdown, tabs.
+- A dropdown, and anything else that opens over its neighbours: Armature hands events to
+  widgets in the order they are laid out, so what pops up over an earlier one does not get
+  the click first. `choice` does that job meanwhile.
 - Interface in the world (a health bar over a unit), gamepad focus, and laying out for
   different screen sizes.
 - In the signal panel: boxes not yet placed are laid out by column only, so wires cross, and

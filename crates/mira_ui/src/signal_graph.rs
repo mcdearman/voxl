@@ -1126,7 +1126,8 @@ impl Widget<Message> for Circuit {
                 match over.map(|index| &self.nodes[index]) {
                     Some(node) if node.kind == "constant" => {
                         if let Signal::Number(value) = node.value {
-                            let step = if delta.y > 0.0 { 1.0 } else { -1.0 };
+                            // The wheel turned up is a negative distance.
+                            let step = if delta.y < 0.0 { 1.0 } else { -1.0 };
                             cx.emit(Message::Edit(Edit::Set {
                                 node: node.name.clone(),
                                 value: Signal::Number(value + step),
