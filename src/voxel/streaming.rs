@@ -17,7 +17,7 @@ use crate::{
 
 /// Chunks are kept loaded around entities with this component (usually the camera).
 #[derive(Clone, Copy, Debug, Default, crate::reflect::Reflect)]
-#[reflect(name = "voxl.ChunkViewer")]
+#[reflect(name = "mira.ChunkViewer")]
 pub struct ChunkViewer;
 
 impl Component for ChunkViewer {}

@@ -24,7 +24,7 @@ mod water;
 
 use std::{collections::HashMap, f32::consts::PI};
 
-use voxl::{
+use mira::{
     glam::Vec2,
     prelude::*,
     render::{GltfScene, Image, ProbeGrid, Screenshot},
@@ -44,7 +44,7 @@ fn main() -> anyhow::Result<()> {
     environment.sun_illuminance *= Vec3::new(1.0, 0.88, 0.72);
     App::new()
         .insert_resource(WindowSettings {
-            title: "voxl — Paris, 1810".into(),
+            title: "mira — Paris, 1810".into(),
             ..Default::default()
         })
         .insert_resource(environment)
@@ -142,10 +142,10 @@ fn setup(mut commands: Commands, environment: Res<Environment>) {
     ));
 }
 
-/// `VOXL_VIEW=x,height,z,yaw_degrees,pitch_degrees` starts somewhere else (flying), for
+/// `MIRA_VIEW=x,height,z,yaw_degrees,pitch_degrees` starts somewhere else (flying), for
 /// scripted screenshots.
 fn start_view() -> (Vec3, Vec3, bool) {
-    if let Ok(view) = std::env::var("VOXL_VIEW") {
+    if let Ok(view) = std::env::var("MIRA_VIEW") {
         let v: Vec<f32> = view.split(',').filter_map(|s| s.trim().parse().ok()).collect();
         if let [x, y, z, yaw, pitch] = v[..] {
             let rotation = Quat::from_euler(EulerRot::YXZ, yaw.to_radians(), pitch.to_radians(), 0.0);
@@ -351,7 +351,7 @@ fn build(world: &mut World) {
         }
         beasts.get(model).map(|(s, p)| (s.clone(), *p))
     };
-    let animal_material = |part: &voxl::render::GltfPart| {
+    let animal_material = |part: &mira::render::GltfPart| {
         let mut m = part.material;
         m.metallic = if part.material_name.contains("brass") { 1.0 } else { 0.0 };
         m.roughness = m.roughness.max(0.55);
@@ -517,7 +517,7 @@ fn move_player(
     beasts: Query<&animals::Beast>,
 ) {
     // Scripted screenshots hold the view still, whatever the mouse does.
-    if std::env::var("VOXL_SCREENSHOT").is_ok() {
+    if std::env::var("MIRA_SCREENSHOT").is_ok() {
         return;
     }
     let dt = time.delta_secs();
@@ -624,12 +624,12 @@ fn show_stats(time: Res<Time>, window: Res<Window>, mut counter: Local<FpsCounte
     if counter.elapsed >= 0.5 {
         let fps = counter.frames as f32 / counter.elapsed;
         log::debug!("{fps:.0} fps");
-        window.set_title(&format!("voxl — Paris, 1810 — {fps:.0} fps"));
+        window.set_title(&format!("mira — Paris, 1810 — {fps:.0} fps"));
         *counter = FpsCounter::default();
     }
 }
 
-/// F2 saves a screenshot. `VOXL_SCREENSHOT=<path>` saves one after `VOXL_SCREENSHOT_DELAY`
+/// F2 saves a screenshot. `MIRA_SCREENSHOT=<path>` saves one after `MIRA_SCREENSHOT_DELAY`
 /// seconds (default 6) and quits.
 fn take_screenshot(
     time: Res<Time>,
@@ -641,8 +641,8 @@ fn take_screenshot(
     if keys.just_pressed(KeyCode::F2) {
         screenshot.request(format!("screenshot-{}.png", time.frame_count()));
     }
-    if let Ok(path) = std::env::var("VOXL_SCREENSHOT") {
-        let delay = std::env::var("VOXL_SCREENSHOT_DELAY")
+    if let Ok(path) = std::env::var("MIRA_SCREENSHOT") {
+        let delay = std::env::var("MIRA_SCREENSHOT_DELAY")
             .ok()
             .and_then(|s| s.parse().ok())
             .unwrap_or(6.0);

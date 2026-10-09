@@ -3,7 +3,7 @@
 
 use std::f32::consts::TAU;
 
-use voxl::{
+use mira::{
     glam::{Vec2, Vec3},
     prelude::*,
     render::Image,
@@ -460,7 +460,7 @@ pub fn light_fires(world: &mut World) {
             Transform::from_translation(ground(fire) + Vec3::Y * 0.35),
             Mesh3d(flame),
             Material::emissive(Color::rgb(28.0, 9.0, 1.6)),
-            voxl::render::NotShadowCaster,
+            mira::render::NotShadowCaster,
             Flame(i as f32 * 1.7),
         ));
     }

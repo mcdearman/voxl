@@ -2,16 +2,16 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TupleSections #-}
 
--- | Bindings for writing voxl plugins in Haskell.
+-- | Bindings for writing mira plugins in Haskell.
 --
--- A plugin is a module that exports its setup function to C as @voxl_hs_main@ (it can have
+-- A plugin is a module that exports its setup function to C as @mira_hs_main@ (it can have
 -- any Haskell name), built into a shared library together with
--- this module and @cbits/voxl_hs.c@ (see @plugins/swirl@ and its build script):
+-- this module and @cbits/mira_hs.c@ (see @plugins/swirl@ and its build script):
 --
--- > foreign export ccall "voxl_hs_main" pluginMain :: Ptr () -> IO CInt
+-- > foreign export ccall "mira_hs_main" pluginMain :: Ptr () -> IO CInt
 -- > pluginMain :: Ptr () -> IO CInt
 -- > pluginMain = plugin $ \app -> do
--- >   transform <- lookupComponent app "voxl.Transform"
+-- >   transform <- lookupComponent app "mira.Transform"
 -- >   addSystem app "rise" Update (write transform) $ \sys _entity ref -> do
 -- >     dt <- deltaSeconds sys
 -- >     modifyRef ref $ \t -> t { translation = translation t + V3 0 dt 0 }
@@ -24,7 +24,7 @@
 -- The plugin is reloaded when its library is rebuilt. Component values and 'statePtr' blocks
 -- survive; top-level 'IORef's and other Haskell values do not, because a reload is a fresh
 -- copy of the program.
-module Voxl
+module Mira
   ( -- * The plugin
     App
   , plugin
@@ -178,88 +178,88 @@ import Foreign.C.Types (CChar, CDouble (..), CFloat (..), CInt (..), CSize (..))
 import Foreign.StablePtr (StablePtr, castPtrToStablePtr, castStablePtrToPtr, deRefStablePtr, freeStablePtr, newStablePtr)
 import System.IO.Unsafe (unsafePerformIO)
 
--- The engine's functions, by way of cbits/voxl_hs.c. The ones called once per entity are
+-- The engine's functions, by way of cbits/mira_hs.c. The ones called once per entity are
 -- imported `unsafe`, which makes them as cheap as a C call; none of them calls back.
 
-foreign import ccall unsafe "voxl_hs_log" c_log :: Word32 -> Ptr CChar -> CSize -> IO ()
-foreign import ccall unsafe "voxl_hs_component_register"
+foreign import ccall unsafe "mira_hs_log" c_log :: Word32 -> Ptr CChar -> CSize -> IO ()
+foreign import ccall unsafe "mira_hs_component_register"
   c_component_register :: Ptr () -> Ptr CChar -> CSize -> CSize -> CSize -> IO Word32
-foreign import ccall unsafe "voxl_hs_component_lookup"
+foreign import ccall unsafe "mira_hs_component_lookup"
   c_component_lookup :: Ptr () -> Ptr CChar -> CSize -> Ptr CSize -> Ptr CSize -> IO Word32
-foreign import ccall unsafe "voxl_hs_state"
+foreign import ccall unsafe "mira_hs_state"
   c_state :: Ptr () -> Ptr CChar -> CSize -> CSize -> CSize -> IO (Ptr ())
-foreign import ccall unsafe "voxl_hs_delta_seconds" c_delta_seconds :: Ptr () -> IO CFloat
-foreign import ccall unsafe "voxl_hs_elapsed_seconds" c_elapsed_seconds :: Ptr () -> IO CDouble
-foreign import ccall unsafe "voxl_hs_system_add_queries"
+foreign import ccall unsafe "mira_hs_delta_seconds" c_delta_seconds :: Ptr () -> IO CFloat
+foreign import ccall unsafe "mira_hs_elapsed_seconds" c_elapsed_seconds :: Ptr () -> IO CDouble
+foreign import ccall unsafe "mira_hs_system_add_queries"
   c_system_add_queries ::
     Ptr () -> Ptr CChar -> CSize -> Word32 -> Ptr () -> Ptr Word32 -> Ptr CSize -> CSize -> IO CInt
-foreign import ccall unsafe "voxl_hs_query_next_in"
+foreign import ccall unsafe "mira_hs_query_next_in"
   c_query_next_in :: Ptr () -> Word32 -> Ptr Word64 -> Ptr (Ptr ()) -> IO Word8
-foreign import ccall unsafe "voxl_hs_query_get_in"
+foreign import ccall unsafe "mira_hs_query_get_in"
   c_query_get_in :: Ptr () -> Word32 -> Word64 -> Ptr (Ptr ()) -> IO Word8
-foreign import ccall unsafe "voxl_hs_query_rewind" c_query_rewind :: Ptr () -> Word32 -> IO ()
-foreign import ccall unsafe "voxl_hs_key_down" c_key_down :: Ptr () -> Word32 -> IO Word8
-foreign import ccall unsafe "voxl_hs_key_pressed" c_key_pressed :: Ptr () -> Word32 -> IO Word8
-foreign import ccall unsafe "voxl_hs_key_released" c_key_released :: Ptr () -> Word32 -> IO Word8
-foreign import ccall unsafe "voxl_hs_mouse_down" c_mouse_down :: Ptr () -> Word32 -> IO Word8
-foreign import ccall unsafe "voxl_hs_mouse_pressed" c_mouse_pressed :: Ptr () -> Word32 -> IO Word8
-foreign import ccall unsafe "voxl_hs_mouse_motion" c_mouse_motion :: Ptr () -> Ptr CFloat -> IO ()
-foreign import ccall unsafe "voxl_hs_mesh_shape" c_mesh_shape :: Ptr () -> Word32 -> CFloat -> IO Word32
-foreign import ccall unsafe "voxl_hs_mesh_create"
+foreign import ccall unsafe "mira_hs_query_rewind" c_query_rewind :: Ptr () -> Word32 -> IO ()
+foreign import ccall unsafe "mira_hs_key_down" c_key_down :: Ptr () -> Word32 -> IO Word8
+foreign import ccall unsafe "mira_hs_key_pressed" c_key_pressed :: Ptr () -> Word32 -> IO Word8
+foreign import ccall unsafe "mira_hs_key_released" c_key_released :: Ptr () -> Word32 -> IO Word8
+foreign import ccall unsafe "mira_hs_mouse_down" c_mouse_down :: Ptr () -> Word32 -> IO Word8
+foreign import ccall unsafe "mira_hs_mouse_pressed" c_mouse_pressed :: Ptr () -> Word32 -> IO Word8
+foreign import ccall unsafe "mira_hs_mouse_motion" c_mouse_motion :: Ptr () -> Ptr CFloat -> IO ()
+foreign import ccall unsafe "mira_hs_mesh_shape" c_mesh_shape :: Ptr () -> Word32 -> CFloat -> IO Word32
+foreign import ccall unsafe "mira_hs_mesh_create"
   c_mesh_create :: Ptr () -> Ptr Vertex -> CSize -> Ptr Word32 -> CSize -> IO Word32
-foreign import ccall unsafe "voxl_hs_set_mesh" c_set_mesh :: Ptr () -> Word64 -> Word32 -> IO ()
-foreign import ccall unsafe "voxl_hs_set_material" c_set_material :: Ptr () -> Word64 -> Ptr Material -> IO ()
-foreign import ccall unsafe "voxl_hs_event_register"
+foreign import ccall unsafe "mira_hs_set_mesh" c_set_mesh :: Ptr () -> Word64 -> Word32 -> IO ()
+foreign import ccall unsafe "mira_hs_set_material" c_set_material :: Ptr () -> Word64 -> Ptr Material -> IO ()
+foreign import ccall unsafe "mira_hs_event_register"
   c_event_register :: Ptr () -> Ptr CChar -> CSize -> CSize -> IO Word32
-foreign import ccall unsafe "voxl_hs_event_send" c_event_send :: Ptr () -> Word32 -> Ptr () -> IO ()
-foreign import ccall unsafe "voxl_hs_event_next" c_event_next :: Ptr () -> Word32 -> Ptr () -> IO Word8
-foreign import ccall unsafe "voxl_hs_set_camera"
+foreign import ccall unsafe "mira_hs_event_send" c_event_send :: Ptr () -> Word32 -> Ptr () -> IO ()
+foreign import ccall unsafe "mira_hs_event_next" c_event_next :: Ptr () -> Word32 -> Ptr () -> IO Word8
+foreign import ccall unsafe "mira_hs_set_camera"
   c_set_camera :: Ptr () -> Word64 -> CFloat -> CFloat -> Word32 -> IO ()
-foreign import ccall unsafe "voxl_hs_set_light"
+foreign import ccall unsafe "mira_hs_set_light"
   c_set_light :: Ptr () -> Word64 -> CFloat -> CFloat -> CFloat -> CFloat -> Word32 -> IO ()
-foreign import ccall unsafe "voxl_hs_set_ambient"
+foreign import ccall unsafe "mira_hs_set_ambient"
   c_set_ambient :: Ptr () -> CFloat -> CFloat -> CFloat -> CFloat -> IO ()
-foreign import ccall unsafe "voxl_hs_set_window_title"
+foreign import ccall unsafe "mira_hs_set_window_title"
   c_set_window_title :: Ptr () -> Ptr CChar -> CSize -> IO ()
-foreign import ccall unsafe "voxl_hs_set_collider"
+foreign import ccall unsafe "mira_hs_set_collider"
   c_set_collider ::
     Ptr () -> Word64 -> Word32 -> CFloat -> CFloat -> CFloat -> CFloat -> CFloat -> Word32 -> IO ()
-foreign import ccall unsafe "voxl_hs_set_body"
+foreign import ccall unsafe "mira_hs_set_body"
   c_set_body :: Ptr () -> Word64 -> Word32 -> CFloat -> CFloat -> CFloat -> CFloat -> Word32 -> IO ()
-foreign import ccall unsafe "voxl_hs_apply_impulse"
+foreign import ccall unsafe "mira_hs_apply_impulse"
   c_apply_impulse :: Ptr () -> Word64 -> CFloat -> CFloat -> CFloat -> IO ()
-foreign import ccall unsafe "voxl_hs_set_velocity"
+foreign import ccall unsafe "mira_hs_set_velocity"
   c_set_velocity :: Ptr () -> Word64 -> CFloat -> CFloat -> CFloat -> IO ()
-foreign import ccall unsafe "voxl_hs_velocity" c_velocity :: Ptr () -> Word64 -> Ptr CFloat -> IO Word8
-foreign import ccall unsafe "voxl_hs_raycast"
+foreign import ccall unsafe "mira_hs_velocity" c_velocity :: Ptr () -> Word64 -> Ptr CFloat -> IO Word8
+foreign import ccall unsafe "mira_hs_raycast"
   c_raycast ::
     Ptr () -> CFloat -> CFloat -> CFloat -> CFloat -> CFloat -> CFloat -> CFloat -> Ptr Word64 ->
     Ptr CFloat -> IO Word8
-foreign import ccall unsafe "voxl_hs_component_describe"
+foreign import ccall unsafe "mira_hs_component_describe"
   c_component_describe ::
     Ptr () -> Word32 -> Ptr CChar -> Ptr CSize -> Ptr Word32 -> Ptr Word32 -> Ptr CSize -> CSize ->
     IO CInt
-foreign import ccall unsafe "voxl_hs_image_load" c_image_load :: Ptr () -> Ptr CChar -> CSize -> IO Word32
-foreign import ccall unsafe "voxl_hs_set_textures"
+foreign import ccall unsafe "mira_hs_image_load" c_image_load :: Ptr () -> Ptr CChar -> CSize -> IO Word32
+foreign import ccall unsafe "mira_hs_set_textures"
   c_set_textures :: Ptr () -> Word64 -> Word32 -> Word32 -> Word32 -> IO ()
-foreign import ccall unsafe "voxl_hs_spawn_model"
+foreign import ccall unsafe "mira_hs_spawn_model"
   c_spawn_model :: Ptr () -> Ptr CChar -> CSize -> Ptr Transform -> IO Word64
-foreign import ccall unsafe "voxl_hs_signal_set"
+foreign import ccall unsafe "mira_hs_signal_set"
   c_signal_set :: Ptr () -> Ptr CChar -> CSize -> CDouble -> Word32 -> IO ()
-foreign import ccall unsafe "voxl_hs_signal_get"
+foreign import ccall unsafe "mira_hs_signal_get"
   c_signal_get :: Ptr () -> Ptr CChar -> CSize -> Ptr CDouble -> IO Word32
-foreign import ccall unsafe "voxl_hs_signal_define"
+foreign import ccall unsafe "mira_hs_signal_define"
   c_signal_define :: Ptr () -> Ptr CChar -> CSize -> Word32 -> CDouble -> Ptr CChar -> CSize -> IO ()
-foreign import ccall unsafe "voxl_hs_system_fail"
+foreign import ccall unsafe "mira_hs_system_fail"
   c_system_fail :: Ptr () -> Ptr CChar -> CSize -> IO ()
-foreign import ccall unsafe "voxl_hs_spawn_prefab"
+foreign import ccall unsafe "mira_hs_spawn_prefab"
   c_spawn_prefab :: Ptr () -> Ptr CChar -> CSize -> Ptr Transform -> IO Word64
-foreign import ccall unsafe "voxl_hs_set_parent" c_set_parent :: Ptr () -> Word64 -> Word64 -> IO ()
-foreign import ccall unsafe "voxl_hs_despawn_tree" c_despawn_tree :: Ptr () -> Word64 -> IO ()
-foreign import ccall unsafe "voxl_hs_spawn" c_spawn :: Ptr () -> IO Word64
-foreign import ccall unsafe "voxl_hs_despawn" c_despawn :: Ptr () -> Word64 -> IO ()
-foreign import ccall unsafe "voxl_hs_insert" c_insert :: Ptr () -> Word64 -> Word32 -> Ptr () -> IO ()
-foreign import ccall unsafe "voxl_hs_remove" c_remove :: Ptr () -> Word64 -> Word32 -> IO ()
+foreign import ccall unsafe "mira_hs_set_parent" c_set_parent :: Ptr () -> Word64 -> Word64 -> IO ()
+foreign import ccall unsafe "mira_hs_despawn_tree" c_despawn_tree :: Ptr () -> Word64 -> IO ()
+foreign import ccall unsafe "mira_hs_spawn" c_spawn :: Ptr () -> IO Word64
+foreign import ccall unsafe "mira_hs_despawn" c_despawn :: Ptr () -> Word64 -> IO ()
+foreign import ccall unsafe "mira_hs_insert" c_insert :: Ptr () -> Word64 -> Word32 -> Ptr () -> IO ()
+foreign import ccall unsafe "mira_hs_remove" c_remove :: Ptr () -> Word64 -> Word32 -> IO ()
 
 -- | The app being set up. Only meaningful inside the function given to 'plugin'.
 newtype App = App (Ptr ())
@@ -692,7 +692,7 @@ newtype Event a = Event Word32
 
 -- | Defines an event type, or finds the one the name already has. Any plugin that knows the
 -- name can send and read it, in any language; that is how plugins talk to each other. The
--- engine's own events are found the same way: @"voxl.Contact"@ is a 'Contact'.
+-- engine's own events are found the same way: @"mira.Contact"@ is a 'Contact'.
 registerEvent :: forall a. Storable a => App -> String -> IO (Event a)
 registerEvent (App app) name = do
   handle <- withName name $ \chars len ->
@@ -875,7 +875,7 @@ raycast (System system) (V3 ox oy oz) (V3 dx dy dz) reach =
         hit <- RayHit (Entity entity) <$> peekV3 floats 0 <*> peekV3 floats 3
         Just . hit . realToFrac <$> peekElemOff floats 6
 
--- | The engine's @"voxl.Contact"@ event: two colliders touched during a physics step.
+-- | The engine's @"mira.Contact"@ event: two colliders touched during a physics step.
 data Contact = Contact
   { contactA :: !Entity
   , contactB :: !Entity
@@ -1083,10 +1083,10 @@ timerReset running reset = SigOp SignalTimer [running, reset]
 instance Num Sig where
   a + b = SigOp SignalSum (operands SignalSum a ++ operands SignalSum b)
   fromInteger = SigNumber . fromInteger
-  (*) = error "Voxl.Sig: signals can be added, not multiplied"
-  abs = error "Voxl.Sig: abs is not a signal operation"
-  signum = error "Voxl.Sig: signum is not a signal operation"
-  negate = error "Voxl.Sig: negate is not a signal operation"
+  (*) = error "Mira.Sig: signals can be added, not multiplied"
+  abs = error "Mira.Sig: abs is not a signal operation"
+  signum = error "Mira.Sig: signum is not a signal operation"
+  negate = error "Mira.Sig: negate is not a signal operation"
 
 -- | Defines a signal by an expression, when this system returns. The parts of the
 -- expression become signals of their own, named after the rule (@red.clock#1@, …), so the
@@ -1110,7 +1110,7 @@ defineRule sys name rule = do
 
 -- What the engine calls for every Haskell system: `user` is the stable pointer to its
 -- function. An exception must not escape into the engine, so the engine is told of it instead.
-foreign export ccall "voxl_hs_dispatch" dispatch :: Ptr () -> Ptr () -> IO ()
+foreign export ccall "mira_hs_dispatch" dispatch :: Ptr () -> Ptr () -> IO ()
 
 dispatch :: Ptr () -> Ptr () -> IO ()
 dispatch system user = do
@@ -1122,7 +1122,7 @@ dispatch system user = do
       withCStringLen (displayException err) $ \(chars, len) ->
         c_system_fail system chars (fromIntegral len)
 
-foreign export ccall "voxl_hs_unload" unload :: IO ()
+foreign export ccall "mira_hs_unload" unload :: IO ()
 
 unload :: IO ()
 unload = atomicModifyIORef' systems ([],) >>= mapM_ freeStablePtr
@@ -1149,8 +1149,8 @@ instance Storable V3 where
 data Quat = Quat !Float !Float !Float !Float
   deriving (Eq, Show)
 
--- | @voxl.Transform@: position, rotation and scale relative to the entity's parent. Laid out
--- as @VoxlTransform@ in @voxl.h@: 48 bytes, 16-byte aligned.
+-- | @mira.Transform@: position, rotation and scale relative to the entity's parent. Laid out
+-- as @MiraTransform@ in @mira.h@: 48 bytes, 16-byte aligned.
 data Transform = Transform
   { translation :: !V3
   , rotation :: !Quat

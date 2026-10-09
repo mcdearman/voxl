@@ -125,7 +125,7 @@ impl PhysicsWorld {
 /// horizontal part is used). It falls, stands on the ground, walks up steps and gentle slopes,
 /// and slides along walls. Its entity's translation is the capsule's centre.
 #[derive(Clone, Debug, crate::reflect::Reflect)]
-#[reflect(name = "voxl.CharacterController")]
+#[reflect(name = "mira.CharacterController")]
 pub struct CharacterController {
     pub height: f32,
     pub radius: f32,

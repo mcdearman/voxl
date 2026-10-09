@@ -8,4 +8,4 @@ publish = false
 crate-type = ["cdylib"]
 
 [dependencies]
-voxl_plugin = { path = "../../crates/voxl_plugin" }
+mira_plugin = { path = "../../crates/mira_plugin" }

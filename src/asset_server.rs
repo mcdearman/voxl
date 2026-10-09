@@ -555,7 +555,7 @@ mod tests {
     impl TempDir {
         fn new(test: &str) -> Self {
             let dir =
-                std::env::temp_dir().join(format!("voxl-assets-{}-{test}", std::process::id()));
+                std::env::temp_dir().join(format!("mira-assets-{}-{test}", std::process::id()));
             let _ = std::fs::remove_dir_all(&dir);
             std::fs::create_dir_all(&dir).unwrap();
             Self(dir)
@@ -811,8 +811,8 @@ mod tests {
             registry
         };
         let text = r#"{"version": 1, "entities": [
-            {"id": 1, "components": {"voxl.Mesh3d": {"$asset": "mesh", "name": "shape:blob:1"}}},
-            {"id": 2, "components": {"voxl.Mesh3d": {"$asset": "sound", "name": "bang.wav"}}}
+            {"id": 1, "components": {"mira.Mesh3d": {"$asset": "mesh", "name": "shape:blob:1"}}},
+            {"id": 2, "components": {"mira.Mesh3d": {"$asset": "sound", "name": "bang.wav"}}}
         ]}"#;
         let scene = Scene::from_json(text).unwrap();
 

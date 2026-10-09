@@ -36,7 +36,7 @@ jobs:
       run: scripts/package.sh "${{ github.ref_name }}" "${{ matrix.target }}"
     - uses: actions/upload-artifact@v4
       with:
-        name: voxl-${{ matrix.target }}
+        name: mira-${{ matrix.target }}
         path: dist/*.tar.gz
         if-no-files-found: error
 

@@ -1,4 +1,4 @@
-//! An example voxl plugin in Rust that knows nothing about any game except the name of one
+//! An example mira plugin in Rust that knows nothing about any game except the name of one
 //! event: it shows the latest `chase.Collected` in the window title.
 //!
 //! The event is sent by `plugins/chase`, which is written in Haskell. Neither plugin refers
@@ -6,7 +6,7 @@
 
 use std::sync::OnceLock;
 
-use voxl_plugin::{App, Error, Event, Stage, System};
+use mira_plugin::{App, Error, Event, Stage, System};
 
 static COLLECTED: OnceLock<Event<i32>> = OnceLock::new();
 
@@ -22,9 +22,9 @@ fn show(system: &mut System) {
         latest = Some(total);
     }
     if let Some(total) = latest {
-        system.set_window_title(&format!("voxl: {total} collected"));
-        voxl_plugin::info!("{total} collected");
+        system.set_window_title(&format!("mira: {total} collected"));
+        mira_plugin::info!("{total} collected");
     }
 }
 
-voxl_plugin::export_plugin!(load);
+mira_plugin::export_plugin!(load);

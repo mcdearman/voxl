@@ -1,4 +1,4 @@
-use voxl::{prelude::*, render::Screenshot, voxel::ChunkStreaming};
+use mira::{prelude::*, render::Screenshot, voxel::ChunkStreaming};
 
 fn main() -> anyhow::Result<()> {
     App::new()
@@ -317,7 +317,7 @@ fn bounce(
     }
 }
 
-/// F2 saves a screenshot. Setting `VOXL_SCREENSHOT=<path>` instead saves one a few seconds
+/// F2 saves a screenshot. Setting `MIRA_SCREENSHOT=<path>` instead saves one a few seconds
 /// after launch and quits, which is handy for checking rendering from a script.
 fn take_screenshot(
     time: Res<Time>,
@@ -329,7 +329,7 @@ fn take_screenshot(
     if keys.just_pressed(KeyCode::F2) {
         screenshot.request(format!("screenshot-{}.png", time.frame_count()));
     }
-    if let Ok(path) = std::env::var("VOXL_SCREENSHOT") {
+    if let Ok(path) = std::env::var("MIRA_SCREENSHOT") {
         match *automatic {
             None if time.elapsed_secs() > 6.0 => {
                 screenshot.request(path);
@@ -362,14 +362,14 @@ fn show_stats(
     counter.elapsed += time.delta_secs();
     if counter.elapsed >= 0.5 {
         let stats = format!(
-            "voxl — {:.0} fps — {} chunks ({} in flight) — {} entities — placing {} (1-4) — click: break/place, F: ball",
+            "mira — {:.0} fps — {} chunks ({} in flight) — {} entities — placing {} (1-4) — click: break/place, F: ball",
             counter.frames as f32 / counter.elapsed,
             voxels.chunk_count(),
             streaming.in_flight(),
             entities.count(),
             registry.get(selected.0).map_or("?", |b| b.name.as_str()),
         );
-        // Run with RUST_LOG=voxl=debug to get these in the terminal too.
+        // Run with RUST_LOG=mira=debug to get these in the terminal too.
         log::debug!("{stats}");
         window.set_title(&stats);
         *counter = FpsCounter::default();

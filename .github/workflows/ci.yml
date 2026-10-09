@@ -16,7 +16,7 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   # The Haskell plugin tests must run here, not skip.
-  VOXL_REQUIRE_GHC: 1
+  MIRA_REQUIRE_GHC: 1
 
 jobs:
   check:

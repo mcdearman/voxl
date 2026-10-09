@@ -1,7 +1,7 @@
-//! `#[derive(Component)]` and `#[derive(Reflect)]` for voxl.
+//! `#[derive(Component)]` and `#[derive(Reflect)]` for mira.
 //!
-//! The generated code names the engine as `::voxl`, which also works inside the engine
-//! itself (it declares `extern crate self as voxl`).
+//! The generated code names the engine as `::mira`, which also works inside the engine
+//! itself (it declares `extern crate self as mira`).
 
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as Tokens;
@@ -15,7 +15,7 @@ pub fn derive_component(input: TokenStream) -> TokenStream {
     let name = &input.ident;
     let (impl_generics, type_generics, where_clause) = input.generics.split_for_impl();
     quote! {
-        impl #impl_generics ::voxl::ecs::Component for #name #type_generics #where_clause {}
+        impl #impl_generics ::mira::ecs::Component for #name #type_generics #where_clause {}
     }
     .into()
 }
@@ -57,7 +57,7 @@ fn options(attrs: &[syn::Attribute]) -> syn::Result<Options> {
 /// as just that field), and an enum is saved as its variant's name, with its fields if it has
 /// any. Every field's type must itself be `Reflect`.
 ///
-/// - `#[reflect(name = "voxl.Transform")]` on the type: the name it has in saved files.
+/// - `#[reflect(name = "mira.Transform")]` on the type: the name it has in saved files.
 /// - `#[reflect(default)]` on the type (which must be `Default`): missing fields are filled
 ///   from the default value. On a field: that field is, from its own type's default.
 /// - `#[reflect(skip)]` on a field: it is not saved, and is made with `Default::default()`.
@@ -89,9 +89,9 @@ fn shape(fields: &Fields, what: &str) -> syn::Result<Shape> {
     match fields {
         Fields::Unit => Ok(Shape {
             pattern: quote!(),
-            to_value: quote!(::voxl::reflect::Value::Null),
+            to_value: quote!(::mira::reflect::Value::Null),
             from_value: Box::new(|_| quote!()),
-            schema: quote!(::voxl::reflect::Schema::Unit),
+            schema: quote!(::mira::reflect::Schema::Unit),
         }),
         Fields::Named(named) => {
             let mut idents = Vec::new();
@@ -111,18 +111,18 @@ fn shape(fields: &Fields, what: &str) -> syn::Result<Shape> {
                 }
                 idents.push(quote!(#ident));
                 saved.push(quote! {
-                    (::std::string::String::from(#key), ::voxl::reflect::Reflect::to_value(#ident))
+                    (::std::string::String::from(#key), ::mira::reflect::Reflect::to_value(#ident))
                 });
-                schemas.push(quote!((#key, <#ty as ::voxl::reflect::Reflect>::schema())));
+                schemas.push(quote!((#key, <#ty as ::mira::reflect::Reflect>::schema())));
                 let missing = if options.default {
                     quote!(::core::default::Default::default())
                 } else {
                     quote!(return ::core::result::Result::Err(
-                        ::voxl::reflect::ReflectError::missing(#what, #key)
+                        ::mira::reflect::ReflectError::missing(#what, #key)
                     ))
                 };
                 let present = quote! {
-                    <#ty as ::voxl::reflect::Reflect>::from_value(field)
+                    <#ty as ::mira::reflect::Reflect>::from_value(field)
                         .map_err(|err| err.inside(#key))?
                 };
                 loads.push((ident, present, Some((key, missing))));
@@ -131,9 +131,9 @@ fn shape(fields: &Fields, what: &str) -> syn::Result<Shape> {
                 // Checked once, where the first saved field is read: without it a value of
                 // the wrong shape would have every field missing, and load as the default.
                 let mut check = Some(quote! {
-                    if !::core::matches!(value, ::voxl::reflect::Value::Map(_)) {
+                    if !::core::matches!(value, ::mira::reflect::Value::Map(_)) {
                         return ::core::result::Result::Err(
-                            ::voxl::reflect::ReflectError::expected("a map", value)
+                            ::mira::reflect::ReflectError::expected("a map", value)
                         );
                     }
                 });
@@ -162,9 +162,9 @@ fn shape(fields: &Fields, what: &str) -> syn::Result<Shape> {
             };
             Ok(Shape {
                 pattern: quote!({ #(#idents),* }),
-                to_value: quote!(::voxl::reflect::Value::Map(::std::vec![#(#saved),*])),
+                to_value: quote!(::mira::reflect::Value::Map(::std::vec![#(#saved),*])),
                 from_value: Box::new(from_value),
-                schema: quote!(::voxl::reflect::Schema::Fields(::std::vec![#(#schemas),*])),
+                schema: quote!(::mira::reflect::Schema::Fields(::std::vec![#(#schemas),*])),
             })
         }
         Fields::Unnamed(unnamed) => {
@@ -184,12 +184,12 @@ fn shape(fields: &Fields, what: &str) -> syn::Result<Shape> {
                 // A wrapper is saved as what it wraps.
                 let ty = types[0].clone();
                 let binding = &bindings[0];
-                let schema = quote!(<#ty as ::voxl::reflect::Reflect>::schema());
+                let schema = quote!(<#ty as ::mira::reflect::Reflect>::schema());
                 return Ok(Shape {
                     pattern: quote!((#binding)),
-                    to_value: quote!(::voxl::reflect::Reflect::to_value(#binding)),
+                    to_value: quote!(::mira::reflect::Reflect::to_value(#binding)),
                     from_value: Box::new(
-                        move |_| quote!((<#ty as ::voxl::reflect::Reflect>::from_value(value)?)),
+                        move |_| quote!((<#ty as ::mira::reflect::Reflect>::from_value(value)?)),
                     ),
                     schema,
                 });
@@ -200,24 +200,24 @@ fn shape(fields: &Fields, what: &str) -> syn::Result<Shape> {
             Ok(Shape {
                 pattern: quote!((#(#bindings),*)),
                 to_value: quote! {
-                    ::voxl::reflect::Value::List(::std::vec![
-                        #(::voxl::reflect::Reflect::to_value(#bindings)),*
+                    ::mira::reflect::Value::List(::std::vec![
+                        #(::mira::reflect::Reflect::to_value(#bindings)),*
                     ])
                 },
                 from_value: Box::new(move |_| {
                     quote! {
                         (#(
-                            <#load_types as ::voxl::reflect::Reflect>::from_value(
+                            <#load_types as ::mira::reflect::Reflect>::from_value(
                                 value.item(#indices).ok_or_else(|| {
-                                    ::voxl::reflect::ReflectError::expected(#what, value)
+                                    ::mira::reflect::ReflectError::expected(#what, value)
                                 })?
                             ).map_err(|err| err.inside_index(#indices))?
                         ),*)
                     }
                 }),
                 schema: quote! {
-                    ::voxl::reflect::Schema::Tuple(::std::vec![
-                        #(<#types as ::voxl::reflect::Reflect>::schema()),*
+                    ::mira::reflect::Schema::Tuple(::std::vec![
+                        #(<#types as ::mira::reflect::Reflect>::schema()),*
                     ])
                 },
             })
@@ -252,7 +252,7 @@ fn expand_reflect(input: &DeriveInput) -> syn::Result<Tokens> {
                     ::core::result::Result::Ok(Self #build)
                 },
                 quote! {
-                    ::voxl::reflect::Schema::Struct {
+                    ::mira::reflect::Schema::Struct {
                         name: #type_name,
                         fields: ::std::boxed::Box::new(#schema),
                     }
@@ -272,14 +272,14 @@ fn expand_reflect(input: &DeriveInput) -> syn::Result<Tokens> {
                 schemas.push(quote!((#variant_name, #schema)));
                 if matches!(variant.fields, Fields::Unit) {
                     saves.push(quote! {
-                        Self::#variant_ident => ::voxl::reflect::Value::Text(
+                        Self::#variant_ident => ::mira::reflect::Value::Text(
                             ::std::string::String::from(#variant_name)
                         )
                     });
                     loads.push(quote!((#variant_name, _) => ::core::result::Result::Ok(Self::#variant_ident)));
                 } else {
                     saves.push(quote! {
-                        Self::#variant_ident #pattern => ::voxl::reflect::Value::Map(::std::vec![(
+                        Self::#variant_ident #pattern => ::mira::reflect::Value::Map(::std::vec![(
                             ::std::string::String::from(#variant_name),
                             #to_value,
                         )])
@@ -302,16 +302,16 @@ fn expand_reflect(input: &DeriveInput) -> syn::Result<Tokens> {
                         ::core::option::Option::Some(tagged) => match tagged {
                             #(#loads,)*
                             _ => ::core::result::Result::Err(
-                                ::voxl::reflect::ReflectError::expected(#type_name, value)
+                                ::mira::reflect::ReflectError::expected(#type_name, value)
                             ),
                         },
                         ::core::option::Option::None => ::core::result::Result::Err(
-                            ::voxl::reflect::ReflectError::expected(#type_name, value)
+                            ::mira::reflect::ReflectError::expected(#type_name, value)
                         ),
                     }
                 },
                 quote! {
-                    ::voxl::reflect::Schema::Enum {
+                    ::mira::reflect::Schema::Enum {
                         name: #type_name,
                         variants: ::std::vec![#(#schemas),*],
                     }
@@ -327,23 +327,23 @@ fn expand_reflect(input: &DeriveInput) -> syn::Result<Tokens> {
     };
 
     Ok(quote! {
-        impl #impl_generics ::voxl::reflect::Reflect for #ident #type_generics #where_clause {
+        impl #impl_generics ::mira::reflect::Reflect for #ident #type_generics #where_clause {
             fn type_name() -> &'static str {
                 #type_name
             }
 
-            fn to_value(&self) -> ::voxl::reflect::Value {
+            fn to_value(&self) -> ::mira::reflect::Value {
                 #to_value
             }
 
             #[allow(unused_variables)]
             fn from_value(
-                value: &::voxl::reflect::Value,
-            ) -> ::core::result::Result<Self, ::voxl::reflect::ReflectError> {
+                value: &::mira::reflect::Value,
+            ) -> ::core::result::Result<Self, ::mira::reflect::ReflectError> {
                 #from_value
             }
 
-            fn schema() -> ::voxl::reflect::Schema {
+            fn schema() -> ::mira::reflect::Schema {
                 #schema
             }
         }

@@ -1,6 +1,6 @@
 use std::ffi::c_void;
 
-use voxl_plugin::sys::{self, VoxlSystemFn};
+use mira_plugin::sys::{self, MiraSystemFn};
 
 use super::events::PluginEvents;
 
@@ -24,7 +24,7 @@ pub(crate) struct Term {
 
 impl Term {
     fn yields_pointer(&self) -> bool {
-        matches!(self.access, sys::VOXL_READ | sys::VOXL_WRITE)
+        matches!(self.access, sys::MIRA_READ | sys::MIRA_WRITE)
     }
 }
 
@@ -33,15 +33,15 @@ pub(crate) fn access_of(terms: &[Term]) -> FilteredAccess {
     let mut access = FilteredAccess::default();
     for term in terms {
         match term.access {
-            sys::VOXL_READ => {
+            sys::MIRA_READ => {
                 access.read_key(term.key, &term.name);
                 access.with_key(term.key, &term.name);
             }
-            sys::VOXL_WRITE => {
+            sys::MIRA_WRITE => {
                 access.write_key(term.key, &term.name);
                 access.with_key(term.key, &term.name);
             }
-            sys::VOXL_WITH => access.with_key(term.key, &term.name),
+            sys::MIRA_WITH => access.with_key(term.key, &term.name),
             _ => access.without_key(term.key, &term.name),
         }
     }
@@ -63,7 +63,7 @@ pub(crate) struct DynamicSystem {
     name: String,
     /// In a fixed stage, where "delta" is the fixed timestep.
     fixed: bool,
-    run: VoxlSystemFn,
+    run: MiraSystemFn,
     user: *mut c_void,
     /// Query 0 is the one the system was added with.
     queries: Vec<Vec<Term>>,
@@ -79,7 +79,7 @@ impl DynamicSystem {
     pub(crate) fn new(
         name: String,
         fixed: bool,
-        run: VoxlSystemFn,
+        run: MiraSystemFn,
         user: *mut c_void,
         terms: Vec<Term>,
     ) -> Self {
@@ -154,7 +154,7 @@ impl System for DynamicSystem {
             let driver = terms
                 .iter()
                 .zip(&storages)
-                .filter(|(term, _)| term.access != sys::VOXL_WITHOUT)
+                .filter(|(term, _)| term.access != sys::MIRA_WITHOUT)
                 .map(|(_, storage)| storage.entities())
                 .min_by_key(|entities| entities.len());
             match driver {
@@ -230,7 +230,7 @@ impl Cursor<'_> {
             .terms
             .iter()
             .zip(&self.storages)
-            .all(|(term, storage)| storage.contains(entity) != (term.access == sys::VOXL_WITHOUT));
+            .all(|(term, storage)| storage.contains(entity) != (term.access == sys::MIRA_WITHOUT));
         if !matches {
             return false;
         }
@@ -244,7 +244,7 @@ impl Cursor<'_> {
             let Some(value) = storage.value_ptr(entity) else {
                 return false;
             };
-            if term.access == sys::VOXL_WRITE {
+            if term.access == sys::MIRA_WRITE {
                 storage.mark_changed(entity, tick);
             }
             out.add(slot).write(value.cast());
@@ -254,7 +254,7 @@ impl Cursor<'_> {
     }
 }
 
-/// What a `VoxlSystem*` points to while a plugin system runs.
+/// What a `MiraSystem*` points to while a plugin system runs.
 pub(crate) struct Context<'a> {
     world: &'a World,
     queries: Vec<Cursor<'a>>,

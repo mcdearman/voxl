@@ -1,7 +1,7 @@
 //! The ground and everything built on it, drawn with the photographic materials through a
 //! pipeline of its own, plugged into the engine's main and shadow passes.
 
-use voxl::{
+use mira::{
     glam::{Vec2, Vec3},
     prelude::*,
     render::{

@@ -2,7 +2,7 @@
 
 use std::f32::consts::{FRAC_PI_2, TAU};
 
-use voxl::{
+use mira::{
     glam::{Vec2, Vec3},
     prelude::*,
     render::{GltfScene, Image},
@@ -406,7 +406,7 @@ pub fn setup(world: &mut World) {
             // stepping when carried too far; hands that go to the gun wherever it has rolled.
             if let Some(skeleton) = scene.skeleton.clone() {
                 let cycle = scene.clips.iter().find(|c| c.name == "walk").map_or(1.1, |c| c.duration);
-                let mut gait = Gait::biped(&skeleton, "Bip01 ", "Toe0", Pattern::new(0.0, walk * cycle, 0.62, &voxl::render::gait::BIPED, 0.09));
+                let mut gait = Gait::biped(&skeleton, "Bip01 ", "Toe0", Pattern::new(0.0, walk * cycle, 0.62, &mira::render::gait::BIPED, 0.09));
                 gait.follow_clip = true;
                 gait.tolerance = 0.12;
                 gait.bob = 0.0;

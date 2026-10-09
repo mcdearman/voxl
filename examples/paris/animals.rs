@@ -14,7 +14,7 @@ use std::{
     sync::Arc,
 };
 
-use voxl::{
+use mira::{
     glam::Vec2,
     prelude::*,
     render::gait::{Gait, Pattern, BIPED, TROT, WALK},

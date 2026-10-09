@@ -1,15 +1,15 @@
-//! Bindings for writing voxl native plugins in Rust.
+//! Bindings for writing mira native plugins in Rust.
 //!
 //! A plugin is a `cdylib` crate that depends on this one (and not on the engine, so it builds
 //! in a second or two) and calls [`export_plugin!`]:
 //!
 //! ```ignore
-//! use voxl_plugin::{App, Component, Error, Stage, System, Transform};
+//! use mira_plugin::{App, Component, Error, Stage, System, Transform};
 //!
 //! static mut TRANSFORM: Option<Component<Transform>> = None;
 //!
 //! fn load(app: &mut App) -> Result<(), Error> {
-//!     let transform = app.lookup::<Transform>("voxl.Transform")?;
+//!     let transform = app.lookup::<Transform>("mira.Transform")?;
 //!     app.add_system("rise", Stage::Update, &[transform.write()], rise)
 //! }
 //!
@@ -21,13 +21,13 @@
 //!     }
 //! }
 //!
-//! voxl_plugin::export_plugin!(load);
+//! mira_plugin::export_plugin!(load);
 //! ```
 //!
 //! `load` runs when the plugin is first loaded and again after every hot reload. Component
 //! values and [`App::state`] blocks survive a reload; the plugin's own statics do not.
 //!
-//! The interface itself is C (see `include/voxl.h` and [`sys`]); this crate is a thin layer
+//! The interface itself is C (see `include/mira.h` and [`sys`]); this crate is a thin layer
 //! over it, and plugins in other languages use the header directly.
 
 pub mod sys;
@@ -41,20 +41,20 @@ use std::{
 };
 
 pub use sys::{
-    VoxlBody as Body, VoxlCamera as Camera, VoxlCollider as Collider, VoxlContact as Contact,
-    VoxlLight as Light, VoxlMaterial as Material, VoxlQuat as Quat, VoxlRayHit as RayHit,
-    VoxlTransform as Transform, VoxlVertex as Vertex,
+    MiraBody as Body, MiraCamera as Camera, MiraCollider as Collider, MiraContact as Contact,
+    MiraLight as Light, MiraMaterial as Material, MiraQuat as Quat, MiraRayHit as RayHit,
+    MiraTransform as Transform, MiraVertex as Vertex,
 };
 
-static API: AtomicPtr<sys::VoxlApi> = AtomicPtr::new(std::ptr::null_mut());
+static API: AtomicPtr<sys::MiraApi> = AtomicPtr::new(std::ptr::null_mut());
 
-fn api() -> &'static sys::VoxlApi {
+fn api() -> &'static sys::MiraApi {
     let api = API.load(Ordering::Relaxed);
     assert!(
         !api.is_null(),
-        "the voxl API is only available while the plugin is loaded"
+        "the mira API is only available while the plugin is loaded"
     );
-    // SAFETY: the engine keeps the table alive until `voxl_plugin_unload` returns.
+    // SAFETY: the engine keeps the table alive until `mira_plugin_unload` returns.
     unsafe { &*api }
 }
 
@@ -90,19 +90,19 @@ pub struct Entity(pub u64);
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Stage {
     /// Once, the first time the plugin is loaded (not again on reload).
-    Startup = sys::VOXL_STAGE_STARTUP as isize,
-    First = sys::VOXL_STAGE_FIRST as isize,
-    PreUpdate = sys::VOXL_STAGE_PRE_UPDATE as isize,
+    Startup = sys::MIRA_STAGE_STARTUP as isize,
+    First = sys::MIRA_STAGE_FIRST as isize,
+    PreUpdate = sys::MIRA_STAGE_PRE_UPDATE as isize,
     /// Fixed timestep: zero or more times per frame.
-    FixedUpdate = sys::VOXL_STAGE_FIXED_UPDATE as isize,
-    Update = sys::VOXL_STAGE_UPDATE as isize,
-    PostUpdate = sys::VOXL_STAGE_POST_UPDATE as isize,
-    Last = sys::VOXL_STAGE_LAST as isize,
+    FixedUpdate = sys::MIRA_STAGE_FIXED_UPDATE as isize,
+    Update = sys::MIRA_STAGE_UPDATE as isize,
+    PostUpdate = sys::MIRA_STAGE_POST_UPDATE as isize,
+    Last = sys::MIRA_STAGE_LAST as isize,
 }
 
 /// A component whose values are `T`.
 pub struct Component<T> {
-    id: sys::VoxlComponent,
+    id: sys::MiraComponent,
     _marker: PhantomData<fn() -> T>,
 }
 
@@ -115,12 +115,12 @@ impl<T> Clone for Component<T> {
 impl<T> Copy for Component<T> {}
 
 impl<T> Component<T> {
-    pub fn id(self) -> sys::VoxlComponent {
+    pub fn id(self) -> sys::MiraComponent {
         self.id
     }
 
     fn term(self, access: u32) -> Term {
-        Term(sys::VoxlTerm {
+        Term(sys::MiraTerm {
             component: self.id,
             access,
         })
@@ -128,43 +128,43 @@ impl<T> Component<T> {
 
     /// Visit entities that have this component, and get a pointer to read it.
     pub fn read(self) -> Term {
-        self.term(sys::VOXL_READ)
+        self.term(sys::MIRA_READ)
     }
 
     /// Visit entities that have this component, and get a pointer to change it.
     pub fn write(self) -> Term {
-        self.term(sys::VOXL_WRITE)
+        self.term(sys::MIRA_WRITE)
     }
 
     /// Only visit entities that have this component.
     pub fn with(self) -> Term {
-        self.term(sys::VOXL_WITH)
+        self.term(sys::MIRA_WITH)
     }
 
     /// Only visit entities that don't have this component.
     pub fn without(self) -> Term {
-        self.term(sys::VOXL_WITHOUT)
+        self.term(sys::MIRA_WITHOUT)
     }
 }
 
 /// One part of a system's query. Made by the methods on [`Component`].
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug)]
-pub struct Term(sys::VoxlTerm);
+pub struct Term(sys::MiraTerm);
 
 /// What one field of a component holds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FieldType {
-    F32 = sys::VOXL_FIELD_F32 as isize,
-    F64 = sys::VOXL_FIELD_F64 as isize,
-    I32 = sys::VOXL_FIELD_I32 as isize,
-    I64 = sys::VOXL_FIELD_I64 as isize,
-    U8 = sys::VOXL_FIELD_U8 as isize,
-    U32 = sys::VOXL_FIELD_U32 as isize,
+    F32 = sys::MIRA_FIELD_F32 as isize,
+    F64 = sys::MIRA_FIELD_F64 as isize,
+    I32 = sys::MIRA_FIELD_I32 as isize,
+    I64 = sys::MIRA_FIELD_I64 as isize,
+    U8 = sys::MIRA_FIELD_U8 as isize,
+    U32 = sys::MIRA_FIELD_U32 as isize,
     /// One byte; zero is false.
-    Bool = sys::VOXL_FIELD_BOOL as isize,
+    Bool = sys::MIRA_FIELD_BOOL as isize,
     /// An [`Entity`]. Scenes keep it pointing at the right entity.
-    Entity = sys::VOXL_FIELD_ENTITY as isize,
+    Entity = sys::MIRA_FIELD_ENTITY as isize,
 }
 
 /// One field of a component, for [`App::describe`]: `count` values of one type (more than one
@@ -206,7 +206,7 @@ pub struct Image(pub u32);
 
 /// An event type whose events are `T`, from [`App::event`].
 pub struct Event<T> {
-    id: sys::VoxlEvent,
+    id: sys::MiraEvent,
     _marker: PhantomData<fn() -> T>,
 }
 
@@ -250,22 +250,22 @@ impl Collider {
     }
 
     pub fn sphere(radius: f32) -> Self {
-        Self::of(sys::VOXL_COLLIDER_SPHERE, [radius, 0.0, 0.0])
+        Self::of(sys::MIRA_COLLIDER_SPHERE, [radius, 0.0, 0.0])
     }
 
     /// A box with the given half extents.
     pub fn cuboid(half: [f32; 3]) -> Self {
-        Self::of(sys::VOXL_COLLIDER_BOX, half)
+        Self::of(sys::MIRA_COLLIDER_BOX, half)
     }
 
     /// An upright capsule.
     pub fn capsule(height: f32, radius: f32) -> Self {
-        Self::of(sys::VOXL_COLLIDER_CAPSULE, [radius, height, 0.0])
+        Self::of(sys::MIRA_COLLIDER_CAPSULE, [radius, height, 0.0])
     }
 
     /// Everything below the entity's position.
     pub fn ground() -> Self {
-        Self::of(sys::VOXL_COLLIDER_GROUND, [0.0; 3])
+        Self::of(sys::MIRA_COLLIDER_GROUND, [0.0; 3])
     }
 }
 
@@ -281,17 +281,17 @@ impl Body {
 
     /// Moved by gravity, forces and collisions.
     pub fn dynamic() -> Self {
-        Self::of(sys::VOXL_BODY_DYNAMIC)
+        Self::of(sys::MIRA_BODY_DYNAMIC)
     }
 
     /// Moved only by its velocity; pushes other bodies and is never pushed.
     pub fn kinematic() -> Self {
-        Self::of(sys::VOXL_BODY_KINEMATIC)
+        Self::of(sys::MIRA_BODY_KINEMATIC)
     }
 
     /// Moved by setting its transform; pushes other bodies and is never pushed.
     pub fn animated() -> Self {
-        Self::of(sys::VOXL_BODY_ANIMATED)
+        Self::of(sys::MIRA_BODY_ANIMATED)
     }
 }
 
@@ -307,48 +307,48 @@ pub struct Query {
 pub struct Key(pub u32);
 
 impl Key {
-    pub const SPACE: Key = Key(sys::VOXL_KEY_SPACE);
-    pub const ENTER: Key = Key(sys::VOXL_KEY_ENTER);
-    pub const ESCAPE: Key = Key(sys::VOXL_KEY_ESCAPE);
-    pub const TAB: Key = Key(sys::VOXL_KEY_TAB);
-    pub const BACKSPACE: Key = Key(sys::VOXL_KEY_BACKSPACE);
-    pub const LEFT: Key = Key(sys::VOXL_KEY_LEFT);
-    pub const RIGHT: Key = Key(sys::VOXL_KEY_RIGHT);
-    pub const UP: Key = Key(sys::VOXL_KEY_UP);
-    pub const DOWN: Key = Key(sys::VOXL_KEY_DOWN);
-    pub const LEFT_SHIFT: Key = Key(sys::VOXL_KEY_LEFT_SHIFT);
-    pub const RIGHT_SHIFT: Key = Key(sys::VOXL_KEY_RIGHT_SHIFT);
-    pub const LEFT_CONTROL: Key = Key(sys::VOXL_KEY_LEFT_CONTROL);
-    pub const RIGHT_CONTROL: Key = Key(sys::VOXL_KEY_RIGHT_CONTROL);
-    pub const LEFT_ALT: Key = Key(sys::VOXL_KEY_LEFT_ALT);
-    pub const RIGHT_ALT: Key = Key(sys::VOXL_KEY_RIGHT_ALT);
+    pub const SPACE: Key = Key(sys::MIRA_KEY_SPACE);
+    pub const ENTER: Key = Key(sys::MIRA_KEY_ENTER);
+    pub const ESCAPE: Key = Key(sys::MIRA_KEY_ESCAPE);
+    pub const TAB: Key = Key(sys::MIRA_KEY_TAB);
+    pub const BACKSPACE: Key = Key(sys::MIRA_KEY_BACKSPACE);
+    pub const LEFT: Key = Key(sys::MIRA_KEY_LEFT);
+    pub const RIGHT: Key = Key(sys::MIRA_KEY_RIGHT);
+    pub const UP: Key = Key(sys::MIRA_KEY_UP);
+    pub const DOWN: Key = Key(sys::MIRA_KEY_DOWN);
+    pub const LEFT_SHIFT: Key = Key(sys::MIRA_KEY_LEFT_SHIFT);
+    pub const RIGHT_SHIFT: Key = Key(sys::MIRA_KEY_RIGHT_SHIFT);
+    pub const LEFT_CONTROL: Key = Key(sys::MIRA_KEY_LEFT_CONTROL);
+    pub const RIGHT_CONTROL: Key = Key(sys::MIRA_KEY_RIGHT_CONTROL);
+    pub const LEFT_ALT: Key = Key(sys::MIRA_KEY_LEFT_ALT);
+    pub const RIGHT_ALT: Key = Key(sys::MIRA_KEY_RIGHT_ALT);
 
     /// A letter key, `'a'..='z'` in either case.
     pub fn letter(letter: char) -> Option<Key> {
         let letter = letter.to_ascii_lowercase();
         letter
             .is_ascii_lowercase()
-            .then(|| Key(sys::VOXL_KEY_A + (letter as u32 - 'a' as u32)))
+            .then(|| Key(sys::MIRA_KEY_A + (letter as u32 - 'a' as u32)))
     }
 
     /// A key on the digit row, 0 to 9.
     pub fn digit(digit: u32) -> Option<Key> {
-        (digit <= 9).then(|| Key(sys::VOXL_KEY_0 + digit))
+        (digit <= 9).then(|| Key(sys::MIRA_KEY_0 + digit))
     }
 
     /// F1 to F12.
     pub fn function(number: u32) -> Option<Key> {
         (1..=12)
             .contains(&number)
-            .then(|| Key(sys::VOXL_KEY_F1 + number - 1))
+            .then(|| Key(sys::MIRA_KEY_F1 + number - 1))
     }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MouseButton {
-    Left = sys::VOXL_MOUSE_LEFT as isize,
-    Right = sys::VOXL_MOUSE_RIGHT as isize,
-    Middle = sys::VOXL_MOUSE_MIDDLE as isize,
+    Left = sys::MIRA_MOUSE_LEFT as isize,
+    Right = sys::MIRA_MOUSE_RIGHT as isize,
+    Middle = sys::MIRA_MOUSE_MIDDLE as isize,
 }
 
 /// A mesh, shared between the entities drawn with it. Create it once and keep the handle in
@@ -386,7 +386,7 @@ unsafe impl<T: Plain, const N: usize> Plain for [T; N] {}
 
 /// The app being set up. Only exists inside the plugin's `load` function.
 pub struct App {
-    raw: *mut sys::VoxlApp,
+    raw: *mut sys::MiraApp,
 }
 
 struct Callback {
@@ -463,9 +463,9 @@ impl App {
     /// Says what fields a component this plugin registered has, so the engine can save it in
     /// scenes, load it back and show it in an inspector. Bytes no field covers aren't saved.
     pub fn describe<T>(&mut self, component: Component<T>, fields: &[Field]) -> Result<(), Error> {
-        let raw: Vec<sys::VoxlField> = fields
+        let raw: Vec<sys::MiraField> = fields
             .iter()
-            .map(|field| sys::VoxlField {
+            .map(|field| sys::MiraField {
                 name: field.name.as_ptr(),
                 name_len: field.name.len(),
                 field_type: field.field_type as u32,
@@ -484,7 +484,7 @@ impl App {
 
     /// Defines an event type whose events are the bytes of `T`, or finds the one this name
     /// already has. Any plugin that knows the name can send and read it; the engine's own
-    /// events are found the same way (`"voxl.Contact"` is a [`Contact`]).
+    /// events are found the same way (`"mira.Contact"` is a [`Contact`]).
     pub fn event<T: Copy + 'static>(&mut self, name: &str) -> Result<Event<T>, Error> {
         // SAFETY: called inside `load` with the engine's app pointer.
         let id =
@@ -502,7 +502,7 @@ impl App {
     /// queries of one system may only reach the same component if neither writes it, or if
     /// `with`/`without` terms guarantee they never match the same entity.
     pub fn add_query(&mut self, system: &str, terms: &[Term]) -> Result<Query, Error> {
-        // SAFETY: called inside `load`; `Term` is a transparent wrapper over `VoxlTerm`.
+        // SAFETY: called inside `load`; `Term` is a transparent wrapper over `MiraTerm`.
         let index = unsafe {
             (api().system_add_query)(
                 self.raw,
@@ -533,7 +533,7 @@ impl App {
         // Leaked on purpose: the engine may call the system until the library is unloaded,
         // and a few bytes per system per reload is not worth tracking.
         let callback = Box::into_raw(Box::new(Callback { run, pointers }));
-        let desc = sys::VoxlSystemDesc {
+        let desc = sys::MiraSystemDesc {
             name: name.as_ptr(),
             name_len: name.len(),
             stage: stage as u32,
@@ -544,7 +544,7 @@ impl App {
             term_count: terms.len(),
         };
         // SAFETY: `desc` and everything it points to live for the call, which is all the
-        // engine needs; `Term` is a transparent wrapper over `VoxlTerm`.
+        // engine needs; `Term` is a transparent wrapper over `MiraTerm`.
         if unsafe { (api().system_add)(self.raw, &desc) } != 0 {
             return Err(format!("could not add system `{name}`").into());
         }
@@ -555,11 +555,11 @@ impl App {
 fn pointer_count(terms: &[Term]) -> usize {
     terms
         .iter()
-        .filter(|t| matches!(t.0.access, sys::VOXL_READ | sys::VOXL_WRITE))
+        .filter(|t| matches!(t.0.access, sys::MIRA_READ | sys::MIRA_WRITE))
         .count()
 }
 
-unsafe extern "C" fn trampoline(system: *mut sys::VoxlSystem, user: *mut c_void) {
+unsafe extern "C" fn trampoline(system: *mut sys::MiraSystem, user: *mut c_void) {
     // SAFETY: `user` is the `Callback` leaked in `add_system`.
     let callback = &*user.cast::<Callback>();
     let mut system = System {
@@ -649,26 +649,26 @@ pub enum SignalOp {
 impl SignalOp {
     fn code(self) -> (u32, f64) {
         match self {
-            SignalOp::And => (sys::VOXL_SIGNAL_AND, 0.0),
-            SignalOp::Or => (sys::VOXL_SIGNAL_OR, 0.0),
-            SignalOp::Not => (sys::VOXL_SIGNAL_NOT, 0.0),
-            SignalOp::Count => (sys::VOXL_SIGNAL_COUNT, 0.0),
-            SignalOp::Sum => (sys::VOXL_SIGNAL_SUM, 0.0),
-            SignalOp::Select => (sys::VOXL_SIGNAL_SELECT, 0.0),
-            SignalOp::Timer => (sys::VOXL_SIGNAL_TIMER, 0.0),
-            SignalOp::HeldFor(seconds) => (sys::VOXL_SIGNAL_HELD_FOR, seconds),
-            SignalOp::Less => (sys::VOXL_SIGNAL_LESS, 0.0),
-            SignalOp::LessOrEqual => (sys::VOXL_SIGNAL_LESS_OR_EQUAL, 0.0),
-            SignalOp::Equal => (sys::VOXL_SIGNAL_EQUAL, 0.0),
-            SignalOp::GreaterOrEqual => (sys::VOXL_SIGNAL_GREATER_OR_EQUAL, 0.0),
-            SignalOp::Greater => (sys::VOXL_SIGNAL_GREATER, 0.0),
+            SignalOp::And => (sys::MIRA_SIGNAL_AND, 0.0),
+            SignalOp::Or => (sys::MIRA_SIGNAL_OR, 0.0),
+            SignalOp::Not => (sys::MIRA_SIGNAL_NOT, 0.0),
+            SignalOp::Count => (sys::MIRA_SIGNAL_COUNT, 0.0),
+            SignalOp::Sum => (sys::MIRA_SIGNAL_SUM, 0.0),
+            SignalOp::Select => (sys::MIRA_SIGNAL_SELECT, 0.0),
+            SignalOp::Timer => (sys::MIRA_SIGNAL_TIMER, 0.0),
+            SignalOp::HeldFor(seconds) => (sys::MIRA_SIGNAL_HELD_FOR, seconds),
+            SignalOp::Less => (sys::MIRA_SIGNAL_LESS, 0.0),
+            SignalOp::LessOrEqual => (sys::MIRA_SIGNAL_LESS_OR_EQUAL, 0.0),
+            SignalOp::Equal => (sys::MIRA_SIGNAL_EQUAL, 0.0),
+            SignalOp::GreaterOrEqual => (sys::MIRA_SIGNAL_GREATER_OR_EQUAL, 0.0),
+            SignalOp::Greater => (sys::MIRA_SIGNAL_GREATER, 0.0),
         }
     }
 }
 
 /// One run of a system. Only exists inside the system's function.
 pub struct System {
-    raw: *mut sys::VoxlSystem,
+    raw: *mut sys::MiraSystem,
     pointers: usize,
 }
 
@@ -699,7 +699,7 @@ impl System {
     #[allow(clippy::should_implement_trait)]
     pub fn next<const N: usize>(&mut self) -> Option<(Entity, [*mut c_void; N])> {
         self.check::<N>();
-        let mut entity = sys::VOXL_ENTITY_NONE;
+        let mut entity = sys::MIRA_ENTITY_NONE;
         let mut pointers = [std::ptr::null_mut(); N];
         // SAFETY: `pointers` has room for every read/write term (checked above).
         let found = unsafe { (api().query_next)(self.raw, &mut entity, pointers.as_mut_ptr()) };
@@ -722,7 +722,7 @@ impl System {
             "this query has {} read/write terms",
             query.pointers
         );
-        let mut entity = sys::VOXL_ENTITY_NONE;
+        let mut entity = sys::MIRA_ENTITY_NONE;
         let mut pointers = [std::ptr::null_mut(); N];
         // SAFETY: `pointers` has room for every read/write term (checked above).
         let found = unsafe {
@@ -799,16 +799,16 @@ impl System {
 
     /// A cube with the given edge length. `None` if the app has no renderer.
     pub fn mesh_cube(&mut self, size: f32) -> Option<Mesh> {
-        self.shape(sys::VOXL_SHAPE_CUBE, size)
+        self.shape(sys::MIRA_SHAPE_CUBE, size)
     }
 
     pub fn mesh_sphere(&mut self, radius: f32) -> Option<Mesh> {
-        self.shape(sys::VOXL_SHAPE_SPHERE, radius)
+        self.shape(sys::MIRA_SHAPE_SPHERE, radius)
     }
 
     /// A flat square facing up, with the given edge length.
     pub fn mesh_plane(&mut self, size: f32) -> Option<Mesh> {
-        self.shape(sys::VOXL_SHAPE_PLANE, size)
+        self.shape(sys::MIRA_SHAPE_PLANE, size)
     }
 
     /// A mesh from triangles: three indices each, counter-clockwise seen from the front.
@@ -1033,7 +1033,7 @@ impl System {
     /// Makes `child` a child of `parent` (its transform becomes relative to the parent's),
     /// or a root again with `None`, when this system returns.
     pub fn set_parent(&mut self, child: Entity, parent: Option<Entity>) {
-        let parent = parent.map_or(sys::VOXL_ENTITY_NONE, |parent| parent.0);
+        let parent = parent.map_or(sys::MIRA_ENTITY_NONE, |parent| parent.0);
         // SAFETY: called inside the system.
         unsafe { (api().set_parent)(self.raw, child.0, parent) }
     }
@@ -1088,26 +1088,26 @@ pub fn log(level: u32, message: &str) {
 
 #[macro_export]
 macro_rules! info {
-    ($($arg:tt)*) => { $crate::log($crate::sys::VOXL_LOG_INFO, &format!($($arg)*)) };
+    ($($arg:tt)*) => { $crate::log($crate::sys::MIRA_LOG_INFO, &format!($($arg)*)) };
 }
 
 #[macro_export]
 macro_rules! warn {
-    ($($arg:tt)*) => { $crate::log($crate::sys::VOXL_LOG_WARN, &format!($($arg)*)) };
+    ($($arg:tt)*) => { $crate::log($crate::sys::MIRA_LOG_WARN, &format!($($arg)*)) };
 }
 
 #[macro_export]
 macro_rules! error {
-    ($($arg:tt)*) => { $crate::log($crate::sys::VOXL_LOG_ERROR, &format!($($arg)*)) };
+    ($($arg:tt)*) => { $crate::log($crate::sys::MIRA_LOG_ERROR, &format!($($arg)*)) };
 }
 
 #[doc(hidden)]
 pub unsafe fn __load(
-    api: *const sys::VoxlApi,
-    app: *mut sys::VoxlApp,
+    api: *const sys::MiraApi,
+    app: *mut sys::MiraApp,
     load: fn(&mut App) -> Result<(), Error>,
 ) -> i32 {
-    if api.is_null() || (*api).abi_version != sys::VOXL_ABI_VERSION {
+    if api.is_null() || (*api).abi_version != sys::MIRA_ABI_VERSION {
         return -1;
     }
     API.store(api.cast_mut(), Ordering::Relaxed);
@@ -1115,13 +1115,13 @@ pub unsafe fn __load(
         Ok(Ok(())) => 0,
         Ok(Err(err)) => {
             log(
-                sys::VOXL_LOG_ERROR,
+                sys::MIRA_LOG_ERROR,
                 &format!("plugin failed to load: {err}"),
             );
             -1
         }
         Err(_) => {
-            log(sys::VOXL_LOG_ERROR, "plugin panicked while loading");
+            log(sys::MIRA_LOG_ERROR, "plugin panicked while loading");
             -1
         }
     }
@@ -1138,22 +1138,22 @@ pub fn __unload() {
 macro_rules! export_plugin {
     ($load:path) => {
         #[no_mangle]
-        pub extern "C" fn voxl_plugin_abi_version() -> u32 {
-            $crate::sys::VOXL_ABI_VERSION
+        pub extern "C" fn mira_plugin_abi_version() -> u32 {
+            $crate::sys::MIRA_ABI_VERSION
         }
 
         /// # Safety
         /// Called by the engine with its API table and the app being set up.
         #[no_mangle]
-        pub unsafe extern "C" fn voxl_plugin_load(
-            api: *const $crate::sys::VoxlApi,
-            app: *mut $crate::sys::VoxlApp,
+        pub unsafe extern "C" fn mira_plugin_load(
+            api: *const $crate::sys::MiraApi,
+            app: *mut $crate::sys::MiraApp,
         ) -> i32 {
             $crate::__load(api, app, $load)
         }
 
         #[no_mangle]
-        pub extern "C" fn voxl_plugin_unload() {
+        pub extern "C" fn mira_plugin_unload() {
             $crate::__unload()
         }
     };

@@ -5,7 +5,7 @@
 //! arguments, and optionally an `id` that the answer repeats:
 //!
 //! ```text
-//! {"cmd": "get", "entity": 4294967297, "component": "voxl.Transform"}
+//! {"cmd": "get", "entity": 4294967297, "component": "mira.Transform"}
 //! {"ok": {"translation": [0.0, 2.0, 0.0], "rotation": [0.0, 0.0, 0.0, 1.0], "scale": [1.0, 1.0, 1.0]}}
 //! ```
 //!
@@ -839,9 +839,9 @@ impl App {
         Ok(address)
     }
 
-    /// Listens where `VOXL_DEBUG` says (`VOXL_DEBUG=127.0.0.1:7878`), if it is set.
+    /// Listens where `MIRA_DEBUG` says (`MIRA_DEBUG=127.0.0.1:7878`), if it is set.
     pub fn listen_for_debugger_from_env(&mut self) -> &mut Self {
-        if let Ok(address) = std::env::var("VOXL_DEBUG") {
+        if let Ok(address) = std::env::var("MIRA_DEBUG") {
             if let Err(err) = self.listen_for_debugger(&address) {
                 log::error!("can't listen for debuggers on {address}: {err}");
             }
@@ -917,7 +917,7 @@ mod tests {
         let child = app.world.spawn((Transform::IDENTITY, Parent(parent)));
         app.update();
 
-        let listed = ask(&mut app, "{'cmd': 'entities', 'with': 'voxl.Parent'}");
+        let listed = ask(&mut app, "{'cmd': 'entities', 'with': 'mira.Parent'}");
         assert_eq!(listed.field("total"), Some(&Value::Int(1)));
         assert_eq!(
             listed.get_path("entities.0.entity"),
@@ -930,26 +930,26 @@ mod tests {
 
         let bits = parent.to_bits();
         let all = ask(&mut app, &format!("{{'cmd': 'get', 'entity': {bits}}}"));
-        let transform = all.field("voxl.Transform").expect("its transform");
+        let transform = all.field("mira.Transform").expect("its transform");
         assert_eq!(
             transform.get_path("translation.2"),
             Some(&Value::Float(3.0))
         );
-        ask(&mut app, &format!("{{'cmd': 'set', 'entity': {bits}, 'component': 'voxl.Transform', 'path': 'translation.1', 'value': 9.5}}"));
+        ask(&mut app, &format!("{{'cmd': 'set', 'entity': {bits}, 'component': 'mira.Transform', 'path': 'translation.1', 'value': 9.5}}"));
         assert_eq!(
             app.world.get::<Transform>(parent).unwrap().translation.y,
             9.5
         );
         // A whole component, on an entity that hadn't one; and taken away again.
-        ask(&mut app, &format!("{{'cmd': 'set', 'entity': {bits}, 'component': 'voxl.RigidBody', 'value': {{'mass': 4.0}}}}"));
+        ask(&mut app, &format!("{{'cmd': 'set', 'entity': {bits}, 'component': 'mira.RigidBody', 'value': {{'mass': 4.0}}}}"));
         assert_eq!(app.world.get::<RigidBody>(parent).unwrap().mass, 4.0);
         ask(
             &mut app,
-            &format!("{{'cmd': 'remove', 'entity': {bits}, 'component': 'voxl.RigidBody'}}"),
+            &format!("{{'cmd': 'remove', 'entity': {bits}, 'component': 'mira.RigidBody'}}"),
         );
         assert!(!app.world.has::<RigidBody>(parent));
 
-        let spawned = ask(&mut app, "{'cmd': 'spawn', 'components': {'voxl.Transform': {'translation': [0, 5, 0], 'rotation': [0, 0, 0, 1], 'scale': [1, 1, 1]}}}");
+        let spawned = ask(&mut app, "{'cmd': 'spawn', 'components': {'mira.Transform': {'translation': [0, 5, 0], 'rotation': [0, 0, 0, 1], 'scale': [1, 1, 1]}}}");
         let Value::Int(spawned) = spawned else {
             panic!("the new entity's number");
         };
@@ -970,31 +970,31 @@ mod tests {
 
         ask(
             &mut app,
-            "{'cmd': 'resource', 'name': 'voxl.Fog', 'value': {'density': 0.5}}",
+            "{'cmd': 'resource', 'name': 'mira.Fog', 'value': {'density': 0.5}}",
         );
         assert_eq!(app.world.resource::<crate::render::Fog>().density, 0.5);
         assert_eq!(
-            ask(&mut app, "{'cmd': 'resource', 'name': 'voxl.Fog'}").field("density"),
+            ask(&mut app, "{'cmd': 'resource', 'name': 'mira.Fog'}").field("density"),
             Some(&Value::Float(0.5))
         );
         let types = ask(&mut app, "{'cmd': 'types'}");
         assert!(
-            matches!(types.field("components"), Some(Value::List(names)) if names.contains(&Value::Text("voxl.Collider".into())))
+            matches!(types.field("components"), Some(Value::List(names)) if names.contains(&Value::Text("mira.Collider".into())))
         );
 
         // What can't be done says why, and changes nothing.
         // The shape of a type, for whoever has to write one.
-        let shape = ask(&mut app, "{'cmd': 'schema', 'name': 'voxl.Transform'}");
+        let shape = ask(&mut app, "{'cmd': 'schema', 'name': 'mira.Transform'}");
         assert_eq!(shape.field("type"), Some(&Value::Text("struct".into())));
         assert_eq!(
             shape.get_path("fields.translation.length"),
             Some(&Value::Int(3))
         );
         assert_eq!(
-            ask(&mut app, "{'cmd': 'schema', 'name': 'voxl.Fog'}").get_path("fields.density"),
+            ask(&mut app, "{'cmd': 'schema', 'name': 'mira.Fog'}").get_path("fields.density"),
             Some(&Value::Text("number".into()))
         );
-        assert!(refused(&mut app, "{'cmd': 'schema', 'name': 'voxl.Nothing'}").contains("no type"));
+        assert!(refused(&mut app, "{'cmd': 'schema', 'name': 'mira.Nothing'}").contains("no type"));
         assert!(refused(&mut app, "{'cmd': 'screenshot', 'path': 'x.png'}").contains("no renderer"));
         assert_eq!(
             refused(&mut app, "{'cmd': 'get', 'entity': 77}"),
@@ -1007,9 +1007,9 @@ mod tests {
         assert!(refused(&mut app, "not json").starts_with("not JSON"));
         assert!(refused(
             &mut app,
-            "{'cmd': 'spawn', 'components': {'voxl.Transform': 3}}"
+            "{'cmd': 'spawn', 'components': {'mira.Transform': 3}}"
         )
-        .contains("voxl.Transform"));
+        .contains("mira.Transform"));
         assert_eq!(
             app.world.entity_count(),
             1,

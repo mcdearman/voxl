@@ -1,6 +1,6 @@
 {-# LANGUAGE ForeignFunctionInterface #-}
 
--- | A whole (very small) game as a voxl plugin: steer the cube with WASD or the arrow keys,
+-- | A whole (very small) game as a mira plugin: steer the cube with WASD or the arrow keys,
 -- collect the spheres, and shove the crates about. Each sphere collected is replaced
 -- somewhere else.
 --
@@ -21,7 +21,7 @@ import Data.Int (Int32)
 import Data.Word (Word32)
 import Foreign (Ptr, Storable (..), castPtr)
 import Foreign.C.Types (CInt (..))
-import Voxl
+import Mira
 
 -- Tuning. Change these while the game is running.
 playerSpeed, reach, fieldSize :: Float
@@ -62,13 +62,13 @@ data Game = Game
   , seed :: Ptr Word32
   }
 
-foreign export ccall "voxl_hs_main" pluginMain :: Ptr () -> IO CInt
+foreign export ccall "mira_hs_main" pluginMain :: Ptr () -> IO CInt
 
 pluginMain :: Ptr () -> IO CInt
 pluginMain = plugin $ \app -> do
   game <-
     Game
-      <$> lookupComponent app "voxl.Transform"
+      <$> lookupComponent app "mira.Transform"
       <*> registerComponent app "chase.Player"
       <*> registerComponent app "chase.Pickup"
       <*> statePtr app "chase.ball"

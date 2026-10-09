@@ -1,8 +1,8 @@
 # Native plugins and hot reload
 
-A voxl plugin is a shared library that adds components and systems to a running app. It can
+A mira plugin is a shared library that adds components and systems to a running app. It can
 be written in any language that can build a shared library exporting C functions, because the
-whole contract is one C header: [`include/voxl.h`](../include/voxl.h).
+whole contract is one C header: [`include/mira.h`](../include/mira.h).
 
 The engine watches each plugin's file. Rebuild a plugin while the app is running and the new
 code takes over within a fraction of a second, with the world exactly as it was.
@@ -44,23 +44,23 @@ Three exported functions:
 
 | Function | When it is called |
 |---|---|
-| `voxl_plugin_abi_version()` | First. Must return `VOXL_ABI_VERSION`, or the plugin is refused. |
-| `voxl_plugin_load(api, app)` | On first load and after every reload. Register everything here. Return 0 for success. |
-| `voxl_plugin_unload()` | Optional. Before the library is closed. |
-| `voxl_plugin_flags()` | Optional. `VOXL_PLUGIN_KEEP_LOADED` asks the engine never to unmap the library, for languages whose runtime can't be unloaded (Haskell, Go). |
+| `mira_plugin_abi_version()` | First. Must return `MIRA_ABI_VERSION`, or the plugin is refused. |
+| `mira_plugin_load(api, app)` | On first load and after every reload. Register everything here. Return 0 for success. |
+| `mira_plugin_unload()` | Optional. Before the library is closed. |
+| `mira_plugin_flags()` | Optional. `MIRA_PLUGIN_KEEP_LOADED` asks the engine never to unmap the library, for languages whose runtime can't be unloaded (Haskell, Go). |
 
-`api` is a table of the engine's functions. In `voxl_plugin_load` a plugin can:
+`api` is a table of the engine's functions. In `mira_plugin_load` a plugin can:
 
 - **Define a component** with `component_register`: a name, a size and an alignment. Values
   are plain bytes.
 - **Find a component** someone else defined with `component_lookup`, such as the engine's
-  `voxl.Transform`. It reports the size and alignment so the plugin can check its own
+  `mira.Transform`. It reports the size and alignment so the plugin can check its own
   definition matches.
 - **Get persistent state** with `state`: a zeroed block of memory that survives reloads.
 - **Add a system** with `system_add`: a function, the stage it runs in, and its *terms*.
 
 A system's terms say which entities it visits and what it does with each component:
-`VOXL_READ` and `VOXL_WRITE` give a pointer to the value, `VOXL_WITH` and `VOXL_WITHOUT` only
+`MIRA_READ` and `MIRA_WRITE` give a pointer to the value, `MIRA_WITH` and `MIRA_WITHOUT` only
 filter. Inside the system, `query_next` steps through the matching entities. `spawn`,
 `despawn`, `insert` and `remove` queue changes that apply when the system returns.
 
@@ -78,7 +78,7 @@ Inside a system a plugin can also:
   vertices and triangles. Make each mesh once, in a `STARTUP` system, and keep the handle in
   a `state` block.
 - **Make an entity visible:** `set_mesh` and `set_material`, together with a
-  `voxl.Transform`.
+  `mira.Transform`.
 - **Read time:** `delta_seconds` and `elapsed_seconds`.
 - **Set up the scene:** `set_camera` and `set_light` on an entity with a transform,
   `set_ambient`, and `set_window_title`.
@@ -98,10 +98,10 @@ components:
 - a field holding an entity keeps pointing at the right entity when a scene is loaded.
 
 ```c
-VoxlField fields[] = {
-    {VOXL_STR("weight"), VOXL_FIELD_F32, 1, offsetof(Item, weight)},
-    {VOXL_STR("owner"), VOXL_FIELD_ENTITY, 1, offsetof(Item, owner)},
-    {VOXL_STR("tint"), VOXL_FIELD_F32, 3, offsetof(Item, tint)},
+MiraField fields[] = {
+    {MIRA_STR("weight"), MIRA_FIELD_F32, 1, offsetof(Item, weight)},
+    {MIRA_STR("owner"), MIRA_FIELD_ENTITY, 1, offsetof(Item, owner)},
+    {MIRA_STR("tint"), MIRA_FIELD_F32, 3, offsetof(Item, tint)},
 };
 api->component_describe(app, item, fields, 3);
 ```
@@ -154,7 +154,7 @@ plugins can't silently disagree about what an event contains.
 - A system's place is kept by the engine under the system's name, so a hot-reloaded system
   carries on exactly where the old version stopped.
 
-The engine publishes `voxl.Contact` (`VoxlContact` in the header) for every pair of colliders
+The engine publishes `mira.Contact` (`MiraContact` in the header) for every pair of colliders
 touching during a physics step.
 
 ## What survives a reload
@@ -166,7 +166,7 @@ touching during a physics step.
 | The order systems run in (a system replaces its namesake) | `Startup` systems do not run again |
 
 So: keep anything that must persist in components or in a `state` block, and fetch component
-handles again in every `voxl_plugin_load`.
+handles again in every `mira_plugin_load`.
 
 If a component is registered again with a different size or alignment, its old values are
 discarded (with a warning), since they can no longer be interpreted. A plugin that changes a
@@ -178,8 +178,8 @@ changes.
 
 ## Rules
 
-- Call functions that take a `VoxlApp*` only inside `voxl_plugin_load`, and functions that
-  take a `VoxlSystem*` only inside that system. Don't keep either pointer.
+- Call functions that take a `MiraApp*` only inside `mira_plugin_load`, and functions that
+  take a `MiraSystem*` only inside that system. Don't keep either pointer.
 - Everything happens on the thread that called you.
 - Component pointers from a query are valid until the system returns.
 - Strings are UTF-8 with an explicit length.
@@ -191,11 +191,11 @@ and the engine cannot prevent that. Only load plugins you trust.
 
 ## In Haskell (the default)
 
-Haskell is the language voxl's plugin examples and documentation lead with: plugin code is
+Haskell is the language mira's plugin examples and documentation lead with: plugin code is
 type-checked against the components it uses, and the bindings give it no pointers to misuse.
 (The long-term intent is for Meadow to take this place once it is ready.)
 
-A plugin is one module that exports its setup function to C as `voxl_hs_main`. See
+A plugin is one module that exports its setup function to C as `mira_hs_main`. See
 [`plugins/swirl`](../plugins/swirl/Swirl.hs).
 
 ```haskell
@@ -203,13 +203,13 @@ module Rise where
 
 import Foreign (Ptr)
 import Foreign.C.Types (CInt (..))
-import Voxl
+import Mira
 
-foreign export ccall "voxl_hs_main" pluginMain :: Ptr () -> IO CInt
+foreign export ccall "mira_hs_main" pluginMain :: Ptr () -> IO CInt
 
 pluginMain :: Ptr () -> IO CInt
 pluginMain = plugin $ \app -> do
-  transform <- lookupComponent app "voxl.Transform"
+  transform <- lookupComponent app "mira.Transform"
   addSystem app "rise" Update (write transform) $ \sys _entity place -> do
     dt <- deltaSeconds sys
     modifyRef place $ \t -> t {translation = translation t + V3 0 dt 0}
@@ -244,7 +244,7 @@ with `colliderOf (Box half)`, `setBody` with `bodyOf Dynamic`, `raycast`, and
 are set with `setSignal` and rules written as expressions with `defineRule`.
 
 Build with the script, which links the module with the bindings
-([`bindings/haskell/Voxl.hs`](../bindings/haskell/Voxl.hs)) and a small piece of C that starts
+([`bindings/haskell/Mira.hs`](../bindings/haskell/Mira.hs)) and a small piece of C that starts
 the GHC runtime:
 
 ```
@@ -270,14 +270,14 @@ Things to know:
 
 ## In Rust
 
-Depend on the `voxl_plugin` crate (not on the engine, so a rebuild takes a second or two) and
+Depend on the `mira_plugin` crate (not on the engine, so a rebuild takes a second or two) and
 set `crate-type = ["cdylib"]`. See [`plugins/wave`](../plugins/wave/src/lib.rs).
 
 ```rust
-use voxl_plugin::{App, Error, Stage, System, Transform};
+use mira_plugin::{App, Error, Stage, System, Transform};
 
 fn load(app: &mut App) -> Result<(), Error> {
-    let transform = app.lookup::<Transform>("voxl.Transform")?;
+    let transform = app.lookup::<Transform>("mira.Transform")?;
     app.add_system("rise", Stage::Update, &[transform.write()], rise)
 }
 
@@ -289,12 +289,12 @@ fn rise(system: &mut System) {
     }
 }
 
-voxl_plugin::export_plugin!(load);
+mira_plugin::export_plugin!(load);
 ```
 
 ## In C or C++
 
-Include `voxl.h` and build a shared library. See [`plugins/pulse`](../plugins/pulse/pulse.c).
+Include `mira.h` and build a shared library. See [`plugins/pulse`](../plugins/pulse/pulse.c).
 
 ```
 cc -shared -fPIC -I include -o libmine.dylib mine.c
@@ -304,8 +304,8 @@ cc -shared -fPIC -I include -o libmine.dylib mine.c
 
 Anything that can produce a shared library with C-callable exports works directly against the
 header: Zig (`@cImport`), C++, Odin, Nim, D, Swift, Pascal, Go and so on. (A Go plugin must
-return `VOXL_PLUGIN_KEEP_LOADED` from `voxl_plugin_flags`, as the Haskell glue does.) Bindings are a
-translation of `voxl.h`, which is about 150 lines.
+return `MIRA_PLUGIN_KEEP_LOADED` from `mira_plugin_flags`, as the Haskell glue does.) Bindings are a
+translation of `mira.h`, which is about 150 lines.
 
 Languages that run in a virtual machine or interpreter (Python, Lua, C#, Java, JavaScript)
 can't be loaded as a shared library by themselves. They need a small native plugin that
@@ -331,6 +331,6 @@ app.run()
 
 Plugins cannot yet play a model's animations, draw text or UI, play sound,
 use joints or character controllers, edit voxel terrain, or see any engine component other
-than `voxl.Transform`. Point and spot lights don't exist in the engine yet. Queries have no
+than `mira.Transform`. Point and spot lights don't exist in the engine yet. Queries have no
 optional terms or change filters. A plugin cannot be removed while the app runs. The table of functions is
 versioned and carries its own size, so these can be added without breaking existing plugins.

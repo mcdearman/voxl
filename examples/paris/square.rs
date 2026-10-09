@@ -9,7 +9,7 @@
 
 use std::f32::consts::{FRAC_PI_4, PI, TAU};
 
-use voxl::{
+use mira::{
     glam::{Vec2, Vec3},
     prelude::*,
     render::Vertex,
@@ -850,7 +850,7 @@ pub fn jet_splashes() -> Vec<Vec3> {
 /// steps, basin wall, pedestal and column, the bollards round it, and the stalls, lamp posts
 /// and trees (as upright capsules).
 pub fn colliders() -> Vec<(Vec3, Collider)> {
-    use voxl::physics::TriMesh;
+    use mira::physics::TriMesh;
     let f = FOUNTAIN;
     let solid = |mesh: Mesh| Collider::trimesh(TriMesh::from_mesh(&mesh));
     let mut out = vec![

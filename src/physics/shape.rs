@@ -9,7 +9,7 @@ use crate::reflect::{Reflect, ReflectError, Schema, Value};
 
 /// A position and orientation, without scale.
 #[derive(Clone, Copy, Debug, PartialEq, Reflect)]
-#[reflect(name = "voxl.Iso")]
+#[reflect(name = "mira.Iso")]
 pub struct Iso {
     pub position: Vec3,
     pub rotation: Quat,
@@ -81,7 +81,7 @@ impl Aabb {
 
 /// A shape to collide. Shapes sit at their collider's origin (see `Collider::offset`).
 #[derive(Clone, Debug, Reflect)]
-#[reflect(name = "voxl.Shape")]
+#[reflect(name = "mira.Shape")]
 pub enum Shape {
     Sphere { radius: f32 },
     /// A box with the given half extents along its local axes.
@@ -273,7 +273,7 @@ struct Node {
 /// Saved as its vertices and triangles; the hierarchy over them is rebuilt on loading.
 impl Reflect for Arc<TriMesh> {
     fn type_name() -> &'static str {
-        "voxl.TriMesh"
+        "mira.TriMesh"
     }
 
     fn to_value(&self) -> Value {
@@ -287,7 +287,7 @@ impl Reflect for Arc<TriMesh> {
         let part = |name: &'static str| {
             value
                 .field(name)
-                .ok_or_else(|| ReflectError::missing("voxl.TriMesh", name))
+                .ok_or_else(|| ReflectError::missing("mira.TriMesh", name))
         };
         let vertices =
             Vec::<Vec3>::from_value(part("vertices")?).map_err(|err| err.inside("vertices"))?;
@@ -308,7 +308,7 @@ impl Reflect for Arc<TriMesh> {
 
     fn schema() -> Schema {
         Schema::Struct {
-            name: "voxl.TriMesh",
+            name: "mira.TriMesh",
             fields: Box::new(Schema::Fields(vec![
                 ("vertices", Vec::<Vec3>::schema()),
                 ("triangles", Vec::<[u32; 3]>::schema()),

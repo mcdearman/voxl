@@ -29,7 +29,7 @@ impl TaskPool {
         for i in 0..threads {
             let receiver = receiver.clone();
             thread::Builder::new()
-                .name(format!("voxl worker {i}"))
+                .name(format!("mira worker {i}"))
                 .spawn(move || loop {
                     // The guard is a temporary, so the lock is released before the job runs.
                     let job = receiver.lock().unwrap().recv();

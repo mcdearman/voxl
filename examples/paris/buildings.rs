@@ -6,7 +6,7 @@
 
 use std::f32::consts::{PI, TAU};
 
-use voxl::{
+use mira::{
     glam::{Mat3, Vec2, Vec3},
     prelude::*,
     render::Vertex,

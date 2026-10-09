@@ -1,20 +1,20 @@
 //! Talks to a running game over its debug connection.
 //!
 //! ```text
-//! voxl-debug status
-//! voxl-debug entities with=voxl.Camera
-//! voxl-debug get entity=4294967297 component=voxl.Transform
-//! voxl-debug set entity=4294967297 component=voxl.Transform path=translation.1 value=3.5
-//! voxl-debug signals
-//! voxl-debug signal_force name=blue.contesting value=false
-//! voxl-debug --at 127.0.0.1:7878 pause
-//! voxl-debug watch                     # the signal graph, redrawn as the game runs
-//! voxl-debug watch every=0.5
+//! mira-debug status
+//! mira-debug entities with=mira.Camera
+//! mira-debug get entity=4294967297 component=mira.Transform
+//! mira-debug set entity=4294967297 component=mira.Transform path=translation.1 value=3.5
+//! mira-debug signals
+//! mira-debug signal_force name=blue.contesting value=false
+//! mira-debug --at 127.0.0.1:7878 pause
+//! mira-debug watch                     # the signal graph, redrawn as the game runs
+//! mira-debug watch every=0.5
 //! ```
 //!
 //! The first word is the command and the rest are its arguments. A value that reads as JSON
 //! (a number, `true`, `[1, 2, 3]`, `{"a": 1}`) is sent as that, and anything else as text.
-//! The game is found at `--at`, else at `VOXL_DEBUG`, else at 127.0.0.1:7878.
+//! The game is found at `--at`, else at `MIRA_DEBUG`, else at 127.0.0.1:7878.
 
 use std::{
     io::{BufRead, BufReader, Write},
@@ -23,17 +23,17 @@ use std::{
     time::Duration,
 };
 
-use voxl::reflect::{json, Value};
+use mira::reflect::{json, Value};
 
 fn main() -> ExitCode {
     let mut args: Vec<String> = std::env::args().skip(1).collect();
-    let mut address = std::env::var("VOXL_DEBUG").unwrap_or_else(|_| "127.0.0.1:7878".to_owned());
+    let mut address = std::env::var("MIRA_DEBUG").unwrap_or_else(|_| "127.0.0.1:7878".to_owned());
     if args.first().is_some_and(|arg| arg == "--at") && args.len() >= 2 {
         address = args[1].clone();
         args.drain(..2);
     }
     let Some(command) = args.first() else {
-        eprintln!("usage: voxl-debug [--at address] <command> [name=value ...]");
+        eprintln!("usage: mira-debug [--at address] <command> [name=value ...]");
         return ExitCode::from(2);
     };
     if command == "watch" {
@@ -118,7 +118,7 @@ fn watch(address: &str, args: &[String]) -> ExitCode {
                 number("seconds"),
                 if paused { "PAUSED" } else { "running" },
                 number("failures"),
-                voxl::remote::signals_text(&graph),
+                mira::remote::signals_text(&graph),
             ))
         });
         match drawn {

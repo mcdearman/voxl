@@ -6,7 +6,7 @@ use std::{
     sync::LazyLock,
 };
 
-use voxl::{
+use mira::{
     glam::{Vec2, Vec3},
     prelude::*,
     render::Vertex,

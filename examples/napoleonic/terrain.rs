@@ -7,7 +7,7 @@ use std::sync::LazyLock;
 
 use crate::world::{self, WorldMesh, WorldVertex};
 
-use voxl::{
+use mira::{
     glam::{Vec2, Vec3},
 
     voxel::{fbm, value_noise},

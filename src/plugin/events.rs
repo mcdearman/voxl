@@ -3,7 +3,7 @@
 //! An event type is a name and a size; an event is that many bytes. Whoever knows the name
 //! can send or read, in any language: this is how one plugin tells another that something
 //! happened without either knowing the other exists. The engine publishes its own events the
-//! same way (`voxl.Contact`, from physics).
+//! same way (`mira.Contact`, from physics).
 //!
 //! Like the typed `Events<E>`, a channel keeps what was sent this frame and last frame, and
 //! each reader has its own place, so every reader sees each event exactly once whichever

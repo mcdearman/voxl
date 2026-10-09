@@ -1,9 +1,9 @@
 //! The Model Context Protocol face of the engine: what lets an AI agent drive a running game
 //! as a developer would, seeing the scene and reading and changing all of its state.
 //!
-//! An MCP client (an agent's host) starts `voxl-mcp` and speaks JSON-RPC to it over standard
+//! An MCP client (an agent's host) starts `mira-mcp` and speaks JSON-RPC to it over standard
 //! input and output, one message per line. Every tool is one command of the
-//! [debug connection](crate::remote), which `voxl-mcp` reaches over the game's local socket;
+//! [debug connection](crate::remote), which `mira-mcp` reaches over the game's local socket;
 //! `screenshot` also reads the saved frame back and returns it as an image.
 //!
 //! This module is the protocol with the transport left out, so it can be tested without
@@ -37,7 +37,7 @@ const TOOLS: &[Tool] = &[
         command: "entities",
         about: "Lists entities with the names of the components each has. Entities are numbers; pass them to the other tools.",
         arguments: &[
-            "with?: string: only entities with this component, e.g. voxl.Camera",
+            "with?: string: only entities with this component, e.g. mira.Camera",
             "limit?: integer: how many to list (default 200); `total` in the answer says how many there are",
         ],
     },
@@ -76,7 +76,7 @@ const TOOLS: &[Tool] = &[
     },
     Tool {
         command: "resource",
-        about: "Reads a registered resource (a game-wide setting such as voxl.Fog), or sets it when `value` is given.",
+        about: "Reads a registered resource (a game-wide setting such as mira.Fog), or sets it when `value` is given.",
         arguments: &["name: string: the resource's name", "value?: any: a new value for it"],
     },
     Tool {
@@ -244,7 +244,7 @@ fn tool_list() -> Value {
             .iter()
             .map(|tool| {
                 map(vec![
-                    ("name", text(format!("voxl_{}", tool.command))),
+                    ("name", text(format!("mira_{}", tool.command))),
                     ("description", text(tool.about)),
                     ("inputSchema", input_schema(tool)),
                 ])
@@ -287,7 +287,7 @@ pub fn base64(bytes: &[u8]) -> String {
     out
 }
 
-/// How `voxl-mcp` reaches the game and the files it writes.
+/// How `mira-mcp` reaches the game and the files it writes.
 pub trait Game {
     /// Sends one debug command (an object with `cmd` and its arguments) and returns what the
     /// game answered under `ok`, or why it refused.
@@ -300,7 +300,7 @@ pub trait Game {
 
 fn call(game: &mut dyn Game, name: &str, arguments: Option<&Value>) -> Value {
     let Some(tool) = name
-        .strip_prefix("voxl_")
+        .strip_prefix("mira_")
         .and_then(|command| TOOLS.iter().find(|tool| tool.command == command))
     else {
         return content(vec![words(format!("there is no tool `{name}`"))], true);
@@ -376,11 +376,11 @@ pub fn handle_message(line: &str, game: &mut dyn Game) -> Option<String> {
             ("capabilities", map(vec![("tools", Value::Map(Vec::new()))])),
             (
                 "serverInfo",
-                map(vec![("name", text("voxl")), ("version", text(env!("CARGO_PKG_VERSION")))]),
+                map(vec![("name", text("mira")), ("version", text(env!("CARGO_PKG_VERSION")))]),
             ),
             (
                 "instructions",
-                text("Tools to inspect and change a running voxl game. Start with voxl_status; voxl_screenshot shows the scene; voxl_types and voxl_schema say what can be read and written; voxl_signals shows the game's rules."),
+                text("Tools to inspect and change a running mira game. Start with mira_status; mira_screenshot shows the scene; mira_types and mira_schema say what can be read and written; mira_signals shows the game's rules."),
             ),
         ]),
         "ping" => Value::Map(Vec::new()),
@@ -485,7 +485,7 @@ mod tests {
         );
         assert_eq!(hello.field("protocolVersion"), Some(&text(PROTOCOL)));
         assert!(hello.get_path("capabilities.tools").is_some());
-        assert_eq!(hello.get_path("serverInfo.name"), Some(&text("voxl")));
+        assert_eq!(hello.get_path("serverInfo.name"), Some(&text("mira")));
         // A notification gets no answer; nor does one this doesn't know.
         assert!(handle_message(
             r#"{"jsonrpc": "2.0", "method": "notifications/initialized"}"#,
@@ -506,7 +506,7 @@ mod tests {
         assert_eq!(tools.len(), TOOLS.len());
         let set = tools
             .iter()
-            .find(|tool| tool.field("name") == Some(&text("voxl_set")))
+            .find(|tool| tool.field("name") == Some(&text("mira_set")))
             .unwrap();
         assert_eq!(set.get_path("inputSchema.type"), Some(&text("object")));
         assert_eq!(
@@ -527,7 +527,7 @@ mod tests {
         );
         // Every tool is a command the game knows: none is refused as unknown.
         for tool in TOOLS {
-            let (texts, _) = self::tool(&mut game, &format!("voxl_{}", tool.command), "{}");
+            let (texts, _) = self::tool(&mut game, &format!("mira_{}", tool.command), "{}");
             assert!(
                 !texts.concat().contains("there is no command"),
                 "{}",
@@ -539,21 +539,21 @@ mod tests {
     #[test]
     fn tools_read_and_change_the_game() {
         let mut game = game();
-        let (status, failed) = tool(&mut game, "voxl_status", "{}");
+        let (status, failed) = tool(&mut game, "mira_status", "{}");
         assert!(
             !failed && status[0].contains("\"entities\": 1"),
             "{status:?}"
         );
 
-        let (listed, _) = tool(&mut game, "voxl_entities", r#"{"with": "voxl.Transform"}"#);
+        let (listed, _) = tool(&mut game, "mira_entities", r#"{"with": "mira.Transform"}"#);
         let listed = json::parse(&listed[0]).unwrap();
         let Some(Value::Int(entity)) = listed.get_path("entities.0.entity").cloned() else {
             panic!("an entity: {listed:?}");
         };
         let arguments = format!(
-            r#"{{"entity": {entity}, "component": "voxl.Transform", "path": "translation.0", "value": 8.5, "cmd": "despawn"}}"#
+            r#"{{"entity": {entity}, "component": "mira.Transform", "path": "translation.0", "value": 8.5, "cmd": "despawn"}}"#
         );
-        let (_, failed) = tool(&mut game, "voxl_set", &arguments);
+        let (_, failed) = tool(&mut game, "mira_set", &arguments);
         assert!(
             !failed,
             "and an argument called `cmd` can't turn one tool into another"
@@ -570,28 +570,28 @@ mod tests {
         assert_eq!(moved, 8.5);
 
         // Signals come drawn as well as listed, and can be changed.
-        let (signals, _) = tool(&mut game, "voxl_signals", "{}");
+        let (signals, _) = tool(&mut game, "mira_signals", "{}");
         assert!(signals[0].contains("● door.open = true"), "{}", signals[0]);
         assert!(signals[1].contains("\"name\": \"door.shut\""));
         tool(
             &mut game,
-            "voxl_signal_set",
+            "mira_signal_set",
             r#"{"name": "door.open", "value": false}"#,
         );
         game.0.update();
         assert!(game.0.world.resource::<Signals>().is_true("door.shut"));
 
         // Refusals are results marked as errors, not protocol errors, so the agent reads why.
-        let (why, failed) = tool(&mut game, "voxl_get", r#"{"entity": 999}"#);
+        let (why, failed) = tool(&mut game, "mira_get", r#"{"entity": 999}"#);
         assert!(failed && why[0].contains("there is no entity 999"));
-        let (why, failed) = tool(&mut game, "voxl_explode", "{}");
+        let (why, failed) = tool(&mut game, "mira_explode", "{}");
         assert!(failed && why[0].contains("no tool"));
 
         // The scene, as an image.
         let shot = rpc(
             &mut game,
             "tools/call",
-            r#"{"name": "voxl_screenshot", "arguments": {"width": 640}}"#,
+            r#"{"name": "mira_screenshot", "arguments": {"width": 640}}"#,
         );
         assert_eq!(shot.get_path("content.0.type"), Some(&text("image")));
         assert_eq!(

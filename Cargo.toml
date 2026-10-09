@@ -1,15 +1,15 @@
 [package]
-name = "voxl"
-default-run = "voxl"
+name = "mira"
+default-run = "mira"
 version = "0.1.0"
 edition = "2021"
 
 [workspace]
-members = ["crates/voxl_plugin", "crates/voxl_derive", "plugins/wave", "plugins/scoreboard"]
+members = ["crates/mira_plugin", "crates/mira_derive", "plugins/wave", "plugins/scoreboard"]
 
 [dependencies]
-voxl_plugin = { path = "crates/voxl_plugin" }
-voxl_derive = { path = "crates/voxl_derive" }
+mira_plugin = { path = "crates/mira_plugin" }
+mira_derive = { path = "crates/mira_derive" }
 libloading = "0.8"
 anyhow = "1"
 bytemuck = { version = "1.13", features = ["derive"] }

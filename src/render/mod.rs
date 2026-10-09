@@ -109,7 +109,7 @@ impl Color {
 
 /// How a surface looks: a metallic-roughness PBR material, as in glTF.
 #[derive(Clone, Copy, Debug, Reflect)]
-#[reflect(name = "voxl.Material", default)]
+#[reflect(name = "mira.Material", default)]
 pub struct Material {
     /// Multiplies the base color texture and the mesh's vertex colors.
     pub color: Color,
@@ -196,7 +196,7 @@ impl Material {
 
 /// One level of detail: drawn while the camera is nearer than `max_distance`.
 #[derive(Clone, Copy, Debug, Reflect)]
-#[reflect(name = "voxl.LodLevel")]
+#[reflect(name = "mira.LodLevel")]
 pub struct LodLevel {
     pub max_distance: f32,
     pub mesh: Handle<Mesh>,
@@ -206,7 +206,7 @@ pub struct LodLevel {
 /// Swaps in simpler meshes as the camera moves away, instead of `Mesh3d`. Levels are ordered
 /// nearest first; beyond the last one the entity isn't drawn at all.
 #[derive(Clone, Debug, Default, Reflect)]
-#[reflect(name = "voxl.Lods")]
+#[reflect(name = "mira.Lods")]
 pub struct Lods(pub Vec<LodLevel>);
 
 impl Component for Lods {}
@@ -219,7 +219,7 @@ impl Lods {
 
 /// Keeps a mesh out of the shadow cascades, for things too thin or diffuse to cast.
 #[derive(Clone, Copy, Debug, Default, Reflect)]
-#[reflect(name = "voxl.NotShadowCaster")]
+#[reflect(name = "mira.NotShadowCaster")]
 pub struct NotShadowCaster;
 
 impl Component for NotShadowCaster {}
@@ -227,7 +227,7 @@ impl Component for NotShadowCaster {}
 /// A perspective camera. The first active camera found is used. The projection has no far
 /// plane: everything in front of `near` is drawn.
 #[derive(Clone, Copy, Debug, Reflect)]
-#[reflect(name = "voxl.Camera", default)]
+#[reflect(name = "mira.Camera", default)]
 pub struct Camera {
     pub fov_y: f32,
     pub near: f32,
@@ -255,7 +255,7 @@ impl Camera {
 
 /// The sun, shining along its entity's forward direction.
 #[derive(Clone, Copy, Debug, Reflect)]
-#[reflect(name = "voxl.DirectionalLight", default)]
+#[reflect(name = "mira.DirectionalLight", default)]
 pub struct DirectionalLight {
     pub color: Color,
     /// Illuminance on a surface facing the light, in the same units as the sky's radiance.
@@ -294,7 +294,7 @@ impl Environment {
 
 /// Extra flat light from every direction, on top of the sky's.
 #[derive(Clone, Copy, Debug, PartialEq, Reflect)]
-#[reflect(name = "voxl.AmbientLight", default)]
+#[reflect(name = "mira.AmbientLight", default)]
 pub struct AmbientLight {
     pub color: Color,
     pub intensity: f32,
@@ -311,7 +311,7 @@ impl Default for AmbientLight {
 
 /// Haze that thickens with distance and thins with height, lit by the sky. Off by default.
 #[derive(Clone, Copy, Debug, PartialEq, Reflect)]
-#[reflect(name = "voxl.Fog", default)]
+#[reflect(name = "mira.Fog", default)]
 pub struct Fog {
     /// Extinction per metre at `base_height`.
     pub density: f32,

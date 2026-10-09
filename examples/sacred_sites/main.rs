@@ -3,9 +3,9 @@
 //!
 //! ```sh
 //! cargo run --example sacred_sites              # the game; listens on 127.0.0.1:7878
-//! cargo run --bin voxl-debug -- watch           # in another terminal: the signal graph, live
-//! cargo run --bin voxl-debug -- signal_set name=win_after value=20
-//! cargo run --bin voxl-debug -- signal_force name=blue.contesting value=false
+//! cargo run --bin mira-debug -- watch           # in another terminal: the signal graph, live
+//! cargo run --bin mira-debug -- signal_set name=win_after value=20
+//! cargo run --bin mira-debug -- signal_force name=blue.contesting value=false
 //! ```
 //!
 //! Red holds both sites, and wins when its clock reaches `win_after`. The clock stops while a
@@ -14,7 +14,7 @@
 
 use std::time::Duration;
 
-use voxl::{prelude::*, time::TimePlugin, transform::TransformPlugin};
+use mira::{prelude::*, time::TimePlugin, transform::TransformPlugin};
 
 #[derive(Component, Reflect, Clone, Copy, PartialEq, Debug)]
 #[reflect(name = "sites.Team")]
@@ -127,10 +127,10 @@ fn main() -> anyhow::Result<()> {
         (wander, announce.run_if(signal_became_true("red.wins"))),
     );
 
-    let address = std::env::var("VOXL_DEBUG").unwrap_or_else(|_| "127.0.0.1:7878".to_owned());
+    let address = std::env::var("MIRA_DEBUG").unwrap_or_else(|_| "127.0.0.1:7878".to_owned());
     let address = app.listen_for_debugger(&address)?;
     println!("the sacred sites are running; watch them with:");
-    println!("  cargo run --bin voxl-debug -- --at {address} watch");
+    println!("  cargo run --bin mira-debug -- --at {address} watch");
     loop {
         app.update();
         std::thread::sleep(Duration::from_millis(16));

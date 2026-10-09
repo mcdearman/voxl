@@ -5,7 +5,7 @@
 //! down, fray and break into drops as they fall, and vanish into the basin where they land,
 //! each one pushing the surface down a little, so the jets drive the waves themselves.
 
-use voxl::{glam::Vec2, prelude::*};
+use mira::{glam::Vec2, prelude::*};
 
 use crate::square;
 

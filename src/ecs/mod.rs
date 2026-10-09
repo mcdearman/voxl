@@ -37,7 +37,7 @@ pub use schedule::{
 };
 pub(crate) use storage::ErasedStorage;
 pub use storage::{Component, ComponentKey, ComponentTicks, DropFn, Tick};
-pub use voxl_derive::Component;
+pub use mira_derive::Component;
 pub use system::{BoxedSystem, IntoSystem, System, SystemMeta, SystemParam, SystemParamFunction};
 pub use world::{NamedComponent, World};
 
