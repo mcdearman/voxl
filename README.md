@@ -71,6 +71,7 @@ Edits to voxel terrain are kept when their chunk streams out, and can be saved t
 [docs/VOXELS.md](docs/VOXELS.md).
 
 Ordering systems, run conditions and game states: [docs/SCHEDULING.md](docs/SCHEDULING.md).
+Relations between entities: [docs/RELATIONS.md](docs/RELATIONS.md).
 
 Failures that pause the game instead of ending it, and stepping time:
 [docs/LIVE.md](docs/LIVE.md). Game rules as signals: [docs/SIGNALS.md](docs/SIGNALS.md).

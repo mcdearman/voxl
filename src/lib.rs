@@ -12,6 +12,7 @@ pub mod physics;
 pub mod plugin;
 pub mod prefab;
 pub mod reflect;
+pub mod relation;
 pub mod remote;
 pub mod render;
 pub mod signal;
@@ -44,6 +45,7 @@ pub mod prelude {
             GltfScene, Image, Leg, Limb, LodLevel, Lods, Material, Mesh, Mesh3d, NotShadowCaster,
             Pattern, PostProcess, RayTracingSettings, Reach, ShadowSettings, VolumetricLight,
         },
+        relation::{Related, Relation},
         signal::{
             signal, signal_became_false, signal_became_true, Compare, Op, Signal, SignalChanged,
             SignalPlugin, Signals,

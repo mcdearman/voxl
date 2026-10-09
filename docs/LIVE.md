@@ -136,7 +136,7 @@ answered at the start of a frame, whether or not the game is paused.
 | `pause`, `resume` | | |
 | `step` | `frames` (1) | runs that many frames, then pauses |
 | `run_until` | `signal`, `max_frames` (600) | steps until the signal is true or the frames run out; `status` then says `reached` |
-| `input` | `key` or `mouse_button` with `action` (tap, press, release) and `frames`; `mouse_motion`, `mouse_position`; `text` to type into the interface | plays input at the start of the next simulated frame |
+| `input` | `key` or `mouse_button` with `action` (tap, press, release) and `frames`; `mouse_motion`, `mouse_position`, `mouse_scroll`; `text` to type into the interface | plays input at the start of the next simulated frame |
 | `time_scale` | `scale` | |
 | `record` | `on`, `every` (frames), `keep` | what recording is set to |
 | `history` | | the moments that can be gone back to |
@@ -163,6 +163,7 @@ answered at the start of a frame, whether or not the game is paused.
 | `signal_force` | `name`, `value` (none lets it go) | |
 | `signal_connect` | `name`, `input`, `to` | |
 | `signal_define` | `name`, `op`, `inputs`, and `value` or `seconds` where the op has one | |
+| `signal_rename` | `name`, `to` | a rule's name; what reads it follows |
 | `signal_remove` | `name` | |
 | `signals_save`, `signals_load` | `path` | the rules (everything but sources) to and from a JSON file |
 

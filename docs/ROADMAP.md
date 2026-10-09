@@ -235,7 +235,11 @@ and see it change in the running scene.
 - [x] Hooks: run code when a component is added or removed (`on_add`, `on_remove`)
 - [ ] Observers for other events (a component changing, custom events aimed at an entity);
       hooks from plugins
-- [ ] Relations: `(ChildOf, e)`-style pairs, replacing `Parent`
+- [x] Relations: any component that names another entity, with the way back kept by the
+      engine (`Relation`, `Related<R>`); `Parent` and `Children` are one of them. See
+      [RELATIONS.md](RELATIONS.md)
+- [ ] Relations with many targets of one kind; cleaning up when a target is despawned;
+      relations from plugins
 - [ ] One job system for systems, asset loading and voxel work
 
 **Exit test:** the Napoleonic demo's update time drops in proportion to cores used, with Miri
@@ -285,7 +289,8 @@ derived from other values, which the engine keeps true.
 - [x] In the panel: adding and removing inputs by dragging wires, changing a box's
       operation, adding constants, removing signals
 - [x] The panel's layout is kept with the rules and saved with them
-- [ ] Naming signals, timers and comparisons from the panel; typing numbers
+- [x] Naming signals, timers and comparisons from the panel; typing numbers (click a box's
+      name or its lower line; `Signals::rename`, `signal_rename`)
 - [ ] The graphical editor of the graph (Chris, October 2026): signals and connections laid
       out and edited by hand while the game runs; in the game's panel and in the editor
       (Phase 5)
@@ -315,7 +320,9 @@ dying in any order; the timer is right in every case because no code ever sets i
 - [x] A look and a first set of controls for games (`mira_ui::kit`: theme, panel, button,
       toggle, slider, bar, anchoring)
 - [x] A text field (`kit::field`), and typing played in from outside (`mira_input` `text`)
-- [ ] Lists, dropdowns, tabs; interface in the world; gamepad focus
+- [x] Tabs, a choice between options, lists and scrolling (`kit::tabs`, `choice`, `list`,
+      `scroll`)
+- [ ] Dropdowns and other pop-ups; interface in the world; gamepad focus
 - [ ] Audio: mixing, 3D positioning, streaming music
 - [ ] Input: named actions, rebinding, gamepads
 - [ ] Animation graph: state machines, blend trees, retargeting, root motion
