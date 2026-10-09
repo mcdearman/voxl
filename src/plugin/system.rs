@@ -136,6 +136,10 @@ impl System for DynamicSystem {
         self.access.as_ref()
     }
 
+    fn main_thread_only(&self) -> bool {
+        true
+    }
+
     fn run(&mut self, world: &mut World) {
         let tick = world.increment_change_tick();
         let world_ref: &World = world;

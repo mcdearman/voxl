@@ -425,6 +425,10 @@ fn handle(app: &mut App, request: &Value) -> Answer {
                             ("conditions", Value::Int(system.conditions as i64)),
                             ("suspended", Value::Bool(system.suspended)),
                             (
+                                "main_thread",
+                                system.main_thread.map_or(Value::Null, Value::Bool),
+                            ),
+                            (
                                 "batch",
                                 system
                                     .batch

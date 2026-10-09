@@ -12,7 +12,7 @@ use super::{
 };
 
 /// Something a system can be made to wait on. Made from a function by `run_if`.
-pub trait Condition: 'static {
+pub trait Condition: Send + 'static {
     fn initialize(&mut self, world: &mut World);
     fn check(&mut self, world: &mut World) -> bool;
     /// What the condition reads, once initialized; `None` if it can't say.
@@ -28,7 +28,7 @@ pub trait IntoCondition<Marker> {
 }
 
 /// Implemented for functions that return `bool` and whose arguments are all `SystemParam`s.
-pub trait ConditionFunction<Marker>: 'static {
+pub trait ConditionFunction<Marker>: Send + 'static {
     type Param: SystemParam;
 
     fn run(&mut self, param: SystemParamItem<'_, '_, Self::Param>) -> bool;
@@ -39,7 +39,7 @@ macro_rules! impl_condition_function {
         #[allow(non_snake_case)]
         impl<Func, $($P: SystemParam),*> ConditionFunction<fn($($P,)*) -> bool> for Func
         where
-            Func: 'static,
+            Func: Send + 'static,
             for<'a> &'a mut Func: FnMut($($P),*) -> bool + FnMut($(SystemParamItem<$P>),*) -> bool,
         {
             type Param = ($($P,)*);

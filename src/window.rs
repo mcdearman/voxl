@@ -1,4 +1,7 @@
-use std::{cell::Cell, sync::Arc};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 
 use glam::{UVec2, Vec2};
 use winit::{
@@ -38,7 +41,7 @@ impl Default for WindowSettings {
 /// The primary window. Inserted as a resource once the window has been created.
 pub struct Window {
     handle: Arc<winit::window::Window>,
-    cursor_grabbed: Cell<bool>,
+    cursor_grabbed: AtomicBool,
 }
 
 impl Window {
@@ -56,7 +59,7 @@ impl Window {
     }
 
     pub fn cursor_grabbed(&self) -> bool {
-        self.cursor_grabbed.get()
+        self.cursor_grabbed.load(Ordering::Relaxed)
     }
 
     /// Locks and hides the cursor (or releases it). Falls back between grab modes because
@@ -72,7 +75,7 @@ impl Window {
         match result {
             Ok(()) => {
                 self.handle.set_cursor_visible(!grabbed);
-                self.cursor_grabbed.set(grabbed);
+                self.cursor_grabbed.store(grabbed, Ordering::Relaxed);
             }
             Err(err) => log::warn!("failed to change cursor grab: {err}"),
         }
@@ -147,8 +150,10 @@ impl ApplicationHandler for Runner {
         event_loop.listen_device_events(DeviceEvents::WhenFocused);
         self.app.world.insert_resource(Window {
             handle: handle.clone(),
-            cursor_grabbed: Cell::new(false),
+            cursor_grabbed: AtomicBool::new(false),
         });
+        // The operating system wants its windows handled from the thread that made them.
+        self.app.world.pin_to_main_thread::<Window>();
         self.window = Some(handle);
         self.app.startup();
     }

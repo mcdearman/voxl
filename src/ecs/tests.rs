@@ -586,4 +586,36 @@ mod batches {
             [0, 0]
         );
     }
+    #[test]
+    fn systems_that_need_the_main_thread_are_marked() {
+        struct Screen;
+        fn draws(_: Res<Screen>) {}
+        fn asks_first(_: Query<&Pos>) {}
+
+        let mut world = World::new();
+        world.insert_resource(Counter(0));
+        world.insert_resource(Screen);
+        world.pin_to_main_thread::<Screen>();
+        let mut schedule = Schedule::default();
+        schedule.add_systems((
+            reads_pos,
+            draws,
+            whole_world,
+            counts,
+            asks_first.run_if(resource_exists::<Screen>),
+        ));
+        assert_eq!(
+            schedule.systems()[0].main_thread,
+            None,
+            "not known before it is initialized"
+        );
+        schedule.initialize(&mut world);
+        let pinned: Vec<bool> = schedule
+            .systems()
+            .iter()
+            .map(|s| s.main_thread.unwrap())
+            .collect();
+        // A pinned resource, the whole world, and a condition that reads a pinned resource.
+        assert_eq!(pinned, [false, true, true, false, true]);
+    }
 }

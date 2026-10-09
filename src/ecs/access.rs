@@ -215,6 +215,14 @@ impl Access {
             })
     }
 
+    /// The resources this system reads or writes.
+    pub fn resources(&self) -> impl Iterator<Item = TypeId> + '_ {
+        self.resource_reads
+            .iter()
+            .chain(&self.resource_writes)
+            .copied()
+    }
+
     /// Everything this system touches, by name.
     pub fn summary(&self) -> AccessSummary {
         let sorted = |mut names: Vec<String>| {

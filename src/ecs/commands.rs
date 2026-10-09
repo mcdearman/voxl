@@ -9,7 +9,7 @@ use super::{
     world::World,
 };
 
-type Command = Box<dyn FnOnce(&mut World)>;
+type Command = Box<dyn FnOnce(&mut World) + Send>;
 
 #[derive(Default)]
 pub struct CommandQueue {
@@ -17,7 +17,7 @@ pub struct CommandQueue {
 }
 
 impl CommandQueue {
-    pub fn push(&mut self, command: impl FnOnce(&mut World) + 'static) {
+    pub fn push(&mut self, command: impl FnOnce(&mut World) + Send + 'static) {
         self.commands.push(Box::new(command));
     }
 
@@ -60,7 +60,7 @@ impl Commands<'_, '_> {
         });
     }
 
-    pub fn insert_resource<R: 'static>(&mut self, resource: R) {
+    pub fn insert_resource<R: Send + 'static>(&mut self, resource: R) {
         self.queue
             .push(move |world| world.insert_resource(resource));
     }
@@ -72,7 +72,7 @@ impl Commands<'_, '_> {
     }
 
     /// Queues arbitrary work that needs `&mut World`.
-    pub fn add(&mut self, command: impl FnOnce(&mut World) + 'static) {
+    pub fn add(&mut self, command: impl FnOnce(&mut World) + Send + 'static) {
         self.queue.push(command);
     }
 }
@@ -104,7 +104,7 @@ impl EntityCommands<'_> {
     }
 
     /// Queues arbitrary work on this entity that needs `&mut World`.
-    pub fn add(&mut self, command: impl FnOnce(&mut World, Entity) + 'static) -> &mut Self {
+    pub fn add(&mut self, command: impl FnOnce(&mut World, Entity) + Send + 'static) -> &mut Self {
         let entity = self.entity;
         self.queue.push(move |world| command(world, entity));
         self

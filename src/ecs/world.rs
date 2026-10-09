@@ -2,7 +2,7 @@ use std::{
     alloc::Layout,
     any::{type_name, Any, TypeId},
     cell::{Cell, RefCell, UnsafeCell},
-    collections::{hash_map::Entry, HashMap},
+    collections::{hash_map::Entry, HashMap, HashSet},
 };
 
 use super::{
@@ -57,6 +57,9 @@ pub struct World {
     names: HashMap<String, u32>,
     next_dynamic: u32,
     resources: HashMap<TypeId, ResourceCell>,
+    /// Resources that must only be used from the main thread, though their types could be
+    /// shared: a window, say.
+    main_thread: HashSet<TypeId>,
     change_tick: Cell<Tick>,
 }
 
@@ -75,6 +78,7 @@ impl World {
             names: HashMap::new(),
             next_dynamic: 0,
             resources: HashMap::new(),
+            main_thread: HashSet::new(),
             change_tick: Cell::new(1),
         }
     }
@@ -320,6 +324,17 @@ impl World {
     }
 
     // --- resources ---
+
+    /// Says that systems using this resource must run on the main thread: for things the
+    /// operating system ties to the thread that made them. Other systems are unaffected.
+    pub fn pin_to_main_thread<R: 'static>(&mut self) {
+        self.main_thread.insert(TypeId::of::<R>());
+    }
+
+    /// Whether a resource type was pinned with [`World::pin_to_main_thread`].
+    pub fn is_pinned_to_main_thread(&self, resource: TypeId) -> bool {
+        self.main_thread.contains(&resource)
+    }
 
     pub fn insert_resource<R: 'static>(&mut self, value: R) {
         let tick = self.change_tick();

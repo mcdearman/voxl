@@ -13,7 +13,7 @@
 //! that is hot-reloaded is a new object with the same name, so it carries on exactly where
 //! the old one stopped: nothing missed, nothing seen twice.
 
-use std::{cell::RefCell, collections::HashMap};
+use std::{collections::HashMap, sync::Mutex};
 
 struct Channel {
     name: String,
@@ -33,9 +33,9 @@ pub struct PluginEvents {
     channels: Vec<Channel>,
     names: HashMap<String, u32>,
     /// For each reader, the number of the next event it should see on each channel. Behind a
-    /// `RefCell` because reading advances it, and readers only have shared access.
-    readers: RefCell<Vec<HashMap<u32, usize>>>,
-    reader_names: RefCell<HashMap<String, u32>>,
+    /// lock because reading advances it, and readers only have shared access.
+    readers: Mutex<Vec<HashMap<u32, usize>>>,
+    reader_names: Mutex<HashMap<String, u32>>,
 }
 
 impl PluginEvents {
@@ -110,11 +110,11 @@ impl PluginEvents {
     /// The reader with this name, made if this is the first time it is asked for. A new
     /// reader starts at the oldest event still kept on every channel.
     pub fn reader(&self, name: &str) -> u32 {
-        let mut names = self.reader_names.borrow_mut();
+        let mut names = self.reader_names.lock().unwrap();
         if let Some(&reader) = names.get(name) {
             return reader;
         }
-        let mut readers = self.readers.borrow_mut();
+        let mut readers = self.readers.lock().unwrap();
         readers.push(HashMap::new());
         let reader = readers.len() as u32 - 1;
         names.insert(name.to_owned(), reader);
@@ -123,7 +123,7 @@ impl PluginEvents {
 
     /// The next event on a channel that this reader hasn't seen, if any.
     pub fn next(&self, reader: u32, id: u32) -> Option<&[u8]> {
-        let mut readers = self.readers.borrow_mut();
+        let mut readers = self.readers.lock().unwrap();
         let cursor = readers.get_mut(reader as usize)?.entry(id).or_insert(0);
         let (bytes, next) = self.read(id, *cursor)?;
         *cursor = next;

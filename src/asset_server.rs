@@ -363,7 +363,7 @@ impl AssetServer {
     /// Takes in the images that have finished decoding. Returns how many arrived.
     pub fn finish(&mut self, images: &mut Assets<Image>) -> usize {
         let mut arrived = 0;
-        while let Ok(decoded) = self.decoded.receiver.try_recv() {
+        while let Ok(decoded) = self.decoded.try_recv() {
             self.accept(images, decoded);
             arrived += 1;
         }
@@ -374,7 +374,7 @@ impl AssetServer {
     /// let assets arrive.
     pub fn wait(&mut self, images: &mut Assets<Image>) {
         while self.loading > 0 {
-            match self.decoded.receiver.recv() {
+            match self.decoded.recv() {
                 Ok(decoded) => self.accept(images, decoded),
                 Err(_) => break,
             }
