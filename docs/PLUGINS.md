@@ -143,7 +143,7 @@ Haskell is the language voxl's plugin examples and documentation lead with: plug
 type-checked against the components it uses, and the bindings give it no pointers to misuse.
 (The long-term intent is for Meadow to take this place once it is ready.)
 
-A plugin is one module that exports `voxl_hs_main`. See
+A plugin is one module that exports its setup function to C as `voxl_hs_main`. See
 [`plugins/swirl`](../plugins/swirl/Swirl.hs).
 
 ```haskell
@@ -153,10 +153,10 @@ import Foreign (Ptr)
 import Foreign.C.Types (CInt (..))
 import Voxl
 
-foreign export ccall voxl_hs_main :: Ptr () -> IO CInt
+foreign export ccall "voxl_hs_main" pluginMain :: Ptr () -> IO CInt
 
-voxl_hs_main :: Ptr () -> IO CInt
-voxl_hs_main = plugin $ \app -> do
+pluginMain :: Ptr () -> IO CInt
+pluginMain = plugin $ \app -> do
   transform <- lookupComponent app "voxl.Transform"
   addSystem app "rise" Update (write transform) $ \sys _entity place -> do
     dt <- deltaSeconds sys

@@ -1,14 +1,16 @@
 {-# LANGUAGE ForeignFunctionInterface #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TupleSections #-}
 
 -- | Bindings for writing voxl plugins in Haskell.
 --
--- A plugin is a module that exports @voxl_hs_main@, built into a shared library together with
+-- A plugin is a module that exports its setup function to C as @voxl_hs_main@ (it can have
+-- any Haskell name), built into a shared library together with
 -- this module and @cbits/voxl_hs.c@ (see @plugins/swirl@ and its build script):
 --
--- > foreign export ccall voxl_hs_main :: Ptr () -> IO CInt
--- > voxl_hs_main :: Ptr () -> IO CInt
--- > voxl_hs_main = plugin $ \app -> do
+-- > foreign export ccall "voxl_hs_main" pluginMain :: Ptr () -> IO CInt
+-- > pluginMain :: Ptr () -> IO CInt
+-- > pluginMain = plugin $ \app -> do
 -- >   transform <- lookupComponent app "voxl.Transform"
 -- >   addSystem app "rise" Update (write transform) $ \sys _entity ref -> do
 -- >     dt <- deltaSeconds sys
@@ -491,7 +493,7 @@ mousePressed = asked c_mouse_pressed
 mouseMotion :: System -> IO (Float, Float)
 mouseMotion (System system) = allocaArray 2 $ \delta -> do
   c_mouse_motion system delta
-  (,) <$> (realToFrac <$> peekElemOff delta 0) <*> (realToFrac <$> peekElemOff delta 1)
+  (,) . realToFrac <$> peekElemOff delta 0 <*> (realToFrac <$> peekElemOff delta 1)
 
 -- | A mesh, shared between the entities drawn with it. Make it once, in a 'Startup' system,
 -- and keep it in a 'statePtr' block: it is 'Storable', and still good after a reload.
@@ -735,7 +737,7 @@ setVelocity (System system) (Entity entity) (V3 x y z) =
 
 peekV3 :: Ptr CFloat -> Int -> IO V3
 peekV3 floats at =
-  V3 <$> (realToFrac <$> peekElemOff floats at)
+  V3 . realToFrac <$> peekElemOff floats at
     <*> (realToFrac <$> peekElemOff floats (at + 1))
     <*> (realToFrac <$> peekElemOff floats (at + 2))
 
@@ -785,7 +787,7 @@ instance Storable Contact where
   sizeOf _ = 48
   alignment _ = 8
   peek ptr =
-    Contact <$> (Entity <$> peek (castPtr ptr)) <*> (Entity <$> peek (castPtr (ptr `plusPtr` 8)))
+    Contact . Entity <$> peek (castPtr ptr) <*> (Entity <$> peek (castPtr (ptr `plusPtr` 8)))
       <*> peek (castPtr (ptr `plusPtr` 16)) <*> peek (castPtr (ptr `plusPtr` 28))
       <*> peek (castPtr (ptr `plusPtr` 40))
   poke ptr (Contact (Entity a) (Entity b) point normal push) = do
@@ -797,20 +799,20 @@ instance Storable Contact where
 
 -- What the engine calls for every Haskell system: `user` is the stable pointer to its
 -- function. An exception must not escape into the engine, so it is logged instead.
-foreign export ccall voxl_hs_dispatch :: Ptr () -> Ptr () -> IO ()
+foreign export ccall "voxl_hs_dispatch" dispatch :: Ptr () -> Ptr () -> IO ()
 
-voxl_hs_dispatch :: Ptr () -> Ptr () -> IO ()
-voxl_hs_dispatch system user = do
+dispatch :: Ptr () -> Ptr () -> IO ()
+dispatch system user = do
   run <- deRefStablePtr (castPtrToStablePtr user)
   result <- try (run system)
   case result of
     Right () -> pure ()
     Left (err :: SomeException) -> logError ("a system threw: " ++ displayException err)
 
-foreign export ccall voxl_hs_unload :: IO ()
+foreign export ccall "voxl_hs_unload" unload :: IO ()
 
-voxl_hs_unload :: IO ()
-voxl_hs_unload = atomicModifyIORef' systems (\held -> ([], held)) >>= mapM_ freeStablePtr
+unload :: IO ()
+unload = atomicModifyIORef' systems ([],) >>= mapM_ freeStablePtr
 
 -- | A vector of three floats.
 data V3 = V3 !Float !Float !Float
