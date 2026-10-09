@@ -31,6 +31,30 @@ terms. "Mouselook" holds and hides the pointer for games that turn with the mous
 lets go). The bar follows the game, so a game paused from outside, by an agent say, shows as
 paused. Everything else on this page is still to come.
 
+### The agent
+
+The Agent panel is a conversation with an AI agent that is working on the game in the
+window: write to it, Enter sends, and its answer appears as it is written, with a line for
+each tool it uses. Stop stops it.
+
+The agent is a program of its own that the window runs, behind a small interface
+(`mira_editor::agent::Agent`: ask, stop), so another can be put there with
+`Editor::with_agent`. The one the app starts with is Claude Code (`agent::ClaudeCode`), run
+once for each thing asked and resuming the same conversation. It is found at `MIRA_AGENT`,
+else `~/.local/bin/claude`, else `claude` on the path. It is given mira's own tools
+(`mira_*`, served by `mira-mcp`: found at `MIRA_MCP`, else beside the app) attached to the
+game in the window, so it sees the frame, reads every entity and signal, and can pause,
+step and change the game, the same as an agent outside ([MCP.md](MCP.md)). It may also read
+the project's files.
+
+What it can't do yet: anything that needs a yes from you, such as changing a file or
+running a command, is refused, because the window has nowhere yet to ask. Its answers are
+shown as plain text. Both wait on the next Neo pieces.
+
+The reading of Claude Code's output was written from its documentation and tested against
+a stand-in program that prints the same lines; it has not yet been run against Claude Code
+itself.
+
 The app is tested as a person works it: `crates/mira_editor/tests/window.rs` opens it in
 Neo's test window, which is drawn but never shown, and clicks its buttons and tree rows.
 It needs a graphics card, so it runs when asked:
@@ -80,7 +104,8 @@ Agreed in outline with the Neo session (October 2026); built there, not here.
    view: numbers that drag, vectors, entity references, a colour picker. The view itself is
    generated on mira's side from reflection.
 4. **Dragging between panels.**
-5. **A transcript** for the agent window: streamed Markdown, rows that fold for what the
+5. **A transcript** for the agent window (the plain one and its prompt are done, Neo
+   `d6c11d1`; Markdown, folding rows, pictures and approve/refuse are next there): streamed Markdown, rows that fold for what the
    agent did, pictures inline, an input that grows and sends on Enter.
 
 mira's signal graph stays the Armature widget it is; such a widget goes into a Neo app

@@ -828,9 +828,39 @@ impl App for Editor {
     }
 }
 
+/// Where `mira-mcp` is: `MIRA_MCP` if set, else beside this program (or one folder up, where
+/// an example finds it), else whatever the system finds by that name.
+fn tools_program() -> std::path::PathBuf {
+    if let Some(given) = std::env::var_os("MIRA_MCP") {
+        return given.into();
+    }
+    let beside = std::env::current_exe().ok().and_then(|program| {
+        let folder = program.parent()?;
+        [folder.join("mira-mcp"), folder.parent()?.join("mira-mcp")]
+            .into_iter()
+            .find(|there| there.exists())
+    });
+    beside.unwrap_or_else(|| "mira-mcp".into())
+}
+
 /// Opens the engine app on a game, and returns when its window is closed.
-pub fn run(game: mira::app::App) -> Result<(), Box<dyn std::error::Error>> {
-    neo::run(Editor::new(game))?;
+///
+/// The app's agent is Claude Code, given the game's tools: the game is made to listen for
+/// them on a port of its own if it is not listening already. See [`agent::ClaudeCode`].
+pub fn run(mut game: mira::app::App) -> Result<(), Box<dyn std::error::Error>> {
+    let listening = match game.debugger_address() {
+        Some(address) => Some(address),
+        None => game.listen_for_debugger("127.0.0.1:0").ok(),
+    };
+    let editor = Editor::new(game);
+    let editor = match listening {
+        Some(address) => {
+            editor.with_agent(agent::ClaudeCode::new(tools_program(), address.to_string()))
+        }
+        // An agent with no way to the game would only guess: better none.
+        None => editor,
+    };
+    neo::run(editor)?;
     Ok(())
 }
 

@@ -370,7 +370,9 @@ editor needs from it.
 - [ ] Undo and redo as a command log; play in editor
 - [ ] Material editor; voxel sculpting and painting tools
 - [ ] Profiler and render-graph viewers
-- [ ] An agent window: a panel of the engine app in which to talk to an AI agent that is
+- [x] The agent window's first form: a conversation panel under the game, with Claude Code
+      run behind it and given the game's own tools (see [EDITOR.md](EDITOR.md#the-agent))
+- [ ] The agent window in full: a panel of the engine app in which to talk to an AI agent that is
       working on the game in front of you, so that no second app need be open. Asked for by
       Chris (October 2026), as the other half of Phase 1C: there the agent reaches the engine
       from outside; here it sits inside it.
