@@ -145,13 +145,20 @@ as data, and reads any signal by name:
 
 ```haskell
 addSystem_ app "rules" Update $ \sys -> do
-  setSignal sys "blue.contesting" =<< anyBlueOnARedSite sys
-  defineSignal sys "blue.calm" SignalNot ["blue.contesting"]
-  defineSignal sys "red.clock.running" SignalAnd ["red.holds_all", "blue.calm"]
-  defineSignal sys "red.clock" SignalTimer ["red.clock.running"]
+  setSignal sys "blue.contesting" =<< anyBlueOnARedSite sys   -- a fact, from the plugin's own queries
+  defineRule sys "red.clock" $
+    timerReset (sig "red.holds_all" .&&. notS (sig "blue.contesting"))
+               (notS (sig "red.holds_all"))
+  defineRule sys "red.wins" (sig "red.clock" .>=. number 600)
   won <- signalIsTrue sys "red.wins"
   when won (announce sys)
 ```
+
+In Haskell a rule is an expression: `sig` names a signal, `.&&.`, `.||.`, `notS` and the
+comparisons (`.<.`, `.>=.`, …) combine them, `+` adds, and `timer`, `timerReset`, `heldFor`,
+`countS` and `selectS` are the rest. `defineRule` turns the expression into nodes, naming its
+parts after the rule (`red.clock#1`, …), so the whole of it shows in the graph and can be
+rewired there. `defineSignal` defines one node at a time, as the other languages do.
 
 In C these are `signal_set`, `signal_get` and `signal_define` in `include/voxl.h`; in Rust,
 `System::set_signal`, `signal`, `define_signal`. What a plugin sets in one frame the graph has

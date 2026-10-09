@@ -1167,6 +1167,14 @@ pluginMain = plugin $ \app -> do
     ready <- signalIsTrue sys "hs.ready"
     missing <- signal sys "hs.nothing"
     setSignalNumber sys "hs.seen" (if ready && missing == Nothing then 7 else 0)
+    -- A rule as an expression; its parts become signals of their own.
+    defineRule sys "hs.go" $
+      (sig "hs.ready" .&&. notS (sig "hs.idle") .&&. truth True)
+        .||. (sig "hs.seen" + 1 .>. number 100)
+    defineRule sys "hs.clock" (timer (sig "hs.go"))
+    defineRule sys "hs.alias" (sig "hs.go")
+    defineRule sys "hs.pick" (selectS (heldFor 0 (sig "hs.go")) (sig "hs.seen" + 3) 0)
+    defineRule sys "hs.two" (countS [sig "hs.ready", sig "hs.idle", sig "hs.go"] .==. 2)
   addSystem_ app "churn" Update $ \_ -> do
     let total = sum (map fromIntegral [1 .. 20000 :: Int]) :: Double
     total `seq` performMajorGC
@@ -1224,6 +1232,15 @@ fn a_haskell_plugin_runs_and_reloads_repeatedly() {
     assert!(signals.is_true("hs.ready") && !signals.is_true("hs.idle"));
     assert!(signals.is_true("hs.settled"));
     assert_eq!(signals.number("hs.seen"), 7.0);
+    assert!(signals.is_true("hs.go") && signals.is_true("hs.alias") && signals.is_true("hs.two"));
+    assert_eq!(signals.number("hs.pick"), 10.0);
+    assert!(signals.number("hs.clock") > 0.0);
+    let graph = signals.graph();
+    let go = graph.iter().find(|node| node.name == "hs.go").unwrap();
+    assert_eq!((go.kind.as_str(), go.inputs.as_slice()), ("or", &["hs.go#1".to_owned(), "hs.go#4".to_owned()][..]));
+    let and = graph.iter().find(|node| node.name == "hs.go#1").unwrap();
+    assert_eq!(and.inputs, ["hs.ready", "hs.go#2", "hs.go#3"], "a chain of `and` is one node");
+    assert!(graph.iter().all(|node| node.problem.is_none()), "{graph:?}");
 
     // Reload several times, running frames (and collections) on each new version while the
     // old ones are still mapped but no longer called.

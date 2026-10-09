@@ -240,7 +240,8 @@ scene, physics and events have typed wrappers too: `setCamera`, `setLight`, `set
 with `colliderOf (Box half)`, `setBody` with `bodyOf Dynamic`, `raycast`, and
 `registerEvent` / `sendEvent` / `readEvents`. `describeComponent` takes the fields as
 `Field name type count offset`, matching the component's `Storable` instance, and `loadImage`,
-`setTextures`, `spawnModel` and `spawnPrefab` load files.
+`setTextures`, `spawnModel` and `spawnPrefab` load files. [Signals](SIGNALS.md#from-a-plugin)
+are set with `setSignal` and rules written as expressions with `defineRule`.
 
 Build with the script, which links the module with the bindings
 ([`bindings/haskell/Voxl.hs`](../bindings/haskell/Voxl.hs)) and a small piece of C that starts

@@ -98,6 +98,25 @@ module Voxl
   , signal
   , signalIsTrue
   , defineSignal
+    -- ** Rules as expressions
+  , Sig
+  , sig
+  , truth
+  , number
+  , notS
+  , (.&&.)
+  , (.||.)
+  , (.<.)
+  , (.<=.)
+  , (.==.)
+  , (.>=.)
+  , (.>.)
+  , countS
+  , selectS
+  , heldFor
+  , timer
+  , timerReset
+  , defineRule
     -- * Events
   , Event
   , registerEvent
@@ -990,6 +1009,104 @@ defineSignal (System system) name op inputs =
       SignalEqual -> (10, 0)
       SignalGreaterOrEqual -> (11, 0)
       SignalGreater -> (12, 0)
+
+-- | A signal as an expression over other signals: what a rule is.
+--
+-- > defineRule sys "red.clock" $
+-- >   timer (sig "red.holds_all" .&&. notS (sig "blue.contesting"))
+-- > defineRule sys "red.wins" (sig "red.clock" .>=. number 600)
+--
+-- Numbers add with '+' (and a literal is a constant), so @sig "a" + sig "b" .>. 3@ is a rule.
+data Sig
+  = SigNamed String
+  | SigTruth Bool
+  | SigNumber Double
+  | SigOp SignalOp [Sig]
+
+infixr 3 .&&.
+
+infixr 2 .||.
+
+infix 4 .<., .<=., .==., .>=., .>.
+
+-- | Another signal, by name: one the host defines, another plugin sets, or another rule.
+sig :: String -> Sig
+sig = SigNamed
+
+-- | A constant truth.
+truth :: Bool -> Sig
+truth = SigTruth
+
+-- | A constant number.
+number :: Double -> Sig
+number = SigNumber
+
+notS :: Sig -> Sig
+notS a = SigOp SignalNot [a]
+
+(.&&.), (.||.), (.<.), (.<=.), (.==.), (.>=.), (.>.) :: Sig -> Sig -> Sig
+a .&&. b = SigOp SignalAnd (operands SignalAnd a ++ operands SignalAnd b)
+a .||. b = SigOp SignalOr (operands SignalOr a ++ operands SignalOr b)
+a .<. b = SigOp SignalLess [a, b]
+a .<=. b = SigOp SignalLessOrEqual [a, b]
+a .==. b = SigOp SignalEqual [a, b]
+a .>=. b = SigOp SignalGreaterOrEqual [a, b]
+a .>. b = SigOp SignalGreater [a, b]
+
+-- A chain of one operation is one node with many inputs, not a node for every pair.
+operands :: SignalOp -> Sig -> [Sig]
+operands op (SigOp inner inputs) | inner == op = inputs
+operands _ other = [other]
+
+-- | How many of these are true.
+countS :: [Sig] -> Sig
+countS = SigOp SignalCount
+
+-- | The second if the first is true, otherwise the third.
+selectS :: Sig -> Sig -> Sig -> Sig
+selectS condition yes no = SigOp SignalSelect [condition, yes, no]
+
+-- | True once the signal has been true for this many seconds without a break.
+heldFor :: Double -> Sig -> Sig
+heldFor seconds a = SigOp (SignalHeldFor seconds) [a]
+
+-- | Seconds for which the signal has been true: a clock that runs only while it holds.
+timer :: Sig -> Sig
+timer running = SigOp SignalTimer [running]
+
+-- | A 'timer' that goes back to zero while the second signal is true.
+timerReset :: Sig -> Sig -> Sig
+timerReset running reset = SigOp SignalTimer [running, reset]
+
+-- | Sums: @sig "a" + sig "b"@. Only addition and literals mean anything for signals; the
+-- other operations are errors.
+instance Num Sig where
+  a + b = SigOp SignalSum (operands SignalSum a ++ operands SignalSum b)
+  fromInteger = SigNumber . fromInteger
+  (*) = error "Voxl.Sig: signals can be added, not multiplied"
+  abs = error "Voxl.Sig: abs is not a signal operation"
+  signum = error "Voxl.Sig: signum is not a signal operation"
+  negate = error "Voxl.Sig: negate is not a signal operation"
+
+-- | Defines a signal by an expression, when this system returns. The parts of the
+-- expression become signals of their own, named after the rule (@red.clock#1@, …), so the
+-- whole of it shows in the signal graph. Defining the same rule again changes nothing.
+defineRule :: System -> String -> Sig -> IO ()
+defineRule sys name rule = do
+  counter <- newIORef (0 :: Int)
+  let fresh = atomicModifyIORef' counter (\n -> (n + 1, name ++ "#" ++ show (n + 1)))
+      -- Gives an expression a name in the graph, defining what it needs on the way.
+      place target expression = case expression of
+        SigNamed other -> defineSignal sys target SignalOr [other]
+        SigTruth value -> setSignal sys target value
+        SigNumber value -> setSignalNumber sys target value
+        SigOp op inputs -> mapM input inputs >>= defineSignal sys target op
+      input (SigNamed other) = pure other
+      input expression = do
+        part <- fresh
+        place part expression
+        pure part
+  place name rule
 
 -- What the engine calls for every Haskell system: `user` is the stable pointer to its
 -- function. An exception must not escape into the engine, so the engine is told of it instead.

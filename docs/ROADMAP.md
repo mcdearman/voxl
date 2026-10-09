@@ -194,8 +194,8 @@ derived from other values, which the engine keeps true.
       connection, with the current value of each (Phase 1B)
 - [x] Signals from plugins, through the C interface (set, get, define), with Rust and Haskell
       bindings
-- [ ] A Haskell layer in the applicative style of the bindings' queries, so a rule reads as
-      an expression
+- [x] A Haskell layer in which a rule reads as an expression (`defineRule`, `sig`, `.&&.`,
+      `notS`, `timer`, …)
 - [x] The sacred-site rule as a worked example and a test
 - [x] Signals as data, not closures: a graph of named nodes (sources read from the world;
       operations such as and, or, not, count, compare, held-for) joined by connections, which
