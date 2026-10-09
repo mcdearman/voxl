@@ -179,10 +179,26 @@ impl System for DynamicSystem {
             tick,
             delta,
             elapsed: time.map_or(0.0, |t| t.elapsed().as_secs_f64()),
+            failure: None,
+            spawned: Vec::new(),
         };
         // SAFETY: we hold `&mut World`, so nothing else can touch the components the callback
         // reaches through the context, and the context outlives the call.
         unsafe { (self.run)((&raw mut context).cast(), self.user) };
+        if let Some((message, trace)) = context.failure.take() {
+            // As when a typed system panics: what it had queued is lost, and so are the
+            // entities it had made to put things on.
+            let spawned = std::mem::take(&mut context.spawned);
+            self.queue = CommandQueue::default();
+            for entity in spawned {
+                world.despawn(entity);
+            }
+            if crate::ecs::guard::active() {
+                crate::ecs::guard::raise(message, trace);
+            }
+            log::error!(target: "plugin", "`{}` failed: {message}\n{trace}", self.name);
+            return;
+        }
         self.queue.apply(world);
     }
 }
@@ -239,6 +255,10 @@ pub(crate) struct Context<'a> {
     tick: Tick,
     pub delta: f32,
     pub elapsed: f64,
+    /// Set when the plugin says this run failed: its message and whatever trace it has.
+    pub failure: Option<(String, String)>,
+    /// The entities this run has made, in case it fails.
+    spawned: Vec<Entity>,
 }
 
 impl Context<'_> {
@@ -278,7 +298,9 @@ impl Context<'_> {
     }
 
     pub(crate) fn spawn(&mut self) -> Entity {
-        self.world.entities().borrow_mut().alloc()
+        let entity = self.world.entities().borrow_mut().alloc();
+        self.spawned.push(entity);
+        entity
     }
 
     pub(crate) fn world(&self) -> &World {

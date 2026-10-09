@@ -218,6 +218,8 @@ foreign import ccall unsafe "voxl_hs_set_textures"
   c_set_textures :: Ptr () -> Word64 -> Word32 -> Word32 -> Word32 -> IO ()
 foreign import ccall unsafe "voxl_hs_spawn_model"
   c_spawn_model :: Ptr () -> Ptr CChar -> CSize -> Ptr Transform -> IO Word64
+foreign import ccall unsafe "voxl_hs_system_fail"
+  c_system_fail :: Ptr () -> Ptr CChar -> CSize -> IO ()
 foreign import ccall unsafe "voxl_hs_spawn_prefab"
   c_spawn_prefab :: Ptr () -> Ptr CChar -> CSize -> Ptr Transform -> IO Word64
 foreign import ccall unsafe "voxl_hs_set_parent" c_set_parent :: Ptr () -> Word64 -> Word64 -> IO ()
@@ -911,7 +913,7 @@ spawnPrefab (System system) name at =
     Foreign.with at (fmap Entity . c_spawn_prefab system chars len)
 
 -- What the engine calls for every Haskell system: `user` is the stable pointer to its
--- function. An exception must not escape into the engine, so it is logged instead.
+-- function. An exception must not escape into the engine, so the engine is told of it instead.
 foreign export ccall "voxl_hs_dispatch" dispatch :: Ptr () -> Ptr () -> IO ()
 
 dispatch :: Ptr () -> Ptr () -> IO ()
@@ -920,7 +922,9 @@ dispatch system user = do
   result <- try (run system)
   case result of
     Right () -> pure ()
-    Left (err :: SomeException) -> logError ("a system threw: " ++ displayException err)
+    Left (err :: SomeException) ->
+      withCStringLen (displayException err) $ \(chars, len) ->
+        c_system_fail system chars (fromIntegral len)
 
 foreign export ccall "voxl_hs_unload" unload :: IO ()
 

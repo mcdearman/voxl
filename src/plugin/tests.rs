@@ -48,6 +48,13 @@ static void step(VoxlSystem *s, void *user) {
     while (api->query_next(s, &e, found)) {
         VoxlTransform *t = found[0];
         Counter *c = found[1];
+#ifdef LIMIT
+        if (t->translation[0] >= LIMIT) {
+            api->system_fail(s, VOXL_STR("ran off the edge"), VOXL_STR("counter.c: step"));
+            api->spawn(s); /* dropped with the rest of this run */
+            return;
+        }
+#endif
         t->translation[0] += STEP;
         t->translation[2] = (float)*loads;
         c->frames += 1;
@@ -518,6 +525,56 @@ fn a_c_plugin_runs_reloads_and_keeps_its_data() {
         app.native_plugins().loaded().collect::<Vec<_>>(),
         [("counter", 2)]
     );
+}
+
+#[test]
+fn a_plugin_system_that_fails_pauses_the_game_until_it_is_fixed() {
+    use crate::live::Live;
+
+    let workspace = Workspace::new("fragile");
+    let defines = ["ABI=VOXL_ABI_VERSION", "STEP=1.0f", "LIMIT=3.0f"];
+    let library = workspace.compile("counter", COUNTER, &defines);
+    let mut app = app();
+    app.world.resource_mut::<Live>().catch_failures = true;
+    let entity = app.world.spawn(Transform::IDENTITY);
+    app.load_native_plugin(&library).unwrap();
+    for _ in 0..3 {
+        app.update();
+    }
+    assert_eq!(position(&app, entity).x, 3.0);
+    assert!(!app.world.resource::<Live>().is_paused());
+    let entities = app.world.entity_count();
+
+    // The frame it fails on, and some more: the game holds still and stays alive.
+    for _ in 0..4 {
+        app.update();
+    }
+    let live = app.world.resource::<Live>();
+    assert!(live.is_paused());
+    let [failure] = live.failures() else {
+        panic!("one failure, not {:?}", live.failures());
+    };
+    assert_eq!(failure.system, "counter::step");
+    assert_eq!(failure.message, "ran off the edge");
+    assert_eq!(failure.stack, "counter.c: step");
+    assert_eq!(position(&app, entity).x, 3.0);
+    assert_eq!(app.world.entity_count(), entities, "what the failed run queued was dropped");
+
+    // Fix the code and save. The plugin reloads, and the game carries on by itself.
+    workspace.compile("counter", COUNTER, &["ABI=VOXL_ABI_VERSION", "STEP=10.0f"]);
+    assert_eq!(app.reload_native_plugins(), 1);
+    app.update();
+    assert!(!app.world.resource::<Live>().is_paused());
+    assert_eq!(position(&app, entity).x, 13.0);
+
+    // Where failures aren't caught (a release build), it is logged and the game goes on.
+    app.world.resource_mut::<Live>().catch_failures = false;
+    workspace.compile("counter", COUNTER, &defines);
+    assert_eq!(app.reload_native_plugins(), 1);
+    app.update();
+    app.update();
+    assert_eq!(position(&app, entity).x, 13.0);
+    assert!(!app.world.resource::<Live>().is_paused());
 }
 
 #[test]
@@ -1109,6 +1166,28 @@ fn a_haskell_plugin_runs_and_reloads_repeatedly() {
         app.native_plugins().loaded().collect::<Vec<_>>(),
         [("stepper", 4)]
     );
+
+    // A version that throws: the game pauses with the exception, and a fixed version
+    // carries on from where it stopped.
+    use crate::live::Live;
+    app.world.resource_mut::<Live>().catch_failures = true;
+    build_haskell(&workspace, "(error \"the step went missing\")");
+    assert_eq!(app.reload_native_plugins(), 1);
+    for _ in 0..3 {
+        app.update();
+    }
+    let live = app.world.resource::<Live>();
+    assert!(live.is_paused());
+    assert_eq!(live.failures().len(), 1, "{:?}", live.failures());
+    let failure = &live.failures()[0];
+    assert!(failure.system.starts_with("stepper::"), "{}", failure.system);
+    assert!(failure.message.contains("the step went missing"), "{}", failure.message);
+    assert_eq!(position(&app, entity).x, expected);
+    build_haskell(&workspace, "1");
+    assert_eq!(app.reload_native_plugins(), 1);
+    app.update();
+    assert!(!app.world.resource::<Live>().is_paused());
+    assert_eq!(position(&app, entity).x, expected + 1.0);
 }
 
 /// The example game, which is written entirely as a Haskell plugin: the scene, drawing, input,

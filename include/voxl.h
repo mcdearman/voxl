@@ -423,6 +423,17 @@ typedef struct VoxlApi {
      * the next frame, and are rebuilt whenever the prefab's file is saved again. */
     VoxlEntity (*spawn_prefab)(VoxlSystem *system, const char *name, size_t len,
                                const VoxlTransform *transform);
+
+    /* ---- failures (inside a system) ---- */
+
+    /* Says that this run of the system has failed: an exception was thrown, an assertion
+     * did not hold. `trace` is whatever the language can say about where (a stack, a source
+     * location), and may be empty. Call it and return. In a debug build the engine then
+     * pauses the game with the message and trace on show and leaves the system out until the
+     * plugin is reloaded; otherwise it logs them. What the system queued this run (spawns,
+     * inserts) is dropped. Language bindings call this for you when a system throws. */
+    void (*system_fail)(VoxlSystem *system, const char *message, size_t len, const char *trace,
+                        size_t trace_len);
 } VoxlApi;
 
 /* ---- conveniences for C and C++ ---- */

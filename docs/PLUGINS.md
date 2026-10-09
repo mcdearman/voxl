@@ -126,6 +126,18 @@ Names are relative to the app's asset folder. The same name always gives the sam
 parent's, and `despawn_tree` despawns an entity with everything below it. A model spawned with
 `spawn_model` is such a tree: despawn its root with `despawn_tree` to remove its parts too.
 
+## Failures
+
+A system that goes wrong says so with `system_fail(system, message, trace)` and returns. In a
+debug build the engine then [pauses the game](LIVE.md) with the message and trace on show and
+leaves that system out; save a fixed plugin and it reloads, the system comes back, and the
+game carries on from the frame it stopped on. In a release build the failure is logged.
+Whatever the failed run had spawned or queued is dropped.
+
+The bindings call it for you: an exception thrown in a Haskell system and a panic in a Rust
+one (with where it happened and its stack) both arrive this way. From C, call it where you
+would have asserted.
+
 ## Events
 
 Events are how plugins talk to each other, and how the engine tells plugins that something

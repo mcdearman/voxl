@@ -120,8 +120,10 @@ being able to see inside.
       game reloads)
 - [ ] Rewind: snapshots of the world every few frames (reflection makes them), scrub back,
       change code, play forward again
-- [ ] Stacks across the plugin boundary: which plugin system was running, and for Haskell the
-      exception with its call stack
+- [x] Failures across the plugin boundary: a plugin system that throws (Haskell), panics
+      (Rust) or calls `system_fail` (C) pauses the game with its message, and reloading the
+      fixed plugin resumes it
+- [ ] Haskell call stacks with the exception; catching crashes in native plugin code
 
 **Exit test:** make a plugin system divide by zero while the sample game runs; the game
 freezes on that frame and shows the stack; fix the line, save, and play carries on from the
@@ -326,5 +328,5 @@ project grows.
    seen in screenshots to fix alongside: the built-in sky is dull next to the sun it comes
    with; and objects that move every frame smear under temporal anti-aliasing (it has no
    motion vectors).
-3. The signal graph viewer and signals from plugins (Phase 2B); failures inside plugins
-   (Phase 1B). Then the parallel scheduler (Phase 2).
+3. The signal graph viewer and signals from plugins (Phase 2B). Then the parallel scheduler
+   (Phase 2).

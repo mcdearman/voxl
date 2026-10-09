@@ -566,9 +566,61 @@ unsafe extern "C" fn trampoline(system: *mut sys::VoxlSystem, user: *mut c_void)
         raw: system,
         pointers: callback.pointers,
     };
-    // A panic must not unwind into the engine.
-    if catch_unwind(AssertUnwindSafe(|| (callback.run)(&mut system))).is_err() {
-        log(sys::VOXL_LOG_ERROR, "a plugin system panicked");
+    // A panic must not unwind into the engine: it is caught here, and the engine told.
+    let raw = system.raw;
+    failure::watch(true);
+    let result = catch_unwind(AssertUnwindSafe(|| (callback.run)(&mut system)));
+    failure::watch(false);
+    if let Err(payload) = result {
+        let message = if let Some(text) = payload.downcast_ref::<&str>() {
+            (*text).to_owned()
+        } else if let Some(text) = payload.downcast_ref::<String>() {
+            text.clone()
+        } else {
+            "a panic with a value that isn't text".to_owned()
+        };
+        let trace = failure::take();
+        // SAFETY: still inside the system; the engine copies both strings.
+        (api().system_fail)(raw, message.as_ptr(), message.len(), trace.as_ptr(), trace.len());
+    }
+}
+
+/// Remembers where a system panicked, for the engine to show.
+mod failure {
+    use std::{
+        backtrace::Backtrace,
+        cell::{Cell, RefCell},
+        sync::Once,
+    };
+
+    thread_local! {
+        static WATCHING: Cell<bool> = const { Cell::new(false) };
+        static TRACE: RefCell<String> = const { RefCell::new(String::new()) };
+    }
+
+    /// Turns recording on or off for this thread. While it is on, a panic is recorded
+    /// instead of printed.
+    pub fn watch(on: bool) {
+        static HOOK: Once = Once::new();
+        HOOK.call_once(|| {
+            let previous = std::panic::take_hook();
+            std::panic::set_hook(Box::new(move |info| {
+                if !WATCHING.with(Cell::get) {
+                    return previous(info);
+                }
+                let at = info.location().map_or(String::new(), |l| format!("at {l}\n"));
+                let stack = Backtrace::force_capture().to_string();
+                TRACE.with(|trace| *trace.borrow_mut() = format!("{at}{stack}"));
+            }));
+        });
+        if on {
+            TRACE.with(|trace| trace.borrow_mut().clear());
+        }
+        WATCHING.with(|watching| watching.set(on));
+    }
+
+    pub fn take() -> String {
+        TRACE.with(|trace| std::mem::take(&mut *trace.borrow_mut()))
     }
 }
 
@@ -873,6 +925,13 @@ impl System {
     pub fn spawn_model(&mut self, name: &str, transform: &Transform) -> Entity {
         // SAFETY: called inside the system; the engine copies the name and the transform.
         Entity(unsafe { (api().spawn_model)(self.raw, name.as_ptr(), name.len(), transform) })
+    }
+
+    /// Says this run of the system has failed, as a panic in it would: in a debug build the
+    /// engine pauses the game with the message on show. Return after calling it.
+    pub fn fail(&mut self, message: &str) {
+        // SAFETY: called inside the system; the engine copies the message.
+        unsafe { (api().system_fail)(self.raw, message.as_ptr(), message.len(), std::ptr::null(), 0) }
     }
 
     /// Spawns an instance of a prefab by name: a new entity at `transform` with the prefab's

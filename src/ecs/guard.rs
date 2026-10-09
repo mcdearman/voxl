@@ -106,6 +106,17 @@ fn message_of(payload: &(dyn Any + Send)) -> String {
     }
 }
 
+/// Fails the system that is running, as a panic would, with a message and a stack that came
+/// from somewhere a panic can't cross: code in a plugin. Outside [`catch`] this is a panic.
+pub fn raise(message: String, stack: String) -> ! {
+    if !active() {
+        panic!("{message}\n{stack}");
+    }
+    SEEN.with(|seen| *seen.borrow_mut() = Some((String::new(), stack)));
+    // Not `panic!`: the hook would record this function as where it happened.
+    std::panic::resume_unwind(Box::new(message))
+}
+
 /// Runs `body`. If it panics, the panic stops here and is returned with its stack.
 pub fn catch<R>(body: impl FnOnce() -> R) -> Result<R, Caught> {
     install_hook();

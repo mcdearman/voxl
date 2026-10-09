@@ -121,6 +121,7 @@ pub(crate) static API: VoxlApi = VoxlApi {
     set_parent,
     despawn_tree,
     spawn_prefab,
+    system_fail,
 };
 
 /// Runs `body`, turning a panic into `fallback` so it never unwinds into the plugin.
@@ -1265,5 +1266,25 @@ unsafe extern "C" fn spawn_prefab(
             world.insert(root, (transform, instance));
         });
         root.to_bits()
+    })
+}
+
+unsafe extern "C" fn system_fail(
+    system: *mut VoxlSystem,
+    message: *const u8,
+    len: usize,
+    trace: *const u8,
+    trace_len: usize,
+) {
+    guard("system_fail", (), || {
+        let Some(context) = context(system) else {
+            return;
+        };
+        let message = text(message, len).unwrap_or("the plugin gave no reason");
+        let trace = text(trace, trace_len).unwrap_or_default();
+        // The first failure of a run is the one that matters.
+        context
+            .failure
+            .get_or_insert_with(|| (message.to_owned(), trace.to_owned()));
     })
 }

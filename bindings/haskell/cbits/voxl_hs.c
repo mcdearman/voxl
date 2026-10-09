@@ -293,3 +293,7 @@ VoxlEntity voxl_hs_spawn_prefab(VoxlSystem *system, const char *name, size_t len
                                 const VoxlTransform *transform) {
     return api->spawn_prefab(system, name, len, transform);
 }
+
+void voxl_hs_system_fail(VoxlSystem *system, const char *message, size_t len) {
+    api->system_fail(system, message, len, "", 0);
+}

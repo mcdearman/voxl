@@ -377,6 +377,14 @@ pub struct VoxlApi {
         len: usize,
         transform: *const VoxlTransform,
     ) -> VoxlEntity,
+
+    pub system_fail: unsafe extern "C" fn(
+        system: *mut VoxlSystem,
+        message: *const u8,
+        len: usize,
+        trace: *const u8,
+        trace_len: usize,
+    ),
 }
 
 /// `voxl.Transform`: 48 bytes, 16-byte aligned.

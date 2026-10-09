@@ -47,6 +47,10 @@ fn show_failures(live: Res<Live>) {
 What a caught failure can't promise: the system stopped half way, so what it was changing may
 be half changed, and its commands for that frame are lost.
 
+Plugins are part of this. An exception in a Haskell system, a panic in a Rust plugin's system,
+or a C system calling `system_fail`, pauses the game the same way, and saving the fixed plugin
+resumes it; see [PLUGINS.md](PLUGINS.md#failures).
+
 ## Time
 
 ```rust
@@ -130,6 +134,6 @@ Entities are their numbers as `entities` lists them. Values have the shape they 
 ## What isn't here yet
 
 - Tools on top of the connection: the signal graph viewer, an inspector, the editor.
-- Failures inside plugins. A Haskell exception is caught by the bindings and logged, and a
-  crash in C is a crash; neither pauses the game yet.
+- A crash in a plugin's native code (a null pointer in C) is still a crash. Failures a plugin
+  can report are caught: see below.
 - Stepping back: snapshots of the world to rewind to.
