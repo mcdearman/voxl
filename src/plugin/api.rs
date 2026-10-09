@@ -118,6 +118,8 @@ pub(crate) static API: VoxlApi = VoxlApi {
     image_load,
     set_textures,
     spawn_model,
+    set_parent,
+    despawn_tree,
 };
 
 /// Runs `body`, turning a panic into `fallback` so it never unwinds into the plugin.
@@ -1209,5 +1211,32 @@ unsafe extern "C" fn spawn_model(
             }
         });
         root.to_bits()
+    })
+}
+
+unsafe extern "C" fn set_parent(system: *mut VoxlSystem, child: VoxlEntity, parent: VoxlEntity) {
+    guard("set_parent", (), || {
+        let Some(context) = context(system) else {
+            return;
+        };
+        let child = Entity::from_bits(child);
+        context.queue.push(move |world| {
+            if parent == sys::VOXL_ENTITY_NONE {
+                world.remove::<Parent>(child);
+            } else {
+                world.insert(child, Parent(Entity::from_bits(parent)));
+            }
+        });
+    })
+}
+
+unsafe extern "C" fn despawn_tree(system: *mut VoxlSystem, entity: VoxlEntity) {
+    guard("despawn_tree", (), || {
+        if let Some(context) = context(system) {
+            let entity = Entity::from_bits(entity);
+            context.queue.push(move |world| {
+                crate::transform::despawn_recursive(world, entity);
+            });
+        }
     })
 }

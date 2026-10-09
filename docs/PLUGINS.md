@@ -117,6 +117,12 @@ undescribed component works as before and is simply invisible to scenes and tool
 
 Names are relative to the app's asset folder. The same name always gives the same asset.
 
+## Hierarchy
+
+`set_parent` makes one entity a child of another, so its transform is relative to the
+parent's, and `despawn_tree` despawns an entity with everything below it. A model spawned with
+`spawn_model` is such a tree: despawn its root with `despawn_tree` to remove its parts too.
+
 ## Events
 
 Events are how plugins talk to each other, and how the engine tells plugins that something

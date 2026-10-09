@@ -875,6 +875,20 @@ impl System {
         Entity(unsafe { (api().spawn_model)(self.raw, name.as_ptr(), name.len(), transform) })
     }
 
+    /// Makes `child` a child of `parent` (its transform becomes relative to the parent's),
+    /// or a root again with `None`, when this system returns.
+    pub fn set_parent(&mut self, child: Entity, parent: Option<Entity>) {
+        let parent = parent.map_or(sys::VOXL_ENTITY_NONE, |parent| parent.0);
+        // SAFETY: called inside the system.
+        unsafe { (api().set_parent)(self.raw, child.0, parent) }
+    }
+
+    /// Despawns an entity and everything below it, when this system returns.
+    pub fn despawn_tree(&mut self, entity: Entity) {
+        // SAFETY: called inside the system.
+        unsafe { (api().despawn_tree)(self.raw, entity.0) }
+    }
+
     /// Creates an entity. It can be given components right away; it appears in queries once
     /// this system returns.
     pub fn spawn(&mut self) -> Entity {

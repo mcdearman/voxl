@@ -80,8 +80,9 @@ contract is `include/voxl.h`; see [PLUGINS.md](PLUGINS.md).
       contact events. The example game now needs nothing from its host.
 - [x] Plugins describe their components' fields, so scenes and inspectors handle them; plugins
       load images and spawn models by name
-- [ ] Reach more of the engine from a plugin: hierarchy (`Parent`), animation, joints and
-      character controllers, voxel terrain, text and UI, sound
+- [x] Hierarchy from plugins: `set_parent` and `despawn_tree`
+- [ ] Reach more of the engine from a plugin: animation, joints and character controllers,
+      voxel terrain, text and UI, sound
 - [ ] Optional terms and change filters in queries
 - [ ] Removing a plugin at runtime, with its components and systems
 - [ ] A generic script host for languages that can't build a shared library themselves
@@ -106,7 +107,8 @@ The layer Unreal's editor, saves, networking and Blueprints all stand on.
 - [x] Components defined by plugins are reflected once the plugin describes their fields
 - [ ] Prefabs with overrides; reflecting the physics, animation and voxel components;
       capturing resources
-- [ ] Hierarchy as a real feature: `Children`, recursive despawn, cached propagation
+- [x] Hierarchy as a real feature: `Children` kept from `Parent`, recursive despawn, and
+      propagation that walks down from the roots (one multiply per entity at any depth)
 - [x] Asset server: assets by name (files, parts of model files, shapes), images decoded on
       worker threads and reloaded when the file changes, scenes saving assets by name; see
       [ASSETS.md](ASSETS.md)
@@ -247,7 +249,7 @@ project grows.
 
 ## Next three steps
 
-1. Reflect the physics, animation and voxel components; prefabs; hierarchy as a real feature
+1. Reflect the physics, animation and voxel components; prefabs; unloading unused assets
    (Phase 1).
 2. Image-diff tests around the demos, and the rest of the crate split (Phase 0). Two things
    seen in screenshots to fix alongside: the built-in sky is dull next to the sun it comes

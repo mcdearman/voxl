@@ -406,6 +406,14 @@ typedef struct VoxlApi {
      * appear when the system returns. */
     VoxlEntity (*spawn_model)(VoxlSystem *system, const char *name, size_t len,
                               const VoxlTransform *transform);
+
+    /* ---- hierarchy (inside a system; these take effect when it returns) ---- */
+
+    /* Makes `child` a child of `parent`: its transform becomes relative to the parent's.
+     * Pass VOXL_ENTITY_NONE as the parent to make it a root again. */
+    void (*set_parent)(VoxlSystem *system, VoxlEntity child, VoxlEntity parent);
+    /* Despawns an entity and everything below it (a model and its parts, say). */
+    void (*despawn_tree)(VoxlSystem *system, VoxlEntity entity);
 } VoxlApi;
 
 /* ---- conveniences for C and C++ ---- */

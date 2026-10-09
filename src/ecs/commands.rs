@@ -103,6 +103,13 @@ impl EntityCommands<'_> {
         self
     }
 
+    /// Queues arbitrary work on this entity that needs `&mut World`.
+    pub fn add(&mut self, command: impl FnOnce(&mut World, Entity) + 'static) -> &mut Self {
+        let entity = self.entity;
+        self.queue.push(move |world| command(world, entity));
+        self
+    }
+
     pub fn despawn(&mut self) {
         let entity = self.entity;
         self.queue.push(move |world| {

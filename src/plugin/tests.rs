@@ -315,6 +315,7 @@ const INVENTORY: &str = r#"
 #include <stddef.h>
 typedef struct { float weight; int32_t count; uint8_t rare; VoxlEntity owner; float tint[3]; } Item;
 static VoxlComponent transform_c, item_c;
+static VoxlEntity *hen;
 
 static VoxlTransform at(float x, float y, float z) {
     VoxlTransform t = {{x, y, z}, 0, {0, 0, 0, 1}, {1, 1, 1}, 0};
@@ -335,8 +336,18 @@ static void setup(VoxlSystem *s, void *user) {
     if (tile != api->image_load(s, VOXL_STR("tile.png"))) tile = 0; /* one name, one image */
     api->set_textures(s, sword, tile, 0, 0);
 
-    api->spawn_model(s, VOXL_STR("hen.glb"), &there);
+    *hen = api->spawn_model(s, VOXL_STR("hen.glb"), &there);
     api->spawn_model(s, VOXL_STR("no-such-model.glb"), &there); /* logged, not fatal */
+
+    /* A lantern carried by the owner: its place is relative to the owner's. */
+    VoxlTransform beside = at(0, 2, 0);
+    VoxlEntity lantern = api->spawn(s);
+    api->insert(s, lantern, transform_c, &beside);
+    api->set_parent(s, lantern, owner);
+}
+
+static void clear(VoxlSystem *s, void *user) {
+    if (api->key_pressed(s, VOXL_KEY_BACKSPACE)) api->despawn_tree(s, *hen);
 }
 
 /* The item's place shows its total weight, so a change to the component from outside (an
@@ -371,11 +382,13 @@ VOXL_EXPORT int32_t voxl_plugin_load(const VoxlApi *a, VoxlApp *app) {
     if (api->component_describe(app, item_c, fields, 5) != 0) return -4;
 
     VoxlTerm items[] = {{transform_c, VOXL_WRITE}, {item_c, VOXL_READ}};
+    hen = api->state(app, VOXL_STR("inv.hen"), sizeof(VoxlEntity), _Alignof(VoxlEntity));
     VoxlSystemDesc systems[] = {
         {VOXL_STR("setup"), VOXL_STAGE_STARTUP, 0, setup, NULL, NULL, 0},
         {VOXL_STR("weigh"), VOXL_STAGE_UPDATE, 0, weigh, NULL, items, 2},
+        {VOXL_STR("clear"), VOXL_STAGE_UPDATE, 0, clear, NULL, NULL, 0},
     };
-    for (int i = 0; i < 2; i++)
+    for (int i = 0; i < 3; i++)
         if (api->system_add(app, &systems[i]) != 0) return -5;
     return 0;
 }
@@ -767,6 +780,7 @@ fn app_with_assets(workspace: &Workspace) -> App {
     )
     .unwrap();
     let mut app = app();
+    app.add_plugins(crate::input::InputPlugin);
     app.insert_resource(AssetServer::new(&workspace.dir))
         .init_resource::<Assets<Mesh>>()
         .init_resource::<Assets<Image>>()
@@ -872,6 +886,28 @@ fn a_described_plugin_component_can_be_inspected_saved_and_loaded() {
     let root = app.world.get::<Parent>(parts[0]).unwrap().0;
     assert_eq!(position(&app, root).x, 5.0);
 
+    // Hierarchy: the lantern the plugin hung on the owner is placed relative to it.
+    let owner_entity = Entity::from_bits(owner);
+    let lantern = app
+        .world
+        .query::<(Entity, &Parent)>()
+        .iter()
+        .find(|(_, parent)| parent.0 == owner_entity)
+        .map(|(entity, _)| entity)
+        .expect("the lantern is the owner's child");
+    app.world
+        .get_mut::<Transform>(owner_entity)
+        .unwrap()
+        .translation
+        .x = 3.0;
+    app.update();
+    let lantern_at = app
+        .world
+        .get::<crate::transform::GlobalTransform>(lantern)
+        .unwrap()
+        .translation();
+    assert_eq!(lantern_at, Vec3::new(3.0, 2.0, 0.0));
+
     // The whole thing saved, and loaded into another run of the same game.
     let text = Scene::capture(&app.world, app.world.resource::<TypeRegistry>()).to_json();
     assert!(text.contains("\"inv.Item\""), "{text}");
@@ -916,6 +952,15 @@ fn a_described_plugin_component_can_be_inspected_saved_and_loaded() {
         spawned.entities.contains(&Entity::from_bits(new_owner)),
         "it points at the loaded owner"
     );
+
+    // Despawning the model's root takes its parts with it.
+    assert!(app.world.contains_entity(root));
+    app.world
+        .resource_mut::<crate::input::ButtonInput<crate::input::KeyCode>>()
+        .press(crate::input::KeyCode::Backspace);
+    app.update();
+    assert!(!app.world.contains_entity(root));
+    assert!(parts.iter().all(|part| !app.world.contains_entity(*part)));
 }
 
 /// A Haskell plugin: moves every entity with a transform `STEP` along X each frame and counts

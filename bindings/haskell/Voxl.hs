@@ -62,6 +62,8 @@ module Voxl
   , elapsedSeconds
   , spawn
   , despawn
+  , despawnTree
+  , setParent
   , insert
   , remove
     -- * Input
@@ -215,6 +217,8 @@ foreign import ccall unsafe "voxl_hs_set_textures"
   c_set_textures :: Ptr () -> Word64 -> Word32 -> Word32 -> Word32 -> IO ()
 foreign import ccall unsafe "voxl_hs_spawn_model"
   c_spawn_model :: Ptr () -> Ptr CChar -> CSize -> Ptr Transform -> IO Word64
+foreign import ccall unsafe "voxl_hs_set_parent" c_set_parent :: Ptr () -> Word64 -> Word64 -> IO ()
+foreign import ccall unsafe "voxl_hs_despawn_tree" c_despawn_tree :: Ptr () -> Word64 -> IO ()
 foreign import ccall unsafe "voxl_hs_spawn" c_spawn :: Ptr () -> IO Word64
 foreign import ccall unsafe "voxl_hs_despawn" c_despawn :: Ptr () -> Word64 -> IO ()
 foreign import ccall unsafe "voxl_hs_insert" c_insert :: Ptr () -> Word64 -> Word32 -> Ptr () -> IO ()
@@ -497,6 +501,17 @@ spawn (System system) = Entity <$> c_spawn system
 
 despawn :: System -> Entity -> IO ()
 despawn (System system) (Entity entity) = c_despawn system entity
+
+-- | Despawns an entity and everything below it (a model and its parts, say), when this
+-- system returns.
+despawnTree :: System -> Entity -> IO ()
+despawnTree (System system) (Entity entity) = c_despawn_tree system entity
+
+-- | Makes the first entity a child of the second, so that its transform is relative to the
+-- parent's, or a root again with 'Nothing'. Takes effect when this system returns.
+setParent :: System -> Entity -> Maybe Entity -> IO ()
+setParent (System system) (Entity child) parent =
+  c_set_parent system child (maybe maxBound (\(Entity bits) -> bits) parent)
 
 -- | Adds or replaces a component when this system returns.
 insert :: Storable a => System -> Entity -> Component a -> a -> IO ()
