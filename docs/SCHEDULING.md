@@ -77,16 +77,46 @@ fn start(keys: Res<ButtonInput<KeyCode>>, mut next: ResMut<NextState<Game>>) {
 - An app can have several kinds of state at once (`Game` and `Network`, say); each is its
   own type.
 
+## Running at the same moment
+
+Systems that touch nothing in common run at the same moment, on several threads. Nothing has
+to be asked for: the engine knows what every system reads and writes from its parameters, and
+groups each stage into batches.
+
+A system joins the batch before it unless
+
+- one of them writes something the other reads or writes (a component on entities both could
+  reach, or a resource); queries made disjoint with `With`/`Without` don't clash;
+- it was told to run after something in the batch;
+- something in the batch queues commands, since a later system is meant to see what an
+  earlier one spawned or inserted. So a system with `Commands` is the last of its batch, and
+  its commands are applied before the next batch starts, exactly as when taking turns;
+- it takes the whole world (`&mut World`) or is a plugin's system: those run alone.
+
+The results are the same as running one at a time, in the order written; only the time
+differs. What your code has to do is be thread-safe in the ways the compiler already asks: a
+resource read through `Res` or `ResMut` must be `Send + Sync`, and what a system keeps between
+runs (`Local`, queued commands) must be `Send`.
+
+Some things must stay on the main thread: a window, for one. `world.pin_to_main_thread::<T>()`
+keeps every system that uses `T` there, while the rest of its batch runs elsewhere. The window
+is pinned already.
+
+To see the plan for a running game, `mira-debug systems` shows each system's `batch` and
+whether it is `main_thread`. `MIRA_THREADS=1` runs everything on one thread, which is the way
+to find out whether a bug is about threads; `Schedule::set_parallel(false)` does the same for
+one schedule. `cargo run --release --example parallel_bench` measures the difference on your
+machine: eight systems over 100,000 entities each ran 5.2 times faster on a ten-core M2 Pro.
+
+A panic on a worker thread is caught like any other in a debug build ([LIVE.md](LIVE.md)): the
+system is suspended, the rest of its batch finishes, and the game pauses.
+
 ## What isn't here yet
 
-- Systems still run one at a time. Each stage is already planned into batches of systems
-  that touch nothing in common and aren't ordered against each other (`SystemInfo::batch`,
-  and `mira-debug systems`); the executor that runs a batch on several threads is next.
-  What it needs from your code is already asked for: a resource read through `Res` or
-  `ResMut` must be `Send + Sync`, and what a system keeps between runs (`Local`, queued
-  commands) must be `Send`. For something that has to stay on the main thread, call
-  `world.pin_to_main_thread::<T>()`: systems that use it are kept there
-  (`SystemInfo::main_thread`), and everything else is free to move. The window is pinned.
+- Batches are made in the order systems are written, so two systems that could share a
+  batch but have a clashing one between them don't. Queued commands end a batch; there is no
+  way yet to say that a later system needn't see them.
+- Work inside one system (a query over a million entities) is not split across threads.
 - A condition on a tuple is asked once per system, not once for the group.
 - Plugins written against the C interface can't yet give constraints or conditions for their
   own systems; the host can order around them by name.

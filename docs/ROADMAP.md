@@ -209,8 +209,11 @@ and see it change in the running scene.
       `Send + Sync`, system state and commands `Send`; a resource can be pinned to the main
       thread (the window is), and each system is marked if it must run there (pinned
       resource, whole world, or a plugin's code)
-- [ ] The parallel executor itself: a thread pool running each batch, pinned systems on the
-      main thread, commands applied between batches
+- [x] The parallel executor: a pool of worker threads runs each batch, pinned systems stay on
+      the main thread, commands are applied between batches in order; results identical to
+      running in turn; clean under Miri with worker threads
+- [ ] Splitting one query's work across threads; relaxing "commands end a batch" where a
+      later system needn't see them; a ThreadSanitizer run in CI
 - [ ] Table storage as an option beside sparse sets, chosen per component
 - [ ] Hooks and observers: run code when a component is added or removed
 - [ ] Relations: `(ChildOf, e)`-style pairs, replacing `Parent`
@@ -380,5 +383,5 @@ project grows.
    seen in screenshots to fix alongside: the built-in sky is dull next to the sun it comes
    with; and objects that move every frame smear under temporal anti-aliasing (it has no
    motion vectors).
-3. The parallel executor (Phase 2); the rest of Phase 1C (headless stepping, input from an
-   agent, pushed events).
+3. The rest of Phase 1C (headless stepping, input from an agent, pushed events); then table
+   storage, observers and relations (Phase 2).

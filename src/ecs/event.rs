@@ -104,7 +104,7 @@ impl<'w, E> EventReader<'w, '_, E> {
     }
 }
 
-impl<E: 'static> SystemParam for EventReader<'_, '_, E> {
+impl<E: Send + Sync + 'static> SystemParam for EventReader<'_, '_, E> {
     type State = usize;
     type Item<'w, 's> = EventReader<'w, 's, E>;
 
@@ -139,7 +139,7 @@ impl<E> EventWriter<'_, E> {
     }
 }
 
-impl<E: 'static> SystemParam for EventWriter<'_, E> {
+impl<E: Send + Sync + 'static> SystemParam for EventWriter<'_, E> {
     type State = ();
     type Item<'w, 's> = EventWriter<'w, E>;
 

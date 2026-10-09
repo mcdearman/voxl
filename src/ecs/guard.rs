@@ -40,7 +40,13 @@ fn install_hook() {
                 return previous(info);
             }
             let location = info.location().map_or(String::new(), |l| l.to_string());
-            let stack = trim(&Backtrace::force_capture().to_string());
+            // Miri keeps programs away from the file system, which printing a backtrace asks
+            // about; the stack is left out there.
+            let stack = if cfg!(miri) {
+                String::new()
+            } else {
+                trim(&Backtrace::force_capture().to_string())
+            };
             SEEN.with(|seen| *seen.borrow_mut() = Some((location, stack)));
         }));
     });

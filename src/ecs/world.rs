@@ -1,8 +1,12 @@
 use std::{
     alloc::Layout,
     any::{type_name, Any, TypeId},
-    cell::{Cell, RefCell, UnsafeCell},
+    cell::UnsafeCell,
     collections::{hash_map::Entry, HashMap, HashSet},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Mutex, MutexGuard,
+    },
 };
 
 use super::{
@@ -50,7 +54,9 @@ pub struct NamedComponent {
 /// The one exception is system execution: a system borrows the whole world mutably, then its
 /// parameters reach into it through `&World` under the access rules checked at initialization.
 pub struct World {
-    entities: RefCell<Entities>,
+    /// Behind a lock, not for `&mut` users (who go straight in) but because systems running
+    /// at the same moment may each be making entities through `Commands`.
+    entities: Mutex<Entities>,
     storages: HashMap<ComponentKey, Box<dyn ErasedStorage>>,
     /// Components that can be found by name, in the order they were named.
     named: Vec<NamedComponent>,
@@ -60,7 +66,7 @@ pub struct World {
     /// Resources that must only be used from the main thread, though their types could be
     /// shared: a window, say.
     main_thread: HashSet<TypeId>,
-    change_tick: Cell<Tick>,
+    change_tick: AtomicU64,
 }
 
 impl Default for World {
@@ -72,44 +78,42 @@ impl Default for World {
 impl World {
     pub fn new() -> Self {
         Self {
-            entities: RefCell::default(),
+            entities: Mutex::default(),
             storages: HashMap::new(),
             named: Vec::new(),
             names: HashMap::new(),
             next_dynamic: 0,
             resources: HashMap::new(),
             main_thread: HashSet::new(),
-            change_tick: Cell::new(1),
+            change_tick: AtomicU64::new(1),
         }
     }
 
     // --- ticks ---
 
     pub fn change_tick(&self) -> Tick {
-        self.change_tick.get()
+        self.change_tick.load(Ordering::Relaxed)
     }
 
     /// Returns the current tick and advances the counter. Called once per system run.
     pub(crate) fn increment_change_tick(&self) -> Tick {
-        let tick = self.change_tick.get();
-        self.change_tick.set(tick + 1);
-        tick
+        self.change_tick.fetch_add(1, Ordering::Relaxed)
     }
 
     // --- entities ---
 
     pub fn spawn<B: Bundle>(&mut self, bundle: B) -> Entity {
-        let entity = self.entities.get_mut().alloc();
+        let entity = self.entities_mut().alloc();
         bundle.insert_into(self, entity);
         entity
     }
 
     pub fn spawn_empty(&mut self) -> Entity {
-        self.entities.get_mut().alloc()
+        self.entities_mut().alloc()
     }
 
     pub fn despawn(&mut self, entity: Entity) -> bool {
-        if !self.entities.get_mut().free(entity) {
+        if !self.entities_mut().free(entity) {
             return false;
         }
         for storage in self.storages.values_mut() {
@@ -119,19 +123,28 @@ impl World {
     }
 
     pub fn contains_entity(&self, entity: Entity) -> bool {
-        self.entities.borrow().contains(entity)
+        self.entities().contains(entity)
     }
 
     pub fn entity_count(&self) -> usize {
-        self.entities.borrow().len()
+        self.entities().len()
     }
 
-    pub(crate) fn entities(&self) -> &RefCell<Entities> {
-        &self.entities
+    /// The entity allocator, locked: for making entities with only shared access.
+    pub(crate) fn entities(&self) -> MutexGuard<'_, Entities> {
+        self.entities
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn entities_mut(&mut self) -> &mut Entities {
+        self.entities
+            .get_mut()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     pub(crate) fn entities_snapshot(&self) -> Vec<Entity> {
-        self.entities.borrow().iter().collect()
+        self.entities().iter().collect()
     }
 
     // --- components ---

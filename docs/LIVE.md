@@ -39,6 +39,8 @@ fn show_failures(live: Res<Live>) {
 }
 ```
 
+- A system running on a worker thread beside others is caught the same way; the rest of its
+  batch finishes first.
 - `live.catch_failures` turns this on and off. It is on in debug builds and off in release
   builds, where a panic is a panic; `MIRA_LIVE=1` or `MIRA_LIVE=0` overrides either.
 - `live.pause_on_failure = false` keeps the game running without the failed system.
