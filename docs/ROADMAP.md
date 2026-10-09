@@ -154,7 +154,12 @@ using only the engine.
 
 ## Phase 5: Editor (XL)
 
-Built from the engine's own UI and reflection.
+Built with [Neo](https://github.com/mcdearman/neo), Chris's GUI toolkit, on top of the
+engine's reflection. Before starting, work out with the Neo project what the
+editor needs from it.
+
+- [ ] Agree with Neo on what it must provide: a wgpu viewport inside a Neo window, dockable
+      panels, tree and property views, drag and drop, undo
 
 - [ ] Viewport, entity tree, inspector generated from reflection, transform gizmos
 - [ ] Asset browser, drag to place, prefab editing
@@ -232,8 +237,10 @@ project grows.
 
 ## Next three steps
 
-1. Image-diff tests around the demos, and the rest of the crate split (Phase 0). A bare scene
-   with no sky set up renders washed out; fix the renderer's defaults while doing this.
+1. Image-diff tests around the demos, and the rest of the crate split (Phase 0). Two things
+   seen in screenshots to fix alongside: the voxel demo's fog starts at the camera, so nearby
+   terrain is hazed (fog needs a start distance); and objects that move every frame smear
+   under temporal anti-aliasing (it has no motion vectors).
 2. Start the data layer: a proc-macro crate with `#[derive(Component)]` and
    `#[derive(Reflect)]` (Phase 1).
 3. Assets from files for plugins (models and textures by path), which needs the asset server
