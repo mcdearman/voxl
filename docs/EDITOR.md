@@ -10,7 +10,8 @@ project and what exists on each side.
 and step it. Beside it: the game's entities as a tree (children under their `Parent`; drag
 one onto another to make it its child, or beside one to share its parent), an inspector
 in which the chosen entity's parts are fields to change (numbers and vectors drag or take a
-typed value, true-or-false is a switch; text, entity and asset references are shown but not
+typed value, true-or-false is a switch, a colour opens a picker; text, entity and asset
+references are shown but not
 yet changed there), each change written straight to the running game,
 and the game's signals with their values. All are read from the game a few times a second.
 They are panels of a dock:

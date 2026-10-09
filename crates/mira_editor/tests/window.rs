@@ -118,6 +118,13 @@ fn the_app_is_worked_by_clicking_on_it() {
     assert_eq!(said.first(), Some(&"Why is the clock stopped?"), "{said:?}");
     assert!(said.len() == 2 && said[1].contains("no agent"), "{said:?}");
 
+    // Further down the inspector, for the picture: the entity's colour.
+    window.event(Event::Wheel {
+        pos: Point::new(930.0, 600.0),
+        delta: Point::new(0.0, 170.0),
+    });
+    window.frame(TICK, 1.0);
+
     if let Ok(path) = std::env::var("MIRA_EDITOR_SHOT") {
         window.save_png(path, 1.0).expect("the picture saved");
     }

@@ -39,7 +39,7 @@ use mira::{
     transform::Parent,
 };
 use neo::prelude::*;
-use neo::{wgpu, Graphics, Image, Key, KeyEvent, Point, PointerButton, Rect};
+use neo::{wgpu, Color, Graphics, Image, Key, KeyEvent, Point, PointerButton, Rect};
 
 /// What happens in the window.
 #[derive(Clone, Debug)]
@@ -495,6 +495,40 @@ fn numbers(items: &[Value]) -> Option<Vec<f64>> {
         .collect()
 }
 
+/// A colour, if that is what a value is: fields `r`, `g`, `b` and perhaps `a`, all numbers.
+/// mira keeps colours linear.
+fn colour(fields: &[(String, Value)]) -> Option<[f64; 4]> {
+    let part = |name: &str| {
+        fields.iter().find_map(|(field, value)| match value {
+            Value::Float(value) if field == name => Some(*value),
+            _ => None,
+        })
+    };
+    let named = fields
+        .iter()
+        .all(|(field, _)| matches!(field.as_str(), "r" | "g" | "b" | "a"));
+    (named && fields.len() >= 3).then_some(())?;
+    Some([part("r")?, part("g")?, part("b")?, part("a").unwrap_or(1.0)])
+}
+
+/// A linear amount of light as the number a screen is told, and back: what a colour code
+/// and a colour picker count in.
+fn encoded(linear: f64) -> f64 {
+    if linear <= 0.003_130_8 {
+        linear * 12.92
+    } else {
+        1.055 * linear.powf(1.0 / 2.4) - 0.055
+    }
+}
+
+fn linear(encoded: f64) -> f64 {
+    if encoded <= 0.040_45 {
+        encoded / 12.92
+    } else {
+        ((encoded + 0.055) / 1.055).powf(2.4)
+    }
+}
+
 /// A row of the inspector: what the field is called, and the control for it.
 fn field_row(name: &str, depth: usize, control: Element<Message>) -> Element<Message> {
     row()
@@ -504,7 +538,7 @@ fn field_row(name: &str, depth: usize, control: Element<Message>) -> Element<Mes
             text(format!("{}{name}", "  ".repeat(depth)))
                 .mono()
                 .tone(Tone::Muted)
-                .width(96.0),
+                .width(112.0),
         )
         .push(control)
         .into()
@@ -544,6 +578,48 @@ fn fields(
                 whole[part] = number;
                 edited(Value::List(whole.into_iter().map(Value::Float).collect()))
             })
+        }
+        // A colour is picked as one; how see-through it is stays a number beside it.
+        Value::Map(parts) if colour(parts).is_some() => {
+            let [r, g, b, a] = colour(parts).expect("checked just above");
+            let has_alpha = parts.iter().any(|(field, _)| field == "a");
+            let whole = move |[r, g, b, a]: [f64; 4]| {
+                let mut fields = vec![
+                    ("r".to_owned(), Value::Float(r)),
+                    ("g".to_owned(), Value::Float(g)),
+                    ("b".to_owned(), Value::Float(b)),
+                ];
+                if has_alpha {
+                    fields.push(("a".to_owned(), Value::Float(a)));
+                }
+                Value::Map(fields)
+            };
+            let shown = Color::rgb(encoded(r) as f32, encoded(g) as f32, encoded(b) as f32);
+            let picked = edited.clone();
+            let picker = color_field(shown).on_change(move |to: Color| {
+                picked(whole([
+                    linear(to.r as f64),
+                    linear(to.g as f64),
+                    linear(to.b as f64),
+                    a,
+                ]))
+            });
+            if !has_alpha {
+                picker.into()
+            } else {
+                row()
+                    .spacing(6.0)
+                    .push(picker)
+                    .push(
+                        number_field(a)
+                            .step(0.01)
+                            .range(0.0..=1.0)
+                            .label("A")
+                            .on_change(move |a| edited(whole([r, g, b, a])))
+                            .width(72.0),
+                    )
+                    .into()
+            }
         }
         // What has parts is a name, with the parts under it.
         Value::Map(_) | Value::List(_) => {
@@ -985,6 +1061,31 @@ mod tests {
         );
         assert_eq!(numbers(&[Value::Float(1.0)]), None);
         assert_eq!(numbers(&[Value::Float(1.0), Value::Int(2)]), None);
+
+        // A colour is known by its fields, and goes to a picker and back unchanged.
+        let rgba = |parts: &[(&str, f64)]| -> Vec<(String, Value)> {
+            parts
+                .iter()
+                .map(|(name, value)| (name.to_string(), Value::Float(*value)))
+                .collect()
+        };
+        assert_eq!(
+            colour(&rgba(&[("r", 0.7), ("g", 0.1), ("b", 0.1), ("a", 0.5)])),
+            Some([0.7, 0.1, 0.1, 0.5])
+        );
+        assert_eq!(
+            colour(&rgba(&[("r", 0.7), ("g", 0.1), ("b", 0.1)])),
+            Some([0.7, 0.1, 0.1, 1.0])
+        );
+        assert_eq!(colour(&rgba(&[("x", 0.7), ("y", 0.1), ("z", 0.1)])), None);
+        assert_eq!(colour(&rgba(&[("r", 0.7), ("g", 0.1)])), None);
+        for amount in [0.0, 0.002, 0.18, 0.5, 1.0] {
+            assert!((linear(encoded(amount)) - amount).abs() < 1e-9, "{amount}");
+        }
+        assert!(
+            (encoded(0.214) - 0.5).abs() < 0.001,
+            "middle grey on a screen"
+        );
     }
 
     #[test]
