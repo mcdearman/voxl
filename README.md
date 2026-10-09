@@ -77,6 +77,8 @@ Failures that pause the game instead of ending it, and stepping time:
 
 AI agents driving a running game over MCP: [docs/MCP.md](docs/MCP.md).
 
+Interface inside the game, on Armature: [docs/UI.md](docs/UI.md).
+
 Where the engine is headed: [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## Layout

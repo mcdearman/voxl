@@ -62,6 +62,13 @@ impl<T: Copy + Eq + Hash> ButtonInput<T> {
         self.pressed.iter()
     }
 
+    /// Takes a press away as if it had never happened: for when something in front of the
+    /// game (a panel of its interface) has acted on it, and the game shouldn't as well.
+    pub fn consume(&mut self, input: T) {
+        self.pressed.remove(&input);
+        self.just_pressed.remove(&input);
+    }
+
     pub fn clear(&mut self) {
         self.just_pressed.clear();
         self.just_released.clear();
