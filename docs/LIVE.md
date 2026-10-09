@@ -72,11 +72,64 @@ Each entry has the system's name, its sets and ordering constraints
 ([SCHEDULING.md](SCHEDULING.md)), whether it is suspended, and how long it takes, in the order
 the stage runs them.
 
+## The debug connection
+
+A running game can be questioned and changed from outside, over a local socket:
+
+```sh
+VOXL_DEBUG=127.0.0.1:7878 cargo run --example host -- chase   # the game
+cargo run --bin voxl-debug -- status                           # from another terminal
+cargo run --bin voxl-debug -- entities with=voxl.Camera
+cargo run --bin voxl-debug -- get entity=4294967297
+cargo run --bin voxl-debug -- set entity=4294967297 component=voxl.Transform path=translation.1 value=3.5
+cargo run --bin voxl-debug -- pause
+cargo run --bin voxl-debug -- step frames=10
+cargo run --bin voxl-debug -- signals
+cargo run --bin voxl-debug -- signal_force name=blue.contesting value=false
+```
+
+Any app with `DefaultPlugins` listens where `VOXL_DEBUG` says, if it is set; any app at all
+can call `app.listen_for_debugger("127.0.0.1:7878")`. Listen only on the machine itself:
+whoever can connect can change the game.
+
+The protocol is one JSON object per line each way, so anything can speak it (`nc 127.0.0.1
+7878` will do). A request is `{"cmd": …}` with the command's arguments, and optionally an
+`id` that the answer repeats; the answer is `{"ok": …}` or `{"error": "why"}`. Requests are
+answered at the start of a frame, whether or not the game is paused.
+
+| Command | Arguments | Answer |
+| --- | --- | --- |
+| `status` | | frame, seconds, time scale, paused, failures, entities |
+| `pause`, `resume` | | |
+| `step` | `frames` (1) | runs that many frames, then pauses |
+| `time_scale` | `scale` | |
+| `failures` | | every caught failure, with its stack |
+| `systems` | `stage` (all) | each stage's systems in order, with constraints and timings |
+| `types` | | the names of registered components and resources |
+| `entities` | `with` (a component), `limit` (200) | entities and what each has |
+| `get` | `entity`, `component` (all) | the component's value, or every component's |
+| `set` | `entity`, `component`, `value`, `path` (the whole component) | |
+| `remove` | `entity`, `component` | |
+| `spawn` | `components`: a map of values by name | the new entity |
+| `despawn` | `entity` | how many went: it and everything below it |
+| `resource` | `name`, `value` (to set it) | the resource's value |
+| `save_scene` | `path` | how many entities were saved |
+| `reload_plugins` | | how many reloaded |
+| `signals` | | the [signal graph](SIGNALS.md): every node, its inputs and value |
+| `signal_set` | `name`, `value` | defines or sets a constant |
+| `signal_force` | `name`, `value` (none lets it go) | |
+| `signal_connect` | `name`, `input`, `to` | |
+| `signal_define` | `name`, `op`, `inputs`, and `value` or `seconds` where the op has one | |
+| `signal_remove` | `name` | |
+
+Entities are their numbers as `entities` lists them. Values have the shape they have in a
+[scene file](SCENES.md). The operations are `constant`, `and`, `or`, `not`, `count`, `sum`,
+`select`, `timer`, `held_for`, `less`, `less_or_equal`, `equal`, `greater_or_equal`,
+`greater`.
+
 ## What isn't here yet
 
-- A connection to a running game from outside (a local socket): list entities, read and
-  change components by name, pause and step, read failures. The pieces it will call are the
-  ones on this page and the [type registry](SCENES.md#editing-by-name).
+- Tools on top of the connection: the signal graph viewer, an inspector, the editor.
 - Failures inside plugins. A Haskell exception is caught by the bindings and logged, and a
   crash in C is a crash; neither pauses the game yet.
 - Stepping back: snapshots of the world to rewind to.

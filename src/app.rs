@@ -65,6 +65,7 @@ pub struct App {
     pub world: World,
     schedules: HashMap<Stage, Schedule>,
     started: bool,
+    pub(crate) debug: Option<crate::remote::DebugServer>,
     // Last, so it is dropped last: the world's values may have destructors in plugin code.
     pub(crate) native: NativePlugins,
 }
@@ -81,6 +82,7 @@ impl App {
             world: World::new(),
             schedules: HashMap::new(),
             started: false,
+            debug: None,
             native: NativePlugins::default(),
         };
         app.add_event::<AppExit>();
@@ -161,6 +163,7 @@ impl App {
     pub fn update(&mut self) {
         self.startup();
         self.check_native_plugins();
+        self.serve_debuggers();
         let frame = self.begin_live_frame();
         let mut fixed_steps = 0;
         if let Some(time) = self.world.get_resource_mut::<Time>() {
@@ -291,5 +294,6 @@ impl Plugin for DefaultPlugins {
             .add_plugins(TransformPlugin)
             .add_plugins(crate::prefab::PrefabPlugin)
             .add_plugins(RenderPlugin);
+        app.listen_for_debugger_from_env();
     }
 }

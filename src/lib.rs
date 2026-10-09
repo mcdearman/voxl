@@ -11,6 +11,7 @@ pub mod physics;
 pub mod plugin;
 pub mod prefab;
 pub mod reflect;
+pub mod remote;
 pub mod render;
 pub mod signal;
 pub mod state;

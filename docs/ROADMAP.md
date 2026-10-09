@@ -109,10 +109,13 @@ being able to see inside.
 - [x] Time under control: pause, step frames, slow motion
 - [x] Every system's name, stage, order, constraints and run times, from the running app
 - [ ] What each system reads and writes, from the running app
-- [ ] A debug connection (a local socket speaking JSON) to a running game: list and search
+- [x] A debug connection (a local socket speaking JSON) to a running game: list and search
       entities, read and change any registered component or resource by name, spawn and
-      despawn, save the scene, pause and step, see failures with their stacks, reload plugins
-- [ ] A command-line client for it, and the same protocol under the editor (Phase 5)
+      despawn, save the scene, pause and step, see failures with their stacks, reload
+      plugins, read and rewire the signal graph
+- [x] A command-line client for it (`voxl-debug`)
+- [ ] The same protocol under the editor (Phase 5); pushing changes to a client that is
+      watching, instead of being asked
 - [ ] Hot reload of the host's own Rust systems, not only plugins (the engine as a library the
       game reloads)
 - [ ] Rewind: snapshots of the world every few frames (reflection makes them), scrub back,
@@ -193,9 +196,12 @@ derived from other values, which the engine keeps true.
       operations such as and, or, not, count, compare, held-for) joined by connections, which
       can be listed with their values and rewired, forced and redefined while the game runs
 - [ ] Saving and loading a signal graph; signals carrying entities
+- [x] The signal graph over the debug connection: read every node and its value, set
+      constants, connect inputs, force outputs, define and remove nodes, while the game runs
 - [ ] A signal graph viewer (Chris, October 2026): watch which signals are active as you
       play, and edit signals and their connections live to change the game's rules while
-      developing; first over the debug connection, then as a panel of the editor (Phase 5)
+      developing; a window drawn from the debug connection's data, then a panel of the
+      editor (Phase 5)
 
 **Exit test:** the sacred-site game: two teams, several sites, units walking on and off and
 dying in any order; the timer is right in every case because no code ever sets it.
@@ -320,5 +326,5 @@ project grows.
    seen in screenshots to fix alongside: the built-in sky is dull next to the sun it comes
    with; and objects that move every frame smear under temporal anti-aliasing (it has no
    motion vectors).
-3. A live program (Phase 1B): the debug connection to a running game, and failures inside
-   plugins. Signals (Phase 2B). Then the parallel scheduler (Phase 2).
+3. The signal graph viewer and signals from plugins (Phase 2B); failures inside plugins
+   (Phase 1B). Then the parallel scheduler (Phase 2).
