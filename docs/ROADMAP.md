@@ -108,7 +108,7 @@ being able to see inside.
       code (a plugin reloads itself), resume; see [LIVE.md](LIVE.md)
 - [x] Time under control: pause, step frames, slow motion
 - [x] Every system's name, stage, order, constraints and run times, from the running app
-- [ ] What each system reads and writes, from the running app
+- [x] What each system reads and writes, from the running app
 - [x] A debug connection (a local socket speaking JSON) to a running game: list and search
       entities, read and change any registered component or resource by name, spawn and
       despawn, save the scene, pause and step, see failures with their stacks, reload

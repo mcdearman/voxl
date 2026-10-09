@@ -18,7 +18,7 @@ mod world;
 #[cfg(test)]
 mod tests;
 
-pub use access::{Access, FilteredAccess};
+pub use access::{Access, AccessSummary, FilteredAccess};
 pub use bundle::Bundle;
 pub use change::Mut;
 pub use commands::{CommandQueue, Commands, EntityCommands};

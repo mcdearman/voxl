@@ -369,6 +369,20 @@ fn handle(app: &mut App, request: &Value) -> Answer {
                             ("after", texts(system.after)),
                             ("conditions", Value::Int(system.conditions as i64)),
                             ("suspended", Value::Bool(system.suspended)),
+                            (
+                                "access",
+                                system.access.map_or(
+                                    Value::Text("the whole world".into()),
+                                    |access| {
+                                        map([
+                                            ("reads", texts(access.reads)),
+                                            ("writes", texts(access.writes)),
+                                            ("resource_reads", texts(access.resource_reads)),
+                                            ("resource_writes", texts(access.resource_writes)),
+                                        ])
+                                    },
+                                ),
+                            ),
                             ("runs", Value::Int(system.stats.runs as i64)),
                             (
                                 "last_micros",
@@ -937,6 +951,11 @@ mod tests {
         };
         assert_eq!(update.len(), 1);
         assert_eq!(update[0].field("runs"), Some(&Value::Int(4)));
+        let writes = update[0].get_path("access.resource_writes.0");
+        assert!(
+            matches!(writes, Some(Value::Text(name)) if name.ends_with("Frames")),
+            "{writes:?}"
+        );
         assert!(
             matches!(ask(&mut app, "{'cmd': 'systems'}"), Value::Map(stages) if stages.len() > 2)
         );

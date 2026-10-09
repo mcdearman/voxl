@@ -96,8 +96,9 @@ for system in app.systems(Stage::Update) {
 ```
 
 Each entry has the system's name, its sets and ordering constraints
-([SCHEDULING.md](SCHEDULING.md)), whether it is suspended, and how long it takes, in the order
-the stage runs them.
+([SCHEDULING.md](SCHEDULING.md)), whether it is suspended, how long it takes, and what it
+reads and writes (`access`: components and resources by name), in the order the stage runs
+them.
 
 ## The debug connection
 

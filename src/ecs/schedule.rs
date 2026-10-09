@@ -1,6 +1,7 @@
 use std::time::{Duration, Instant};
 
 use super::{
+    access::{Access, AccessSummary},
     condition::{BoxedCondition, IntoCondition},
     guard,
     system::{BoxedSystem, IntoSystem},
@@ -48,6 +49,9 @@ pub struct SystemInfo {
     /// It panicked and is waiting to be resumed or replaced.
     pub suspended: bool,
     pub stats: SystemStats,
+    /// What it reads and writes; `None` for a system that takes the whole world, or one that
+    /// hasn't been initialized yet.
+    pub access: Option<AccessSummary>,
 }
 
 /// A system that panicked while the schedule was guarded.
@@ -283,6 +287,7 @@ impl Schedule {
                     conditions: config.conditions.len(),
                     suspended: config.suspended,
                     stats: config.stats,
+                    access: config.system.access().map(Access::summary),
                 }
             })
             .collect()

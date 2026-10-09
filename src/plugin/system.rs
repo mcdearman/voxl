@@ -72,6 +72,7 @@ pub(crate) struct DynamicSystem {
     entities: Vec<Vec<Entity>>,
     /// This system's reader in `PluginEvents`, found by name on its first run.
     reader: Option<u32>,
+    access: Option<Access>,
 }
 
 impl DynamicSystem {
@@ -91,6 +92,7 @@ impl DynamicSystem {
             queue: CommandQueue::default(),
             entities: Vec::new(),
             reader: None,
+            access: None,
         }
     }
 
@@ -127,6 +129,11 @@ impl System for DynamicSystem {
         access.read_resource::<crate::signal::Signals>();
         access.write_resource::<Assets<Image>>();
         access.read_resource::<PluginEvents>();
+        self.access = Some(access);
+    }
+
+    fn access(&self) -> Option<&Access> {
+        self.access.as_ref()
     }
 
     fn run(&mut self, world: &mut World) {
