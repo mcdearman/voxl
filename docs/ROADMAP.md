@@ -361,7 +361,10 @@ editor needs from it.
 - [x] Panels in a dock, arranged by dragging and kept between runs; the game's entities and
       signals listed live beside it
 
-- [ ] Viewport, entity tree, inspector generated from reflection, transform gizmos
+- [x] Entity tree (select, open and shut, drag to reparent) and a read-only inspector
+      generated from reflection
+- [ ] Editing in the inspector (waits on Neo's number, vector and entity fields); renaming
+      (mira has no name component yet); transform gizmos
 - [ ] Asset browser, drag to place, prefab editing
 - [ ] Undo and redo as a command log; play in editor
 - [ ] Material editor; voxel sculpting and painting tools
