@@ -204,8 +204,8 @@ pub fn init(world: &mut World) {
     });
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("smoke pipeline layout"),
-        bind_group_layouts: &[&view.layout, &layout],
-        push_constant_ranges: &[],
+        bind_group_layouts: &[Some(&view.layout), Some(&layout)],
+        immediate_size: 0,
     });
     let premultiplied = wgpu::BlendComponent {
         src_factor: wgpu::BlendFactor::One,
@@ -218,11 +218,11 @@ pub fn init(world: &mut World) {
         vertex: wgpu::VertexState {
             module: &shader,
             entry_point: Some("vs_main"),
-            buffers: &[wgpu::VertexBufferLayout {
+            buffers: &[Some(wgpu::VertexBufferLayout {
                 array_stride: std::mem::size_of::<Instance>() as u64,
                 step_mode: wgpu::VertexStepMode::Instance,
                 attributes: &wgpu::vertex_attr_array![0 => Float32x4, 1 => Float32x4, 2 => Float32x4],
-            }],
+            })],
             compilation_options: Default::default(),
         },
         fragment: Some(wgpu::FragmentState {
@@ -244,7 +244,7 @@ pub fn init(world: &mut World) {
         },
         depth_stencil: Some(main_depth_state(false)),
         multisample: main_multisample(false),
-        multiview: None,
+        multiview_mask: None,
         cache: None,
     });
     let buffer = device.create_buffer(&wgpu::BufferDescriptor {

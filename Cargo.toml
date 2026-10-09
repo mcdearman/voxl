@@ -20,5 +20,5 @@ gltf = { version = "1", default-features = false, features = ["import", "utils",
 half = { version = "2", features = ["bytemuck"] }
 log = "0.4"
 pollster = "0.3"
-wgpu = "26.0.1"
+wgpu = "30.0.1"
 winit = "0.30.12"

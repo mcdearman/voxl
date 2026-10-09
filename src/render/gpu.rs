@@ -15,8 +15,8 @@ pub const DEPTH_CLEAR: f32 = 0.0;
 pub fn main_depth_state(write: bool) -> wgpu::DepthStencilState {
     wgpu::DepthStencilState {
         format: DEPTH_FORMAT,
-        depth_write_enabled: write,
-        depth_compare: DEPTH_COMPARE,
+        depth_write_enabled: Some(write),
+        depth_compare: Some(DEPTH_COMPARE),
         stencil: Default::default(),
         bias: Default::default(),
     }
@@ -58,14 +58,15 @@ impl Gpu {
         let size = window.inner_size();
         // Ray queries, and an array of every texture so reflections can show what they hit.
         let rt_features = wgpu::Features::EXPERIMENTAL_RAY_QUERY
-            | wgpu::Features::EXPERIMENTAL_RAY_TRACING_ACCELERATION_STRUCTURE
             | wgpu::Features::TEXTURE_BINDING_ARRAY
             | wgpu::Features::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING;
         let open = |backends: wgpu::Backends| {
-            let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
-                backends,
-                ..Default::default()
-            });
+            // The window stands in for the display it is on, which some platforms need
+            // before they can make a surface.
+            let mut descriptor =
+                wgpu::InstanceDescriptor::new_with_display_handle(Box::new(window.clone()));
+            descriptor.backends = backends;
+            let instance = wgpu::Instance::new(descriptor);
             let surface = instance.create_surface(window.clone());
             (instance, surface)
         };
@@ -74,6 +75,7 @@ impl Gpu {
                 power_preference: wgpu::PowerPreference::HighPerformance,
                 compatible_surface: Some(surface),
                 force_fallback_adapter: false,
+                apply_limit_buckets: false,
             }))
             .ok()
         };
@@ -155,6 +157,7 @@ impl Gpu {
                 wgpu::PresentMode::AutoNoVsync
             },
             alpha_mode: caps.alpha_modes[0],
+            color_space: wgpu::SurfaceColorSpace::Auto,
             view_formats: vec![],
             desired_maximum_frame_latency: 2,
         };

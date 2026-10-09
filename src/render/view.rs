@@ -129,7 +129,7 @@ impl ViewBinding {
             address_mode_v: wgpu::AddressMode::ClampToEdge,
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Linear,
             ..Default::default()
         });
         let bind_group = Self::bind(device, &layout, &buffer, shadows, sky, &sky_sampler, scene);
