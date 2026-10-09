@@ -359,6 +359,23 @@ editor needs from it.
 - [ ] Undo and redo as a command log; play in editor
 - [ ] Material editor; voxel sculpting and painting tools
 - [ ] Profiler and render-graph viewers
+- [ ] An agent window: a panel of the engine app in which to talk to an AI agent that is
+      working on the game in front of you, so that no second app need be open. Asked for by
+      Chris (October 2026), as the other half of Phase 1C: there the agent reaches the engine
+      from outside; here it sits inside it.
+  - The conversation, with what the agent does shown as it does it: each tool call and its
+    answer, screenshots inline, the signal graph and entities it names as links into the
+    other panels
+  - The agent drives this very engine through the same tools as from outside (`mira_*`),
+    served in-process, with no socket to set up
+  - The agent itself is a program the window runs and talks to, not something built into
+    the engine: any agent that speaks a common protocol can be put there. To be settled
+    before building: which protocol (the Agent Client Protocol that editors use for this is
+    the likely one) and how the agent is told about the engine's tools
+  - Saying yes or no to what an agent asks to do; stopping it; and the game's own pause,
+    step and rewind beside the conversation, since they are how its work is checked
+  - What you have selected and are looking at (the entity, the signal, the camera's view)
+    given to the agent as context without being typed
 
 **Exit test:** rebuild the Paris square without writing Rust for placement.
 
@@ -431,9 +448,9 @@ project grows.
 ## Next three steps
 
 1. Model files loaded off the main thread and watched (Phase 1).
-2. Image-diff tests around the demos, and the rest of the crate split (Phase 0). Two things
-   seen in screenshots to fix alongside: the built-in sky is dull next to the sun it comes
-   with; and objects that move every frame smear under temporal anti-aliasing (it has no
-   motion vectors).
-3. The rest of Phase 1C (pushed events, launching a game, screenshot viewpoints and
-   overlays); then table storage, observers and relations (Phase 2).
+2. Agree with Neo what the engine app needs from it (Phase 5), the agent window among it;
+   then the app's first panels. Two things seen in screenshots to fix on the way: the
+   built-in sky is dull next to the sun it comes with; and objects that move every frame
+   smear under temporal anti-aliasing (it has no motion vectors).
+3. The rest of Phase 1C (screenshot viewpoints and overlays, events through MCP); then
+   observers and what is left of Phase 2.
