@@ -86,12 +86,15 @@ fn starter_scene(
         Transform::IDENTITY,
         Mesh3d(floor),
         colour(0.32, 0.36, 0.34),
+        Collider::ground(),
         Name::new("Floor"),
     ));
     commands.spawn((
         Transform::from_xyz(-2.0, 0.5, 0.0),
         Mesh3d(cube),
         colour(0.85, 0.3, 0.25),
+        Collider::cuboid(Vec3::splat(0.5)),
+        RigidBody::dynamic(),
         Name::new("Red cube"),
     ));
     let tall = Transform::from_xyz(0.0, 1.0, -1.5).with_scale(Vec3::new(1.0, 2.0, 1.0));
@@ -100,6 +103,7 @@ fn starter_scene(
             tall,
             Mesh3d(cube),
             colour(0.9, 0.75, 0.3),
+            Collider::cuboid(Vec3::new(0.5, 1.0, 0.5)),
             Name::new("Pillar"),
         ))
         .id();
@@ -115,6 +119,8 @@ fn starter_scene(
         Transform::from_xyz(2.2, 0.6, 0.4),
         Mesh3d(ball),
         colour(0.25, 0.45, 0.9),
+        Collider::sphere(0.6),
+        RigidBody::dynamic(),
         Name::new("Blue ball"),
     ));
     commands.spawn((

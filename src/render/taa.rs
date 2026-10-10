@@ -4,8 +4,9 @@
 //! steady, and effects that trace a few noisy rays a frame (contact shadows, light shafts)
 //! settle into smooth results.
 //!
-//! The history is re-projected from the depth buffer and the camera's motion, and clamped to
-//! the range of colours around each pixel this frame, so it can't smear where things move.
+//! The history is re-projected from the depth buffer and the camera's motion, or, for things
+//! that themselves moved, along the way they came (see `motion.rs`), and clamped to the range
+//! of colours around each pixel this frame.
 
 use glam::{Mat4, Vec2};
 
@@ -36,6 +37,8 @@ struct TaaUniform {
     reproject: [[f32; 4]; 4],
     /// x: 1 if there is a history, y: how much of this frame to blend in, zw: 1 / size.
     params: [f32; 4],
+    /// x: 1 if the motion target was drawn into this frame.
+    motion: [f32; 4],
 }
 
 pub(crate) struct Taa {
@@ -71,6 +74,7 @@ impl Taa {
                 texture(0, float, false),
                 texture(1, float, false),
                 texture(2, wgpu::TextureSampleType::Depth, true),
+                texture(5, wgpu::TextureSampleType::Float { filterable: false }, true),
                 wgpu::BindGroupLayoutEntry {
                     binding: 3,
                     visibility: wgpu::ShaderStages::FRAGMENT,
@@ -143,7 +147,7 @@ impl Taa {
 
     /// Blends this frame into the history and returns the result, which post-processing reads.
     /// `view_proj` is this frame's camera without the jitter.
-    pub(crate) fn resolve<'a>(&'a mut self, gpu: &Gpu, encoder: &mut wgpu::CommandEncoder, view_proj: Mat4) -> &'a wgpu::TextureView {
+    pub(crate) fn resolve<'a>(&'a mut self, gpu: &Gpu, encoder: &mut wgpu::CommandEncoder, view_proj: Mat4, moving: bool) -> &'a wgpu::TextureView {
         let (w, h) = (gpu.config.width, gpu.config.height);
         if !matches!(&self.history, Some((hw, hh, _)) if *hw == w && *hh == h) {
             let make = || {
@@ -171,6 +175,7 @@ impl Taa {
         let uniform = TaaUniform {
             reproject: reproject.to_cols_array_2d(),
             params: [if self.valid { 1.0 } else { 0.0 }, 0.1, 1.0 / w as f32, 1.0 / h as f32],
+            motion: [if moving { 1.0 } else { 0.0 }, 0.0, 0.0, 0.0],
         };
         gpu.queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&uniform));
         self.previous_view_proj = view_proj;
@@ -200,6 +205,10 @@ impl Taa {
                 wgpu::BindGroupEntry {
                     binding: 4,
                     resource: self.uniform.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: wgpu::BindingResource::TextureView(&gpu.targets.motion),
                 },
             ],
         });

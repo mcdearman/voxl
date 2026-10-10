@@ -8,11 +8,12 @@ use std::time::Duration;
 
 use neo::prelude::*;
 
-use super::{fields_of, short, Editor, Message, Placed, GAME};
+use super::{fields_of, short, Drawn, Editor, Message, Placed, GAME};
 use mira::{
     app::Stage,
     live::{FrameStats, History, Live},
     logging,
+    physics::{PhysicsDebug, PhysicsWorld, RigidBody},
     plugin::NativePlugins,
     reflect::{json, TypeRegistry, Value},
     time::Time,
@@ -1082,6 +1083,71 @@ impl Editor {
         for (name, times) in loaded {
             rows = rows.push(pair(name, format!("loaded {times} times")));
         }
+        page(rows)
+    }
+
+    /// What physics is doing, and switches to draw it over the scene.
+    pub(super) fn physics_panel(&self) -> Element<Message> {
+        let world = &self.game.world;
+        let (Some(physics), Some(shown)) = (
+            world.get_resource::<PhysicsWorld>(),
+            world.get_resource::<PhysicsDebug>(),
+        ) else {
+            return nothing(icons::BOX, "This game has no physics.");
+        };
+        let having = |name: &str| {
+            world
+                .get_resource::<TypeRegistry>()
+                .and_then(|registry| registry.get(name))
+                .map_or(Vec::new(), |kind| (kind.entities)(world))
+        };
+        let bodies = having("mira.RigidBody");
+        let asleep = bodies
+            .iter()
+            .filter(|body| {
+                world
+                    .get::<RigidBody>(**body)
+                    .is_some_and(RigidBody::is_sleeping)
+            })
+            .count();
+        let switch = |label: &'static str, on: bool, which: Drawn| {
+            row()
+                .spacing(10.0)
+                .align(Align::Center)
+                .push(toggle(on, move |on| Message::PhysicsDrawn(which, on)))
+                .push(text(label).size(13.0))
+        };
+        let gravity = physics.gravity;
+        let rows = column()
+            .spacing(8.0)
+            .push(heading("Drawn over the scene"))
+            .push(switch("Colliders", shown.colliders, Drawn::Colliders))
+            .push(switch("Contacts", shown.contacts, Drawn::Contacts))
+            .push(switch("Velocities", shown.velocities, Drawn::Velocities))
+            .push(switch("Joints", shown.joints, Drawn::Joints))
+            .push(
+                text(
+                    "Green moves, dark green has fallen asleep, yellow is moved by the game, \
+                     white stays put, purple only senses.",
+                )
+                .size(12.0)
+                .tone(Tone::Faint),
+            )
+            .push(heading("The last step"))
+            .push(pair("bodies", bodies.len().to_string()))
+            .push(pair("asleep", asleep.to_string()))
+            .push(pair("colliders", having("mira.Collider").len().to_string()))
+            .push(pair("joints", having("mira.Joint").len().to_string()))
+            .push(pair("contacts", physics.contacts.len().to_string()))
+            .push(pair(
+                "sensors overlapped",
+                physics.sensor_overlaps.len().to_string(),
+            ))
+            .push(pair(
+                "gravity",
+                format!("{:.2}, {:.2}, {:.2}", gravity.x, gravity.y, gravity.z),
+            ))
+            .push(pair("solver passes", physics.iterations.to_string()));
         page(rows)
     }
 

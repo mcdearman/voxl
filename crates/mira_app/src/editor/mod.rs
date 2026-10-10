@@ -37,10 +37,11 @@ use mira::{
     ecs::Entity,
     input::{ButtonInput, KeyCode, Mouse, MouseButton},
     live::Live,
+    physics::PhysicsDebug,
     prelude::Vec2,
     reflect::{NotSaved, Scene, TypeRegistry, Value},
-    render::frame_texture,
-    render::{Camera, DirectionalLight, Material, Mesh, Mesh3d},
+    render::{frame_texture, view_texture},
+    render::{Camera, DirectionalLight, Material, Mesh, Mesh3d, ViewMode, ViewTarget},
     signal::{Signal, Signals},
     time::Time,
     transform::Parent,
@@ -55,6 +56,8 @@ use neo_desktop::{AppPrefs, Desktop, DesktopMsg};
 pub enum Message {
     /// The viewport has this much room, at this many pixels to the point.
     Resized(Rect, f32),
+    /// The Player view has this much room.
+    PlayerResized(Rect, f32),
     /// Something done in the viewport: the game's to hear.
     Input(ViewportEvent),
     /// Pause the game, or let it run again.
@@ -80,6 +83,8 @@ pub enum Message {
     Ask,
     /// The agent is told to stop.
     Stop,
+    /// Something the agent asked leave for is allowed, or refused.
+    Approve(u64, bool),
     /// A use of a tool in the conversation was opened, or shut.
     Unfolded(String, bool),
     /// A drag on a field began, or ended: what is changed in between is one change.
@@ -133,6 +138,10 @@ pub enum Message {
     Jump(usize),
     /// Moments of the game are kept to go back to, or no longer.
     Record(bool),
+    /// The scene is drawn this way from now on.
+    ViewMode(ViewMode),
+    /// A part of physics is drawn over the scene, or no longer.
+    PhysicsDrawn(Drawn, bool),
     /// The game goes back this many frames.
     Rewind(u64),
     /// Game time runs this fast against the clock.
@@ -239,6 +248,27 @@ struct Change {
     after: Option<Value>,
 }
 
+/// A frame of the game, and the picture of it the window draws.
+fn pictured(texture: wgpu::Texture) -> (wgpu::Texture, Image) {
+    // The window's canvas holds colours as they are stored, so it is given the frame's
+    // bytes and not what an sRGB view would make of them.
+    let view = texture.create_view(&wgpu::TextureViewDescriptor {
+        format: Some(texture.format().remove_srgb_suffix()),
+        ..Default::default()
+    });
+    let image = Image::from_texture(view, texture.width(), texture.height());
+    (texture, image)
+}
+
+/// A part of physics that can be drawn over the scene.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Drawn {
+    Colliders,
+    Contacts,
+    Velocities,
+    Joints,
+}
+
 /// The panels, by the names the layout knows them by.
 const GAME: &str = "Game";
 const ENTITIES: &str = "Entities";
@@ -262,11 +292,14 @@ const CHANGES: &str = "Changes";
 const TESTS: &str = "Tests";
 const BUILD: &str = "Build";
 const REFERENCES: &str = "References";
+const PHYSICS: &str = "Physics";
+const PLAYER: &str = "Player view";
 
 /// Every panel there is, in the order the Window menu lists them.
-const PANELS: [&str; 22] = [
-    GAME, ENTITIES, PLACE, ASSETS, INSPECTOR, WORLD, SIGNALS, GRAPH, AGENT, LOG, CONSOLE, PROFILER,
-    SYSTEMS, HISTORY, TIME, FAILURES, PLUGINS, STATISTICS, REFERENCES, CHANGES, TESTS, BUILD,
+const PANELS: [&str; 24] = [
+    GAME, PLAYER, ENTITIES, PLACE, ASSETS, INSPECTOR, WORLD, SIGNALS, GRAPH, AGENT, LOG, CONSOLE, PROFILER,
+    SYSTEMS, PHYSICS, HISTORY, TIME, FAILURES, PLUGINS, STATISTICS, REFERENCES, CHANGES, TESTS,
+    BUILD,
 ];
 
 /// Where the arrangement of the panels is kept, in the folder the app is run from.
@@ -395,6 +428,11 @@ pub struct Editor {
     /// The game's frame, and the picture of it the window draws. Kept while the game keeps
     /// drawing into the same texture.
     shown: Option<(wgpu::Texture, Image)>,
+    /// The game through its own camera, while the scene is looked at through the app's:
+    /// the camera drawing it, its frame, and the picture of that.
+    player: Option<(Entity, Option<(wgpu::Texture, Image)>)>,
+    /// The room the Player view has, in pixels.
+    player_size: (u32, u32),
     tool: Tool,
     /// The entity being dragged in the picture, and the part of the picture the chosen one
     /// covers (left, top, right, bottom, each from 0 to 1).
@@ -450,6 +488,9 @@ pub struct Editor {
     desktop: Desktop,
     agent: Box<dyn Agent>,
     said: Vec<Entry<String, Message>>,
+    /// The questions from the agent that are shown in the conversation and not yet
+    /// answered: each by its number, and where in the conversation it is.
+    asks: Vec<(u64, usize)>,
     writing: Document,
     working: bool,
     heard: (Sender<Heard>, Receiver<Heard>),
@@ -470,6 +511,8 @@ impl Editor {
             size: (0, 0),
             scale: 1.0,
             shown: None,
+            player: None,
+            player_size: (0, 0),
             tool: Tool::default(),
             held: None,
             outline: None,
@@ -505,6 +548,7 @@ impl Editor {
             // By the app's name, not the program's, so that an example of it is the same app.
             desktop: Desktop::with_prefs_file(AppPrefs::path_for("mira")),
             agent: Box::new(NoAgent),
+            asks: Vec::new(),
             said: Vec::new(),
             writing: Document::new(""),
             working: false,
@@ -604,10 +648,12 @@ impl Editor {
                 }
             }
             kept.push(Value::Map(parts));
+            // What the engine makes again by itself (the parts of a model) is not kept.
             next.extend(
                 mira::relation::related::<Parent>(world, entity)
                     .iter()
-                    .rev(),
+                    .rev()
+                    .filter(|under| world.get::<NotSaved>(**under).is_none()),
             );
         }
         Value::List(kept)
@@ -775,8 +821,8 @@ impl Editor {
     }
 
     /// Puts a model file in the scene, on the ground in the middle of the picture: an
-    /// entity named for the file, with each part of the model under it. Says in the bar
-    /// why not, if it can't be read.
+    /// entity named for the file, which the engine fills with the model's parts once the
+    /// file has been read. The window is not held up while it is.
     fn put_in_model(&mut self, name: &str) {
         let at = self.before_the_eye();
         let world = &mut self.game.world;
@@ -787,42 +833,15 @@ impl Editor {
             self.told = "this game has nowhere to keep models".to_owned();
             return;
         }
-        // The file is read here, on the spot, the first time it is asked for.
-        let model = world.resource_scope(|world, server: &mut AssetServer| {
-            world.resource_scope(|world, meshes: &mut Assets<Mesh>| {
-                world.resource_scope(|_, images: &mut Assets<mira::render::Image>| {
-                    server.load_gltf(name, meshes, images)
-                })
-            })
-        });
-        let model = match model {
-            Ok(model) => model,
-            Err(why) => {
-                self.told = format!("{name} could not be read: {why:#}");
-                return;
-            }
-        };
         let called = std::path::Path::new(name)
             .file_stem()
             .map_or(name.to_owned(), |stem| stem.to_string_lossy().into_owned());
-        // Standing on the ground: lifted by however far it reaches below its own middle.
-        let lifted = at - Vec3::Y * model.min.y.min(0.0);
-        let root = world.spawn((Transform::from_translation(lifted), Name::new(called)));
-        for part in &model.parts {
-            let (scale, rotation, translation) = part.transform.to_scale_rotation_translation();
-            world.spawn((
-                Transform {
-                    translation,
-                    rotation,
-                    scale,
-                },
-                Mesh3d(part.mesh),
-                part.material,
-                Parent(root),
-            ));
-        }
-        // So that what is under it is known at once, to be kept with it and shown.
-        mira::relation::sync::<Parent>(world);
+        let root = world.spawn((
+            Transform::from_translation(at),
+            Name::new(called),
+            mira::asset_server::Model::new(name),
+        ));
+        self.told = format!("reading {name}");
         self.chosen = Some(root);
         let made = self.whole(root);
         self.remember(root, None, Some(made));
@@ -991,9 +1010,59 @@ impl Editor {
         self.said.push(Entry::Said(Said::new(who, text.into())));
     }
 
+    /// What the agent is told with each thing asked, without its being typed: what is
+    /// chosen in the app, so that "this" and "it" mean something.
+    fn context(&self) -> String {
+        let Some(entity) = self.chosen else {
+            return String::new();
+        };
+        let named = self.lists.names.iter().find(|(named, _)| *named == entity);
+        let parts: Vec<&str> = self
+            .lists
+            .chosen
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .collect();
+        format!(
+            "(In the mira app, the entity chosen is {} (entity id {}), which has: {}.)\n\n",
+            named.map_or("unnamed".to_owned(), |(_, name)| format!("\"{name}\"")),
+            entity.to_bits(),
+            parts.join(", "),
+        )
+    }
+
+    /// Shows in the conversation what the agent has asked leave for and is still waiting
+    /// on, each with the buttons to allow or refuse it. Says whether anything was added.
+    fn hear_asks(&mut self) -> bool {
+        let waiting: Vec<mira::remote::Approval> = self
+            .game
+            .world
+            .get_resource::<mira::remote::Approvals>()
+            .map_or(Vec::new(), |approvals| {
+                approvals.waiting().cloned().collect()
+            });
+        let mut any = false;
+        for asked in waiting {
+            if self.asks.iter().any(|(id, _)| *id == asked.id) {
+                continue;
+            }
+            any = true;
+            self.asks.push((asked.id, self.said.len()));
+            self.said.push(Entry::Ask(Asking {
+                what: format!("The agent wants to use {}", asked.what),
+                detail: asked.detail,
+                choices: vec![
+                    ("Allow".to_owned(), Message::Approve(asked.id, true)),
+                    ("Refuse".to_owned(), Message::Approve(asked.id, false)),
+                ],
+            }));
+        }
+        any
+    }
+
     /// Takes in what the agent has said since last looked. Says whether there was anything.
     fn listen(&mut self) -> bool {
-        let mut any = false;
+        let mut any = self.hear_asks();
         while let Ok(heard) = self.heard.1.try_recv() {
             any = true;
             match heard {
@@ -1056,6 +1125,58 @@ impl Editor {
 
     fn resource<R: 'static>(&mut self) -> Option<&mut R> {
         self.game.world.get_resource_mut::<R>()
+    }
+
+    /// Has the game's own camera draw a picture for the Player view while that panel is in
+    /// front and the scene is looked at through the app's camera, and not otherwise.
+    fn aim_player(&mut self) {
+        let (width, height) = self.player_size;
+        let wanted = self
+            .view
+            .as_ref()
+            .and_then(|view| view.games.first().copied())
+            .filter(|_| self.layout.shown().contains(&PLAYER) && width > 0 && height > 0);
+        let world = &mut self.game.world;
+        let drawing = self.player.as_ref().map(|(camera, _)| *camera);
+        if drawing != wanted {
+            if let Some(camera) = drawing {
+                world.remove::<ViewTarget>(camera);
+            }
+            self.player = wanted.map(|camera| (camera, None));
+        }
+        if let Some(camera) = wanted {
+            let target = ViewTarget::new(width, height);
+            if world.get::<ViewTarget>(camera).copied() != Some(target) {
+                world.insert(camera, (target,));
+            }
+        }
+    }
+
+    /// How big the picture in the Player view is, when there is one.
+    pub fn player_picture(&self) -> Option<(u32, u32)> {
+        let (_, shown) = self.player.as_ref()?;
+        shown.as_ref().map(|(texture, _)| (texture.width(), texture.height()))
+    }
+
+    /// The game through its own camera, beside the scene.
+    fn player_view(&self) -> Element<Message> {
+        if self.view.is_none() {
+            return container(
+                text("The game's own camera is in the Game panel. Look at the scene through the app's camera, and the player's view is kept here.")
+                    .size(13.0)
+                    .tone(Tone::Muted),
+            )
+            .padding(14.0)
+            .into();
+        }
+        let picture = self
+            .player
+            .as_ref()
+            .and_then(|(_, shown)| shown.as_ref().map(|(_, image)| image));
+        viewport(picture)
+            .on_resize(Message::PlayerResized)
+            .playing(true)
+            .into()
     }
 
     /// The camera the game is seen through, and where it is.
@@ -1500,6 +1621,7 @@ impl Editor {
                     )))
                     .into()
             }
+            PLAYER => self.player_view(),
             ENTITIES => scrollable(
                 container(
                     tree(&self.entity_tree(None), self.chosen.as_ref())
@@ -1610,6 +1732,7 @@ impl Editor {
             FAILURES => self.failures_panel(),
             PLUGINS => self.plugins_panel(),
             STATISTICS => self.statistics_panel(),
+            PHYSICS => self.physics_panel(),
             _ => text("").into(),
         }
     }
@@ -2084,7 +2207,24 @@ impl App for Editor {
                 menu.push(MenuEntry::new(label, Message::Panel((*panel).to_owned())))
             },
         );
-        vec![window]
+        // How the scene is drawn, the mode it is in marked.
+        let now = self
+            .game
+            .world
+            .get_resource::<ViewMode>()
+            .copied()
+            .unwrap_or_default();
+        let view = ViewMode::ALL.into_iter().fold(Menu::new("View"), |menu, mode| {
+            let mark = if mode == now { "✓ " } else { "" };
+            let label = format!("{mark}{}", mode.name());
+            menu.push(MenuEntry::new(label, Message::ViewMode(mode)))
+        });
+        vec![window, view]
+    }
+
+    /// Lines for polygons, where the graphics card has them: the wireframe view's.
+    fn wanted_features(&self, available: wgpu::Features) -> wgpu::Features {
+        available & wgpu::Features::POLYGON_MODE_LINE
     }
 
     fn app_menu(&self) -> Vec<MenuEntry<Message>> {
@@ -2166,21 +2306,20 @@ impl App for Editor {
             self.game.host(device, queue, format, width, height);
             self.hosted = true;
         }
+        self.aim_player();
         self.game.update();
         let mut changed = self.listen();
         changed |= self.hear_runs();
+        if let Some((camera, shown)) = &mut self.player {
+            let frame = view_texture(&self.game.world, *camera);
+            if frame.as_ref() != shown.as_ref().map(|(texture, _)| texture) {
+                *shown = frame.map(pictured);
+                changed = true;
+            }
+        }
         let frame = frame_texture(&self.game.world);
         if frame.as_ref() != self.shown.as_ref().map(|(texture, _)| texture) {
-            self.shown = frame.map(|texture| {
-                // The window's canvas holds colours as they are stored, so it is given the
-                // frame's bytes and not what an sRGB view would make of them.
-                let view = texture.create_view(&wgpu::TextureViewDescriptor {
-                    format: Some(texture.format().remove_srgb_suffix()),
-                    ..Default::default()
-                });
-                let image = Image::from_texture(view, texture.width(), texture.height());
-                (texture, image)
-            });
+            self.shown = frame.map(pictured);
             changed = true;
         }
         // The circuit of rules follows the game's signals as they are now.
@@ -2214,6 +2353,12 @@ impl App for Editor {
                 if std::mem::replace(&mut self.size, size) != size && self.hosted {
                     self.game.host_resized(size.0, size.1);
                 }
+            }
+            Message::PlayerResized(bounds, scale) => {
+                self.player_size = (
+                    (bounds.w * scale).round() as u32,
+                    (bounds.h * scale).round() as u32,
+                );
             }
             Message::Input(event) => self.hear(event),
             Message::Pause => {
@@ -2340,6 +2485,22 @@ impl App for Editor {
                 mira::live::History::rewind(&mut self.game.world, frames);
                 self.lists = Lists::of(&self.game, self.chosen);
             }
+            Message::ViewMode(mode) => {
+                if let Some(now) = self.resource::<ViewMode>() {
+                    *now = mode;
+                    self.told = format!("drawn {}", mode.name().to_lowercase());
+                }
+            }
+            Message::PhysicsDrawn(which, on) => {
+                if let Some(shown) = self.resource::<PhysicsDebug>() {
+                    match which {
+                        Drawn::Colliders => shown.colliders = on,
+                        Drawn::Contacts => shown.contacts = on,
+                        Drawn::Velocities => shown.velocities = on,
+                        Drawn::Joints => shown.joints = on,
+                    }
+                }
+            }
             Message::Speed(speed) => {
                 if let Some(time) = self.resource::<Time>() {
                     time.set_scale(speed);
@@ -2422,7 +2583,27 @@ impl App for Editor {
                 self.writing = Document::new("");
                 self.note(Speaker::You, asked.clone());
                 self.working = true;
-                self.agent.ask(&asked, self.heard.0.clone());
+                let told = format!("{}{asked}", self.context());
+                self.agent.ask(&told, self.heard.0.clone());
+            }
+            Message::Approve(id, allowed) => {
+                let Some(at) = self.asks.iter().position(|(asked, _)| *asked == id) else {
+                    return;
+                };
+                let (_, place) = self.asks.remove(at);
+                if let Some(approvals) = self.resource::<mira::remote::Approvals>() {
+                    approvals.answer(id, allowed);
+                }
+                // The question gives way to a line saying how it was answered.
+                if let Some(Entry::Ask(asked)) = self.said.get(place) {
+                    let wanted = asked.what.trim_start_matches("The agent wants to use ");
+                    let said = if allowed {
+                        format!("Allowed: {wanted}")
+                    } else {
+                        format!("Refused: {wanted}")
+                    };
+                    self.said[place] = Entry::Said(Said::new(Speaker::Note, said));
+                }
             }
             Message::Unfolded(id, open) => {
                 if let Some(tool) = self.tool(&id) {
@@ -2678,6 +2859,20 @@ mod tests {
         assert!(PANELS
             .iter()
             .all(|panel| !panel.contains([',', '*', '(', ')'])));
+    }
+
+    #[test]
+    fn the_view_menu_changes_how_the_scene_is_drawn() {
+        let mut game = mira::app::App::new();
+        game.world.insert_resource(ViewMode::default());
+        let mut editor = Editor::new(game);
+        let view = &editor.menus()[1];
+        assert_eq!(view.entries.len(), ViewMode::ALL.len());
+        editor.update(Message::ViewMode(ViewMode::Wireframe));
+        assert_eq!(
+            editor.game.world.get_resource::<ViewMode>().copied(),
+            Some(ViewMode::Wireframe)
+        );
     }
 
     #[test]
@@ -3849,6 +4044,63 @@ mod tests {
         let mut named = Vec::new();
         panels::assets_in(&value, &mut named);
         assert_eq!(named, ["mesh  hen.glb#mesh0", "image  wall.png"]);
+    }
+
+    #[test]
+    fn the_agent_asks_leave_and_is_told_what_is_chosen() {
+        use mira::prelude::*;
+        use mira::remote::Approvals;
+        /// Keeps what it was asked, to be looked at.
+        struct Listening(std::rc::Rc<std::cell::RefCell<Vec<String>>>);
+        impl Agent for Listening {
+            fn ask(&mut self, asked: &str, _: Sender<Heard>) {
+                self.0.borrow_mut().push(asked.to_owned());
+            }
+            fn stop(&mut self) {}
+        }
+        let mut game = mira::app::App::new();
+        game.add_plugins(mira::transform::TransformPlugin);
+        let tank = game.world.spawn((Transform::IDENTITY, Name::new("Tank")));
+        let told = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let mut editor = Editor::new(game).with_agent(Listening(told.clone()));
+
+        // With nothing chosen, the agent hears only what was typed; with something chosen,
+        // which thing "it" is comes first. The conversation shows only what was typed.
+        editor.writing = Document::new("What is in the scene?");
+        editor.update(Message::Ask);
+        editor.working = false;
+        editor.update(Message::Chosen(tank));
+        editor.writing = Document::new("Make it red.");
+        editor.update(Message::Ask);
+        let told = told.borrow();
+        assert_eq!(told[0], "What is in the scene?");
+        assert!(told[1].contains("\"Tank\"") && told[1].contains(&tank.to_bits().to_string()));
+        assert!(told[1].contains("mira.Transform") && told[1].ends_with("Make it red."));
+        assert_eq!(editor.said()[1].text, "Make it red.");
+
+        // A question from the agent's tools is shown once, with its buttons, and answered
+        // from there; then it is a line in the conversation.
+        editor.game_mut().world.init_resource::<Approvals>();
+        let id = editor
+            .game_mut()
+            .world
+            .resource_mut::<Approvals>()
+            .ask("Edit", "src/main.rs");
+        assert!(editor.listen() && !editor.listen());
+        let Some(Entry::Ask(asked)) = editor.said.last() else {
+            panic!("the question is in the conversation");
+        };
+        assert_eq!(asked.what, "The agent wants to use Edit");
+        assert_eq!(asked.choices.len(), 2);
+        editor.update(Message::Approve(id, true));
+        assert_eq!(editor.said().last().unwrap().text, "Allowed: Edit");
+        let approvals = editor.game().world.resource::<Approvals>();
+        assert_eq!(approvals.waiting().count(), 0, "it has its answer");
+        // Answered twice, or one that was never asked: nothing more.
+        let length = editor.said.len();
+        editor.update(Message::Approve(id, false));
+        editor.update(Message::Approve(99, true));
+        assert_eq!(editor.said.len(), length);
     }
 
     #[test]

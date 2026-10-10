@@ -209,7 +209,9 @@ The layer Unreal's editor, saves, networking and Blueprints all stand on.
       [ASSETS.md](ASSETS.md)
 - [x] Unloading assets nothing refers to, by tracing reflected components (handles stay
       plain ids): `AssetServer::unload_unused`
-- [ ] Model files loaded off the main thread and watched, dependencies between assets
+- [x] Model files read on a worker and watched: a `Model` component names the file, its
+      parts appear under the entity when read and again when the file is saved
+- [ ] Dependencies between assets
 - [ ] Asset processing: textures to BC7/ASTC with mips, meshes to a binary format, cached by
       content hash
 - [ ] Load skins and animations from glTF
@@ -487,11 +489,11 @@ project grows.
 
 ## Next three steps
 
-1. The app's working loop (Phase 5): undo and redo; saving what was edited as a scene and
-   opening one; names for entities; then the asset browser with drag to place, and gizmos.
-2. The agent in the app: a first run against Claude Code itself, approvals so that it can
-   change code, and what is selected passed to it. Then model files loaded off the main
-   thread and watched (Phase 1), which the app needs before it can host the big demos.
-3. Two things seen in screenshots: the built-in sky is dull next to the sun it comes with,
-   and objects that move every frame smear under temporal anti-aliasing (it has no motion
-   vectors). Then the rest of Phase 1C and of Phase 2, and on to Phase 3.
+1. The rest of Phase 1: dependencies between assets, an asset processing step with a cache,
+   skins and animations loaded from glTF through the asset server, and saving animation
+   state.
+2. The rest of Phase 2: one query's work split across threads, observers, relations with
+   many targets and their cleanup, and one job system under systems, assets and voxels.
+3. Then Phase 3, the GPU-driven renderer. In the app, the first run of the agent against
+   Claude Code is still to be made by hand, and the panels that wait on engine systems
+   (materials, animation, particles, audio, navigation) come as those systems do.

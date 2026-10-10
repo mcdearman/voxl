@@ -66,12 +66,14 @@ its top; panels meet each other at single lines, which can be dragged to resize.
 | Panel | What it shows |
 |---|---|
 | Place | Things to put in the scene: a cube, a ball, a floor, a sun, a camera, an empty entity to hang others on. Each goes on the ground in the middle of the picture, named and chosen. Also Duplicate and Delete for the chosen entity (Cmd/Ctrl+D; Delete or Backspace), which take everything under it along, and **Save as prefab**, which writes the chosen entity and what is under it to `prefabs/<its name>.json` to be placed again from Assets. All of it can be taken back |
-| Assets | The project's models, pictures, and saved scenes and prefabs, by folder, with a box to narrow them. **Place** puts a model in the scene (an entity named for the file with the model's parts under it) or adds a saved scene or prefab to it, on the ground in the middle of the picture. Found when "Look again" is pressed |
+| Assets | The project's models, pictures, and saved scenes and prefabs, by folder, with a box to narrow them. **Place** puts a model in the scene (an entity named for the file, a `Model`: the file is read in the background, its parts appear under the entity when it has been, and again when the file is saved) or adds a saved scene or prefab to it, on the ground in the middle of the picture. Found when "Look again" is pressed |
 | Log | What the engine and the game have logged, newest at the bottom, by level; a box to show only lines with some text in them |
 | Console | A line to type anything the debug connection understands (`pause`, `entities with=mira.Camera`, `signal_set name=open value=true`), with the answers |
 | Profiler | The last frames as a graph, the usual and the worst frame, the time each stage took, and the slowest systems |
 | Signal graph | The game's rules as a circuit, the one `mira_ui` draws inside a game: wires lit while true, rewired by dragging, lamps clicked to force a signal, lines clicked to type over them |
 | Systems | Every system by stage, in the order and the batch it runs in, with how much it reads and writes; one that has failed is red |
+| Player view | The game through its own camera, in a picture of its own, while the scene is looked at through the app's camera: what the player sees beside what you are doing to it |
+| Physics | Switches that draw physics over the scene as lines (colliders coloured by what moves them, contacts, velocities, joints), and what the last step found: bodies, how many are asleep, colliders, contacts, gravity |
 | World | The world's settings (ambient light, fog, post-processing, shadows, voxels: every registered resource), each field a control like the inspector's, with undo |
 | History | Every change made from the app, to click back and forward through |
 | Time | How fast game time runs; keeping moments to go back to, and going back |
@@ -104,6 +106,11 @@ and can now be chosen and moved like anything else. Hold the right button in the
 and move the pointer to turn; with it held, W A S D fly and E and Q rise and sink; the wheel
 moves in and out. The button again gives the view back to the game. The app's camera is
 never saved with the scene and is not in the tree.
+
+**View modes.** The **View** menu changes how the scene is drawn, the mode it is in marked:
+*Lit* (the game as it is), *Unlit* (each surface in its own colour), *Lighting only* (the
+light on plain grey), *Normals* (which way surfaces face) and *Wireframe* (the edges of
+every triangle). It is the `ViewMode` resource, so a game or an agent can set it too.
 
 What is under the pointer is found from each entity's mesh, as a box round it; an entity
 with no mesh (a light) is a small box where it stands. The camera the game is seen through
@@ -147,10 +154,12 @@ game in the window, so it sees the frame, reads every entity and signal, and can
 step and change the game, the same as an agent outside ([MCP.md](MCP.md)). It may also read
 the project's files.
 
-What it can't do yet: anything that needs a yes from you, such as changing a file or
-running a command, is refused: Neo now has the row for asking, but how Claude Code hands
-such a question to the program that runs it is not written down for its command line, so
-that part waits on finding out.
+When it wants to do something that needs a yes from you, such as changing a file or running
+a command, the question appears in the conversation with **Allow** and **Refuse**; it waits
+up to ten minutes for the answer and takes no answer as a no. (Behind this: Claude Code is
+told to put such questions to mira's `mira_approve` tool, which leaves the question in the
+game for the app to show.) Each thing you ask also carries, unseen, which entity is chosen
+in the app and what it is made of, so that "it" and "this" mean something.
 
 The reading of Claude Code's output was written from its documentation and tested against
 a stand-in program that prints the same lines; it has not yet been run against Claude Code
@@ -218,8 +227,7 @@ having each. "Ready" means the engine already holds the data and only the panel 
 | Assets (built, as a list) | Content Browser, Project, FileSystem | Thumbnails; dragging into the scene; pictures put to use from there |
 | Place (built, but for prefabs and dragging in) | Place Actors, Create menu | Prefabs in the palette; dragging a thing to where it is wanted |
 | Prefab editor (saving and placing are built) | Blueprint/Prefab mode | Opening a prefab by itself; placed copies that follow the file, their overrides shown apart |
-| View modes (the scene camera itself is built) | Editor viewport camera, view modes | Wireframe, unlit and overdraw views |
-| Game view | Unity's Game beside Scene | A second viewport: the game as the player sees it beside the scene as the editor does |
+| More view modes (five are built) | View modes | Overdraw, shader cost, light and collision views |
 | Material editor | Material Editor, Shader Graph | A material system with graphs (Phase 3) |
 | Voxel tools | Landscape, Foliage, Modeling modes; Tile Palette | Brushes for sculpting and painting blocks; a block palette |
 | Agent tasks | (none) | What the agent is doing as a list of steps with approvals; several agents at once |
@@ -236,7 +244,6 @@ having each. "Ready" means the engine already holds the data and only the panel 
 | Navigation | Navigation, NavMesh | Navmesh and pathfinding (Phase 4) |
 | Behaviour tree | Behavior Tree editor | AI (Phase 4) |
 | Game UI designer | UMG, UI Builder | A visual layout for `mira_ui` interfaces |
-| Physics debugger | Physics Debugger, Collision view | Drawing colliders, contacts and joints over the scene |
 | Lighting | Lightmass, Light Mixer | Baked or dynamic global illumination (Phase 6) |
 | Size map (references are built) | Size Map | How much each asset weighs, and what depends on what |
 | Packaging (building is built) | Project Launcher, Build Settings | Packaging a game for a platform |

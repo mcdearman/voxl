@@ -195,6 +195,57 @@ that would allow), what each stage took in the last frame, and the systems that 
 most. The frame time is the engine's own work in a frame, not the wait for the display. From
 code it is the `FrameStats` resource and `App::systems`.
 
+## Lines over the scene
+
+`DebugLines` draws lines over the frame for a look at what has no picture of its own: where
+something is headed, how far a guard sees, the edge of a region. Add them in any system;
+they last one frame, so a line that should stay is added every frame.
+
+```rust
+fn show_reach(mut lines: ResMut<DebugLines>, guards: Query<(&GlobalTransform, &Guard)>) {
+    for (at, guard) in &guards {
+        lines.circle(at.translation(), Vec3::Y, guard.reach, Color::rgb(1.0, 0.8, 0.1));
+    }
+}
+```
+
+There are `line`, `ray`, `arrow`, `path`, `axes`, `cuboid`, `bounds`, `circle`, `sphere`,
+`capsule` and `grid`. Lines are as wide as `lines.width` says, in pixels, whatever their
+distance; they are drawn after tone mapping, in the colours given; and where the scene is in
+front of one it shows faintly (`lines.through`, 0 to hide it there).
+
+Physics draws itself this way. The `PhysicsDebug` resource has four switches, all off to
+begin with: `colliders` (each shape, green for a body that moves, dark green once asleep,
+yellow for a kinematic one, white for what never moves, purple for a sensor), `contacts`,
+`velocities` and `joints`. From outside:
+
+```sh
+cargo run --bin mira-debug -- resource name=mira.PhysicsDebug value='{"colliders": true}'
+```
+
+## Seeing the scene another way
+
+The `ViewMode` resource changes how everything is drawn: `Lit` as usual, `Unlit` for each
+surface's own colour, `LightingOnly` for the light on plain grey, `Normals`, and `Wireframe`
+(where the graphics card can draw polygons as lines; elsewhere it is `Unlit`). The three
+that are readings and not pictures skip the haze, bloom and film curve, over a plain ground.
+
+```sh
+cargo run --bin mira-debug -- resource name=mira.ViewMode value=Wireframe
+```
+
+A camera can also draw into a picture of its own, beside the frame the window shows. Give it
+a `ViewTarget` with a size, and `render::view_texture(world, camera)` is its picture, drawn
+every frame whether or not the camera is `active`:
+
+```rust
+let mirror = commands.spawn((at, Camera::default(), ViewTarget::new(512, 512))).id();
+```
+
+Each such view is the whole renderer run again for that camera, with its own targets and
+its own history for temporal anti-aliasing, so it costs what the frame does. The app's
+Player view is one.
+
 ## What isn't here yet
 
 - A timeline of a frame (which system ran on which thread, when), and marks inside a system.

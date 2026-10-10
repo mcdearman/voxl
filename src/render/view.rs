@@ -1,5 +1,55 @@
 use super::{environment::GpuEnvironment, gpu::Gpu, raytrace::{RayTracing, TEXTURE_SLOTS}, shadow::ShadowMaps, RenderFrame};
 
+/// How the scene is drawn, for looking into it: as it is, or with part of the shading left
+/// out. A resource; `Lit` unless changed.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, crate::reflect::Reflect)]
+#[reflect(name = "mira.ViewMode", default)]
+pub enum ViewMode {
+    /// Everything: the game as it is played.
+    #[default]
+    Lit,
+    /// Each surface in its own colour, with no light or shadow on it.
+    Unlit,
+    /// The light alone, on surfaces all the same grey.
+    LightingOnly,
+    /// Which way each surface faces, as a colour.
+    Normals,
+    /// The edges of every triangle. Needs a graphics card that can draw lines for polygons;
+    /// on one that can't, this is `Unlit`.
+    Wireframe,
+}
+
+impl ViewMode {
+    pub const ALL: [Self; 5] =
+        [Self::Lit, Self::Unlit, Self::LightingOnly, Self::Normals, Self::Wireframe];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Lit => "Lit",
+            Self::Unlit => "Unlit",
+            Self::LightingOnly => "Lighting only",
+            Self::Normals => "Normals",
+            Self::Wireframe => "Wireframe",
+        }
+    }
+
+    /// Whether what is drawn is a reading of the scene, to be shown as it is, and not a
+    /// picture to be exposed and toned like a photograph.
+    pub fn is_plain(self) -> bool {
+        matches!(self, Self::Unlit | Self::Normals | Self::Wireframe)
+    }
+
+    /// What the shaders know it as: see `shade` in `pbr.wgsl`.
+    fn number(self) -> f32 {
+        match self {
+            Self::Lit => 0.0,
+            Self::Unlit | Self::Wireframe => 1.0,
+            Self::LightingOnly => 2.0,
+            Self::Normals => 3.0,
+        }
+    }
+}
+
 /// Must match `View` in `pbr.wgsl`.
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -225,7 +275,7 @@ impl ViewBinding {
     }
 
 
-    pub(crate) fn write(&self, gpu: &Gpu, frame: &RenderFrame, sky_mips: u32, shadows: &ShadowMaps, probes: [[f32; 4]; 2]) {
+    pub(crate) fn write(&self, gpu: &Gpu, frame: &RenderFrame, mode: ViewMode, sky_mips: u32, shadows: &ShadowMaps, probes: [[f32; 4]; 2]) {
         let v4 = |v: glam::Vec3, w: f32| [v.x, v.y, v.z, w];
         let mut sh = [[0.0; 4]; 9];
         for (dst, src) in sh.iter_mut().zip(frame.sh) {
@@ -254,7 +304,7 @@ impl ViewBinding {
             shadow_params: [
                 1.0 / shadows.resolution as f32,
                 if frame.shadows { 1.0 } else { 0.0 },
-                0.0,
+                mode.number(),
                 cascades.splits[3] * 0.8,
             ],
             viewport: [w, h, 1.0 / w, 1.0 / h],
@@ -269,5 +319,19 @@ impl ViewBinding {
         };
         gpu.queue
             .write_buffer(&self.buffer, 0, bytemuck::bytes_of(&view));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ViewMode;
+
+    #[test]
+    fn the_shaders_tell_the_view_modes_apart() {
+        // Wireframe is unlit drawn as lines, so those two share a number; no others do.
+        let numbers: Vec<f32> = ViewMode::ALL.iter().map(|mode| mode.number()).collect();
+        assert_eq!(numbers, [0.0, 1.0, 2.0, 3.0, 1.0]);
+        assert!(!ViewMode::Lit.is_plain() && !ViewMode::LightingOnly.is_plain());
+        assert_eq!(ViewMode::default(), ViewMode::Lit);
     }
 }

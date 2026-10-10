@@ -20,6 +20,14 @@ use crate::{
     transform::{Parent, Transform},
 };
 
+/// A model file read and decoded, not yet made into meshes and images. See
+/// [`GltfScene::import`].
+pub struct Imported {
+    document: gltf::Document,
+    buffers: Vec<gltf::buffer::Data>,
+    images: Vec<gltf::image::Data>,
+}
+
 /// One drawable piece of a glTF scene: a primitive, its material, and where it sits relative
 /// to the scene's origin.
 #[derive(Clone, Debug)]
@@ -51,9 +59,30 @@ impl GltfScene {
     /// Loads the default scene. Meshes and images go into the asset stores; the returned parts
     /// refer to them, so spawning many copies shares everything.
     pub fn load(path: impl AsRef<Path>, meshes: &mut Assets<Mesh>, images: &mut Assets<Image>) -> anyhow::Result<Self> {
+        Self::build(Self::import(path)?, meshes, images)
+    }
+
+    /// Reads and decodes a model file, which is the slow part of loading one, without
+    /// touching the asset stores: so it can be done on another thread.
+    pub fn import(path: impl AsRef<Path>) -> anyhow::Result<Imported> {
         let path = path.as_ref();
-        let (document, buffers, image_data) =
+        let (document, buffers, images) =
             gltf::import(path).with_context(|| format!("loading {}", path.display()))?;
+        Ok(Imported {
+            document,
+            buffers,
+            images,
+        })
+    }
+
+    /// Makes a scene of a file that has been read: its meshes and images go into the asset
+    /// stores, as [`load`](Self::load) says.
+    pub fn build(imported: Imported, meshes: &mut Assets<Mesh>, images: &mut Assets<Image>) -> anyhow::Result<Self> {
+        let Imported {
+            document,
+            buffers,
+            images: image_data,
+        } = imported;
 
         // An image may be colour in one material and data in another; upload each use once.
         // Files often repeat each other's images (a figure in several poses, say), so images

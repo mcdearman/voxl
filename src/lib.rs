@@ -30,7 +30,7 @@ pub use glam;
 pub mod prelude {
     pub use crate::{
         app::{App, AppExit, DefaultPlugins, Plugin, Stage},
-        asset_server::AssetServer,
+        asset_server::{AssetServer, Model},
         assets::{Assets, Handle},
         ecs::prelude::*,
         input::{ButtonInput, KeyCode, Mouse, MouseButton},
@@ -43,9 +43,9 @@ pub mod prelude {
         prefab::{PrefabInstance, PrefabPlugin, Prefabs},
         reflect::{NotSaved, Reflect, Scene, TypeRegistry},
         render::{
-            AmbientLight, Animator, Camera, Color, DirectionalLight, Environment, Fog, Gait,
+            AmbientLight, Animator, Camera, Color, DebugLines, DirectionalLight, Environment, Fog, Gait,
             GltfScene, Image, Leg, Limb, LodLevel, Lods, Material, Mesh, Mesh3d, NotShadowCaster,
-            Pattern, PostProcess, RayTracingSettings, Reach, ShadowSettings, VolumetricLight,
+            Pattern, PostProcess, RayTracingSettings, Reach, ShadowSettings, ViewMode, ViewTarget, VolumetricLight,
         },
         relation::{Related, Relation},
         signal::{

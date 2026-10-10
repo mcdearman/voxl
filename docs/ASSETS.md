@@ -44,10 +44,23 @@ which does not survive; give it one with `AssetServer::name` if it should.
 - **Images** are decoded on worker threads. `load_image` returns the handle at once, and the
   image appears under it shortly after; until then anything using it draws with a plain white
   texture. `AssetServer::loading()` says how many are outstanding.
-- **Model files** are loaded when asked for, on the calling thread, once per file.
+- **Model files** load one of two ways. `load_gltf` reads the file on the calling thread and
+  hands back the whole model, for a game that builds its scene in code. A `Model` component
+  asks for the file to be read on a worker thread instead: the entity is there at once, and
+  the model's parts appear under it as children when the file has been read.
 - **Shapes** are made when first asked for.
 
-Image files are watched and reloaded when they change; see [HOT_RELOAD.md](HOT_RELOAD.md).
+```rust
+commands.spawn((Transform::from_xyz(4.0, 0.0, 0.0), Model::new("models/house.glb")));
+```
+
+A `Model` is saved in a scene as the file's name, and its parts are not saved: loading the
+scene reads the file again. `server.request_gltf(name)` starts the reading without an entity,
+and `server.model(name)` is the model once it has arrived.
+
+Image files and model files are watched and reloaded when they change. A model file that is
+saved again is read on a worker again, and every `Model` showing it gets its new parts; see
+[HOT_RELOAD.md](HOT_RELOAD.md).
 
 ## Unloading
 
@@ -71,7 +84,8 @@ registered, goes stale when its asset is unloaded. Protect those with `server.ke
 ## What isn't here yet
 
 - Unloading is something the game asks for; nothing unloads on its own under memory pressure.
-- Model files load on the calling thread, and are not watched for changes.
+- A model's parts come all at once, and a reloaded model is rebuilt whole. Nothing knows yet
+  which assets depend on which.
 - There is no processing step: textures are not compressed for the GPU, and nothing is cached
   on disk.
 - The Napoleonic and Paris demos still load their assets directly.

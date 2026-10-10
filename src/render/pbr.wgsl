@@ -27,7 +27,7 @@ struct View {
     cascade_splits: vec4<f32>,
     // World size of a shadow texel in each cascade.
     cascade_texels: vec4<f32>,
-    // x: shadow map texel size in UV, y: 1 if the sun casts shadows, z: unused,
+    // x: shadow map texel size in UV, y: 1 if the sun casts shadows, z: the view mode,
     // w: shadow fade start distance
     shadow_params: vec4<f32>,
     // xy: framebuffer size, zw: 1 / size
@@ -205,7 +205,22 @@ fn env_brdf(f0: vec3<f32>, roughness: f32, n_dot_v: f32) -> vec3<f32> {
 }
 
 // Sun, sky and reflections on a surface, before haze.
-fn shade(s: Surface, world_position: vec3<f32>) -> vec3<f32> {
+fn shade(surface: Surface, world_position: vec3<f32>) -> vec3<f32> {
+    var s = surface;
+    // View modes, for looking into a scene: 1 the surface's own colour, 3 its normal, both
+    // set against the exposure so they come out as they are; 2 the light on plain grey.
+    let mode = view.shadow_params.z;
+    if mode == 1.0 {
+        return (s.albedo + s.emissive) / max(view.camera_forward.w, 1e-4);
+    }
+    if mode == 3.0 {
+        return (s.normal * 0.5 + 0.5) / max(view.camera_forward.w, 1e-4);
+    }
+    if mode == 2.0 {
+        s.albedo = vec3<f32>(0.5);
+        s.metallic = 0.0;
+        s.emissive = vec3<f32>(0.0);
+    }
     let v = normalize(view.camera_position.xyz - world_position);
     let n = s.normal;
     let l = view.sun_direction.xyz;
@@ -274,6 +289,10 @@ fn shade(s: Surface, world_position: vec3<f32>) -> vec3<f32> {
 
 // Aerial perspective: exponential height fog, lit by the sky and glowing toward the sun.
 fn apply_haze(color: vec3<f32>, world_position: vec3<f32>) -> vec3<f32> {
+    // The modes that show a surface as it is show it without the air in front of it.
+    if view.shadow_params.z == 1.0 || view.shadow_params.z == 3.0 {
+        return color;
+    }
     let to = world_position - view.camera_position.xyz;
     let full_distance = length(to);
     let dir = to / max(full_distance, 1e-4);

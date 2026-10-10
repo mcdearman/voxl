@@ -24,3 +24,13 @@ log = "0.4"
 pollster = "0.3"
 wgpu = "30.0.1"
 winit = "0.30.12"
+
+# Debug builds keep what a failure's stack needs (functions by their full names, files and
+# lines) and no more: with full debug information the build folder passed 45 GB. The
+# engine's own crates keep that much; dependencies carry none. For a debugger that reads variables, set
+# `CARGO_PROFILE_DEV_DEBUG=2` for that build.
+[profile.dev]
+debug = "limited"
+
+[profile.dev.package."*"]
+debug = false

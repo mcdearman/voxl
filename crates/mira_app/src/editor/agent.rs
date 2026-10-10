@@ -67,8 +67,8 @@ impl Agent for NoAgent {
 /// next question resumes the same conversation. It is given one set of tools besides its
 /// own reading of files: mira's (`mira_*`, through `mira-mcp`), attached to the game running
 /// in the window, and allowed without asking. Anything else that would need a yes, such as
-/// changing a file or running a command, is refused, since the window has nowhere yet to
-/// ask for one.
+/// changing a file or running a command, is put to the person at the app, who allows or
+/// refuses it in the conversation.
 pub struct ClaudeCode {
     /// The program to run: `MIRA_AGENT`, else `~/.local/bin/claude`, else `claude`.
     program: PathBuf,
@@ -120,6 +120,10 @@ impl ClaudeCode {
             "--strict-mcp-config",
             "--allowedTools",
             "mcp__mira",
+            // Whatever else it wants leave for (changing a file, running a command) it asks
+            // through mira's own tool, which puts the question to the person at the app.
+            "--permission-prompt-tool",
+            "mcp__mira__mira_approve",
         ]
         .map(str::to_owned)
         .into();

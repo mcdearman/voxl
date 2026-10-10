@@ -1141,6 +1141,29 @@ fn handle(app: &mut App, request: &Value) -> Answer {
             let defined = app.world.resource_mut::<Signals>().load_rules(path)?;
             Ok(Value::Int(defined as i64))
         }
+        "approval_ask" => {
+            // Someone outside (an agent's tools) wants a yes or a no from whoever is at
+            // the app. It waits in the world until the app shows it and it is answered.
+            let (what, detail) = (text(request, "what")?, text(request, "detail")?);
+            app.world.init_resource::<Approvals>();
+            let id = app.world.resource_mut::<Approvals>().ask(what, detail);
+            Ok(map([("id", Value::Int(id as i64))]))
+        }
+        "approval_answer" => {
+            let id = number(request, "id")? as u64;
+            let approvals = app
+                .world
+                .get_resource_mut::<Approvals>()
+                .ok_or("nothing has been asked")?;
+            match approvals.take_answer(id) {
+                Some(Some(allowed)) => Ok(map([
+                    ("answered", Value::Bool(true)),
+                    ("allowed", Value::Bool(allowed)),
+                ])),
+                Some(None) => Ok(map([("answered", Value::Bool(false))])),
+                None => Err(format!("nothing numbered {id} was asked")),
+            }
+        }
         "signal_rename" => {
             let (name, to) = (text(request, "name")?, text(request, "to")?);
             app.world.resource_mut::<Signals>().rename(name, to)?;
@@ -1264,6 +1287,64 @@ pub fn signals_text(graph: &Value) -> String {
         }
     }
     out
+}
+
+/// Questions waiting for a yes or a no from the person at the app: an agent asking to do
+/// something it may not do unasked. A resource; the app shows what is here and answers it.
+#[derive(Default)]
+pub struct Approvals {
+    next: u64,
+    asked: Vec<Approval>,
+}
+
+/// One question: what is wanted, the particulars, and the answer once there is one.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Approval {
+    pub id: u64,
+    pub what: String,
+    pub detail: String,
+    pub answer: Option<bool>,
+}
+
+impl Approvals {
+    /// Puts a question, and returns the number to ask after it by.
+    pub fn ask(&mut self, what: &str, detail: &str) -> u64 {
+        self.next += 1;
+        self.asked.push(Approval {
+            id: self.next,
+            what: what.to_owned(),
+            detail: detail.to_owned(),
+            answer: None,
+        });
+        self.next
+    }
+
+    /// The questions still waiting, oldest first.
+    pub fn waiting(&self) -> impl Iterator<Item = &Approval> {
+        self.asked.iter().filter(|asked| asked.answer.is_none())
+    }
+
+    /// Answers a question. Says whether there was one to answer.
+    pub fn answer(&mut self, id: u64, allowed: bool) -> bool {
+        match self.asked.iter_mut().find(|asked| asked.id == id) {
+            Some(asked) => {
+                asked.answer = Some(allowed);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// The answer to a question, taking the question away if it has one: nothing if there
+    /// was no such question, nothing inside if it is still waiting.
+    fn take_answer(&mut self, id: u64) -> Option<Option<bool>> {
+        let at = self.asked.iter().position(|asked| asked.id == id)?;
+        let answer = self.asked[at].answer;
+        if answer.is_some() {
+            self.asked.remove(at);
+        }
+        Some(answer)
+    }
 }
 
 /// Answers one line of the protocol with one line.
@@ -1623,6 +1704,33 @@ mod tests {
         ask(
             &mut app,
             "{'cmd': 'signal_rename', 'name': 'chilly', 'to': 'cold'}",
+        );
+        // A question for whoever is at the app waits until it is answered there, and is
+        // gone once the answer has been collected.
+        let asked = ask(
+            &mut app,
+            "{'cmd': 'approval_ask', 'what': 'Edit', 'detail': 'src/main.rs'}",
+        );
+        let id = asked.field("id").and_then(Value::as_f64).unwrap() as u64;
+        let waiting = format!("{{'cmd': 'approval_answer', 'id': {id}}}");
+        assert_eq!(
+            ask(&mut app, &waiting).field("answered"),
+            Some(&Value::Bool(false))
+        );
+        let approvals = app.world.resource_mut::<Approvals>();
+        assert_eq!(
+            approvals
+                .waiting()
+                .map(|asked| asked.what.as_str())
+                .collect::<Vec<_>>(),
+            ["Edit"]
+        );
+        assert!(approvals.answer(id, true) && !approvals.answer(id + 1, true));
+        let answered = ask(&mut app, &waiting);
+        assert_eq!(answered.field("allowed"), Some(&Value::Bool(true)));
+        assert_eq!(
+            refused(&mut app, &waiting),
+            format!("nothing numbered {id} was asked")
         );
         ask(&mut app, "{'cmd': 'signal_remove', 'name': 'long'}");
         assert_eq!(

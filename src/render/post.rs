@@ -39,10 +39,9 @@ impl Default for PostProcess {
     fn default() -> Self {
         Self {
             // The defaults suit a plain scene under the built-in sky and a sun of the default
-            // strength. With exposure 1 and the flat curve such a scene comes out pale and
-            // washed, and much below 0.7 the sky goes dark; scenes lit by a photographed sky
-            // set their own.
-            exposure: 0.7,
+            // strength: a grey card in that sun comes out mid-grey. Scenes lit by a
+            // photographed sky, whose values are relative, set their own.
+            exposure: 1.0,
             bloom: 0.04,
             vignette: 0.3,
             saturation: 1.0,
@@ -206,6 +205,12 @@ impl PostRenderer {
         &self.bloom.as_ref().unwrap().2
     }
 
+    /// Changes the blur's textures for another view's, which are another size.
+    pub(crate) fn swap_bloom(&mut self, other: &mut Option<(u32, u32, Vec<wgpu::TextureView>)>) {
+        std::mem::swap(&mut self.bloom, other);
+    }
+
+    #[allow(clippy::too_many_arguments)]
     pub fn render(
         &mut self,
         gpu: &Gpu,
@@ -214,6 +219,7 @@ impl PostRenderer {
         target: &wgpu::TextureView,
         settings: &PostProcess,
         time: f32,
+        plain: bool,
     ) {
         let (s, h) = (settings.shadow_tint, settings.highlight_tint);
         gpu.queue.write_buffer(
@@ -226,7 +232,7 @@ impl PostRenderer {
                 settings.saturation,
                 settings.contrast,
                 1.0 + (settings.contrast - 1.0) * 0.8,
-                0.0,
+                if plain { 1.0 } else { 0.0 },
                 0.0,
                 s.r,
                 s.g,

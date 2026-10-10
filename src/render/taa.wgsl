@@ -5,6 +5,8 @@ struct Taa {
     reproject: mat4x4<f32>,
     // x: 1 if the history is valid, y: weight of this frame, zw: 1 / size
     params: vec4<f32>,
+    // x: 1 if things that moved wrote how far into `moved` this frame
+    motion: vec4<f32>,
 };
 
 @group(0) @binding(0) var current: texture_2d<f32>;
@@ -12,6 +14,7 @@ struct Taa {
 @group(0) @binding(2) var depth: texture_depth_multisampled_2d;
 @group(0) @binding(3) var linear_sampler: sampler;
 @group(0) @binding(4) var<uniform> taa: Taa;
+@group(0) @binding(5) var moved: texture_multisampled_2d<f32>;
 
 @vertex
 fn vs_main(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {
@@ -112,11 +115,21 @@ fn fs_main(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     let at = (vec2<f32>(nearest_at) + 0.5) * taa.params.zw;
     let ndc = vec4<f32>(at.x * 2.0 - 1.0, 1.0 - at.y * 2.0, nearest, 1.0);
     let previous = taa.reproject * ndc;
-    let motion = vec2<f32>(previous.x / previous.w * 0.5 + 0.5, 0.5 - previous.y / previous.w * 0.5) - at;
+    var motion = vec2<f32>(previous.x / previous.w * 0.5 + 0.5, 0.5 - previous.y / previous.w * 0.5) - at;
+    var behind = previous.w <= 0.0 && nearest > 0.0;
+    // A thing that moved wrote how far it came; where nothing did, the target holds more than
+    // anything could move.
+    if taa.motion.x > 0.5 {
+        let came = textureLoad(moved, nearest_at, 0).xy;
+        if abs(came.x) < 2.0 {
+            motion = -came;
+            behind = false;
+        }
+    }
     let history_uv = uv + motion;
 
     let outside = any(history_uv < vec2<f32>(0.0)) || any(history_uv > vec2<f32>(1.0));
-    if taa.params.x < 0.5 || outside || previous.w <= 0.0 && nearest > 0.0 {
+    if taa.params.x < 0.5 || outside || behind {
         return vec4<f32>(unsquash(from_ycocg(center)), 1.0);
     }
 

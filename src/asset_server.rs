@@ -56,6 +56,20 @@ struct WatchedImage {
     settling: Option<Stamp>,
 }
 
+/// A model file being watched for changes.
+struct WatchedModel {
+    name: String,
+    path: PathBuf,
+    current: Option<Stamp>,
+    settling: Option<Stamp>,
+}
+
+/// A model file read on a worker, on its way back.
+struct ImportedModel {
+    name: String,
+    imported: anyhow::Result<crate::render::Imported>,
+}
+
 struct DecodedImage {
     id: u32,
     path: PathBuf,
@@ -75,6 +89,13 @@ pub struct AssetServer {
     decoded: Mailbox<DecodedImage>,
     loading: usize,
     watched: Vec<WatchedImage>,
+    /// Model files being read on workers, those that could not be read, those watched for
+    /// changes, and those whose scene has just arrived (for the first time, or anew).
+    imported: Mailbox<ImportedModel>,
+    models_loading: HashSet<String>,
+    models_failed: HashSet<String>,
+    watched_models: Vec<WatchedModel>,
+    arrived: Vec<String>,
     last_check: Option<Instant>,
     /// How often image files are checked for changes.
     pub check_interval: Duration,
@@ -134,6 +155,11 @@ impl AssetServer {
             decoded: Mailbox::default(),
             loading: 0,
             watched: Vec::new(),
+            imported: Mailbox::default(),
+            models_loading: HashSet::new(),
+            models_failed: HashSet::new(),
+            watched_models: Vec::new(),
+            arrived: Vec::new(),
             last_check: None,
             check_interval: Duration::from_millis(250),
             hot_reload: cfg!(debug_assertions),
@@ -393,7 +419,27 @@ impl AssetServer {
         for &i in &changed {
             self.reload(i);
         }
-        changed.len()
+        let models: Vec<usize> = (0..self.watched_models.len())
+            .filter(|&i| {
+                let now = stamp(&self.watched_models[i].path);
+                now.is_some() && now != self.watched_models[i].current
+            })
+            .collect();
+        for &i in &models {
+            self.reload_model(i);
+        }
+        changed.len() + models.len()
+    }
+
+    fn reload_model(&mut self, index: usize) {
+        let watched = &mut self.watched_models[index];
+        watched.current = stamp(&watched.path);
+        watched.settling = None;
+        let name = watched.name.clone();
+        self.models_failed.remove(&name);
+        if !self.models_loading.contains(&name) {
+            self.import(&name);
+        }
     }
 
     fn reload(&mut self, index: usize) {
@@ -405,7 +451,7 @@ impl AssetServer {
     }
 
     fn check_files(&mut self) {
-        if !self.hot_reload || self.watched.is_empty() {
+        if !self.hot_reload || (self.watched.is_empty() && self.watched_models.is_empty()) {
             return;
         }
         if self
@@ -423,6 +469,17 @@ impl AssetServer {
             } else if now == watched.settling {
                 // Unchanged since the last check: whatever was writing it has finished.
                 self.reload(index);
+            } else {
+                watched.settling = now;
+            }
+        }
+        for index in 0..self.watched_models.len() {
+            let watched = &mut self.watched_models[index];
+            let now = stamp(&watched.path);
+            if now.is_none() || now == watched.current {
+                watched.settling = None;
+            } else if now == watched.settling {
+                self.reload_model(index);
             } else {
                 watched.settling = now;
             }
@@ -489,8 +546,21 @@ impl AssetServer {
         if let Some(scene) = self.gltf.get(name) {
             return Ok(scene.clone());
         }
+        let imported = GltfScene::import(self.path(name))?;
+        self.adopt(name, imported, meshes, images)
+    }
+
+    /// Makes a read model file the scene known by `name`, in place of any there was, and
+    /// names its meshes and images.
+    fn adopt(
+        &mut self,
+        name: &str,
+        imported: crate::render::Imported,
+        meshes: &mut Assets<Mesh>,
+        images: &mut Assets<Image>,
+    ) -> anyhow::Result<Arc<GltfScene>> {
         let (first_mesh, first_image) = (meshes.next_id(), images.next_id());
-        let scene = Arc::new(GltfScene::load(self.path(name), meshes, images)?);
+        let scene = Arc::new(GltfScene::build(imported, meshes, images)?);
         // Whatever the loader added is this file's, in an order that depends only on the file.
         for id in first_mesh..meshes.next_id() {
             self.name(
@@ -507,7 +577,97 @@ impl AssetServer {
             );
         }
         self.gltf.insert(name.to_owned(), scene.clone());
+        if !self
+            .watched_models
+            .iter()
+            .any(|watched| watched.name == name)
+        {
+            let path = self.path(name);
+            self.watched_models.push(WatchedModel {
+                name: name.to_owned(),
+                current: stamp(&path),
+                settling: None,
+                path,
+            });
+        }
         Ok(scene)
+    }
+
+    /// The scene of a model file, if it has been loaded.
+    pub fn model(&self, name: &str) -> Option<Arc<GltfScene>> {
+        self.gltf.get(name).cloned()
+    }
+
+    /// Asks for a model file to be loaded without waiting for it: the file is read and
+    /// decoded on a worker, and its scene is there (see [`model`](Self::model)) some frames
+    /// later. Returns whether it is there already. A file that could not be read is not
+    /// tried again until it changes.
+    pub fn request_gltf(&mut self, name: &str) -> bool {
+        if self.gltf.contains_key(name) {
+            return true;
+        }
+        if !self.models_loading.contains(name) && !self.models_failed.contains(name) {
+            self.import(name);
+        }
+        false
+    }
+
+    fn import(&mut self, name: &str) {
+        self.models_loading.insert(name.to_owned());
+        self.loading += 1;
+        let (name, path) = (name.to_owned(), self.path(name));
+        let pool = self.pool.get_or_insert_with(|| TaskPool::new(2));
+        pool.spawn(&self.imported.sender, move || ImportedModel {
+            imported: GltfScene::import(&path),
+            name,
+        });
+    }
+
+    /// Takes in the model files that have been read, making their meshes and images.
+    /// Returns how many arrived.
+    pub fn finish_models(
+        &mut self,
+        meshes: &mut Assets<Mesh>,
+        images: &mut Assets<Image>,
+    ) -> usize {
+        let mut arrived = 0;
+        while let Ok(model) = self.imported.try_recv() {
+            arrived += 1;
+            self.loading -= 1;
+            self.models_loading.remove(&model.name);
+            let reloading = self.gltf.contains_key(&model.name);
+            let made = model
+                .imported
+                .and_then(|imported| self.adopt(&model.name, imported, meshes, images));
+            match made {
+                Ok(_) => {
+                    if reloading {
+                        log::info!("reloaded {}", model.name);
+                    }
+                    self.arrived.push(model.name);
+                }
+                // What was loaded before, if anything, stays as it is.
+                Err(err) => {
+                    log::error!("{err:#}");
+                    self.models_failed.insert(model.name);
+                }
+            }
+        }
+        arrived
+    }
+
+    /// Waits until the model files asked for have arrived. For tools and tests.
+    pub fn wait_for_models(&mut self, meshes: &mut Assets<Mesh>, images: &mut Assets<Image>) {
+        while !self.models_loading.is_empty() {
+            self.finish_models(meshes, images);
+            std::thread::sleep(Duration::from_millis(2));
+        }
+    }
+
+    /// The model files whose scenes have arrived since this was last asked: loaded for the
+    /// first time, or loaded again because the file changed.
+    pub fn take_arrived_models(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.arrived)
     }
 }
 
@@ -534,11 +694,102 @@ pub(crate) fn name_in_scope(asset_type: TypeId, id: u32) -> Option<(&'static str
 pub(crate) fn update_asset_server(
     mut server: ResMut<AssetServer>,
     mut images: ResMut<Assets<Image>>,
+    mut meshes: ResMut<Assets<Mesh>>,
 ) {
     if server.loading > 0 {
         server.finish(&mut images);
+        server.finish_models(&mut meshes, &mut images);
     }
     server.check_files();
+}
+
+/// A model file, shown where this entity is: the engine reads the file without holding the
+/// game up, and puts each part of the model under the entity when it arrives, and again
+/// whenever the file is saved. Saved in a scene by the file's name alone.
+#[derive(Clone, Debug, Default, PartialEq, Eq, crate::reflect::Reflect)]
+#[reflect(name = "mira.Model")]
+pub struct Model {
+    /// The file, by the name the asset server knows it by.
+    pub name: String,
+}
+
+impl crate::ecs::Component for Model {}
+
+impl Model {
+    pub fn new(name: impl Into<String>) -> Self {
+        Self { name: name.into() }
+    }
+}
+
+/// On an entity with a [`Model`]: which file's parts are under it now.
+pub struct ModelShown(String);
+
+impl crate::ecs::Component for ModelShown {}
+
+/// On each part of a model that the engine put under a [`Model`].
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ModelPart;
+
+impl crate::ecs::Component for ModelPart {}
+
+/// Puts the parts of each [`Model`] under its entity once its file has been read, and puts
+/// them there afresh when the file, or which file it is, has changed.
+pub(crate) fn show_models(world: &mut World) {
+    use crate::{
+        reflect::NotSaved,
+        render::Mesh3d,
+        transform::{Parent, Transform},
+    };
+    if !world.contains_resource::<AssetServer>() {
+        return;
+    }
+    let arrived = world.resource_mut::<AssetServer>().take_arrived_models();
+    let wanted: Vec<(crate::ecs::Entity, String, bool)> = world
+        .query::<(crate::ecs::Entity, &Model, Option<&ModelShown>)>()
+        .iter()
+        .map(|(entity, model, shown)| {
+            let fresh =
+                shown.is_some_and(|shown| shown.0 == model.name) && !arrived.contains(&model.name);
+            (entity, model.name.clone(), fresh)
+        })
+        .collect();
+    for (entity, name, fresh) in wanted {
+        if fresh || name.is_empty() {
+            continue;
+        }
+        let server = world.resource_mut::<AssetServer>();
+        let Some(scene) = server.model(&name) else {
+            server.request_gltf(&name);
+            continue;
+        };
+        // Out with the parts that were there, in with this file's.
+        let old: Vec<crate::ecs::Entity> = world
+            .query::<(crate::ecs::Entity, &Parent, &ModelPart)>()
+            .iter()
+            .filter(|(_, parent, _)| parent.0 == entity)
+            .map(|(part, _, _)| part)
+            .collect();
+        for part in old {
+            world.despawn(part);
+        }
+        for part in &scene.parts {
+            let (scale, rotation, translation) = part.transform.to_scale_rotation_translation();
+            world.spawn((
+                Transform {
+                    translation,
+                    rotation,
+                    scale,
+                },
+                Mesh3d(part.mesh),
+                part.material,
+                Parent(entity),
+                ModelPart,
+                // Made again from the file whenever the scene is loaded.
+                NotSaved,
+            ));
+        }
+        world.insert(entity, ModelShown(name));
+    }
 }
 
 #[cfg(test)]
@@ -578,6 +829,110 @@ mod tests {
         images
             .get(handle)
             .map(|image| image.data[..4].try_into().unwrap())
+    }
+
+    #[test]
+    fn a_model_is_read_on_a_worker_and_shown_again_when_its_file_changes() {
+        use crate::{
+            app::App,
+            ecs::Entity,
+            reflect::NotSaved,
+            transform::{Parent, TransformPlugin},
+        };
+        let dir = TempDir::new("models");
+        let hen =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("res/paris/models/animals/hen_white.glb");
+        std::fs::copy(&hen, dir.0.join("bird.glb")).unwrap();
+
+        let mut app = App::new();
+        app.add_plugins(TransformPlugin)
+            .insert_resource(AssetServer::new(&dir.0))
+            .init_resource::<Assets<Mesh>>()
+            .init_resource::<Assets<Image>>()
+            .add_systems(
+                crate::app::Stage::PreUpdate,
+                (update_asset_server, show_models),
+            );
+        let bird = app
+            .world
+            .spawn((Transform::IDENTITY, Model::new("bird.glb")));
+        let parts = |app: &mut App| {
+            app.world
+                .query::<(Entity, &Parent, &ModelPart)>()
+                .iter()
+                .filter(|(_, parent, _)| parent.0 == bird)
+                .map(|(part, _, _)| part)
+                .collect::<Vec<_>>()
+        };
+        // Asked for, nothing is there at once and the game is not held up for it.
+        app.update();
+        assert!(parts(&mut app).is_empty() && app.world.resource::<AssetServer>().loading() == 1);
+        let frames = |app: &mut App, until: &dyn Fn(&mut App) -> bool| {
+            for _ in 0..3000 {
+                app.update();
+                if until(app) {
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            panic!("it did not arrive");
+        };
+        frames(&mut app, &|app| !parts(app).is_empty());
+        let first = parts(&mut app);
+        let expected = app
+            .world
+            .resource::<AssetServer>()
+            .model("bird.glb")
+            .unwrap()
+            .parts
+            .len();
+        assert_eq!(first.len(), expected);
+        assert!(first
+            .iter()
+            .all(|part| app.world.get::<NotSaved>(*part).is_some()));
+        assert!(app
+            .world
+            .resource::<AssetServer>()
+            .find::<Mesh>("bird.glb#mesh0")
+            .is_some());
+        // Left alone, it is left alone.
+        app.update();
+        assert_eq!(parts(&mut app), first);
+
+        // The file saved again: it is read again and the parts are put there afresh.
+        std::fs::copy(&hen, dir.0.join("bird.glb")).unwrap();
+        let file = std::fs::OpenOptions::new()
+            .append(true)
+            .open(dir.0.join("bird.glb"))
+            .unwrap();
+        file.set_modified(SystemTime::now() + Duration::from_secs(5))
+            .unwrap();
+        assert_eq!(app.world.resource_mut::<AssetServer>().reload_changed(), 1);
+        frames(&mut app, &|app| {
+            parts(app) != first && !parts(app).is_empty()
+        });
+        assert_eq!(parts(&mut app).len(), expected);
+
+        // A file that isn't there is asked for once, and says so in the log; another entity
+        // pointed at the same model shares what is loaded.
+        let ghost = app
+            .world
+            .spawn((Transform::IDENTITY, Model::new("ghost.glb")));
+        frames(&mut app, &|app| {
+            app.world.resource::<AssetServer>().loading() == 0
+        });
+        app.update();
+        assert!(app.world.get::<ModelShown>(ghost).is_none());
+        assert_eq!(
+            app.world.resource::<AssetServer>().loading(),
+            0,
+            "not tried again"
+        );
+        let second = app
+            .world
+            .spawn((Transform::IDENTITY, Model::new("bird.glb")));
+        app.update();
+        assert!(app.world.get::<ModelShown>(second).is_some());
     }
 
     #[test]
