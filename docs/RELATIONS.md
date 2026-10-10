@@ -61,11 +61,52 @@ Also in `mira::relation`:
 | `ancestors::<R>(world, entity)` | what it names, what that names, and so on, nearest first |
 | `despawn_with_related::<R>(world, entity)` | the entity and everything that leads to it |
 
+## When what is named goes
+
+A relation says what becomes of an entity when the one it names is despawned:
+
+```rust
+impl Relation for InSquad {
+    fn target(&self) -> Entity {
+        self.0
+    }
+    const WHEN_TARGET_GOES: WhenTargetGoes = WhenTargetGoes::Despawn;
+}
+```
+
+`Keep` (the default) leaves it naming an entity that is no more, for the game to see and
+settle; `Unlink` takes the component off it; `Despawn` despawns it, and what names it in
+the same way, and so on down. It is settled when the relation is next brought up to date
+(each frame, in `PostUpdate`), not at the moment of the despawn. `Parent` keeps: use
+`despawn_with_related::<Parent>` to take a whole tree at once.
+
+## Naming several
+
+A component that holds a list relates its entity to each of them:
+
+```rust
+struct Likes(Vec<Entity>);
+
+impl Relation for Likes {
+    fn target(&self) -> Entity {
+        self.0[0]
+    }
+    fn each_target(&self, each: &mut dyn FnMut(Entity)) {
+        self.0.iter().copied().for_each(each);
+    }
+    const WHEN_TARGET_GOES: WhenTargetGoes = WhenTargetGoes::Unlink;
+    fn unlink(&mut self, gone: Entity) -> bool {
+        self.0.retain(|liked| *liked != gone);
+        !self.0.is_empty()
+    }
+}
+```
+
+`Related<Likes>` on an entity is then everyone who likes it. Under `Unlink`, `unlink` takes
+the one name out of the list and says whether the component is still worth keeping.
+
 ## What isn't here yet
 
-- One `R` per entity: an entity is `ShotBy` one archer. Many of the same kind (likes
-  several others) needs a component that holds a list, which `Relation` does not cover yet.
-- Nothing happens by itself to the sources when a target is despawned; ask for it with
-  `despawn_with_related`.
+- Cleanup waits for the relation to be brought up to date; nothing runs at the despawn.
 - Relations defined by plugins through the C interface, and relations shown as such over
   the debug connection (they are visible as components, if registered).

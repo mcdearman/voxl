@@ -56,6 +56,8 @@ impl<T> fmt::Debug for Handle<T> {
 
 /// Storage for one asset type. Tracks modifications so GPU-side copies can be kept in sync.
 pub struct Assets<T> {
+    /// Which store this is, among all there have been: ids mean something only in their own.
+    store: u64,
     items: HashMap<u32, T>,
     next_id: u32,
     modified: HashSet<u32>,
@@ -64,7 +66,9 @@ pub struct Assets<T> {
 
 impl<T> Default for Assets<T> {
     fn default() -> Self {
+        static STORES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
         Self {
+            store: STORES.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             items: HashMap::new(),
             next_id: 0,
             modified: HashSet::new(),
@@ -74,6 +78,11 @@ impl<T> Default for Assets<T> {
 }
 
 impl<T> Assets<T> {
+    /// A number no other store has, to tell this one's handles from another's.
+    pub fn store(&self) -> u64 {
+        self.store
+    }
+
     pub fn add(&mut self, asset: T) -> Handle<T> {
         let id = self.next_id;
         self.next_id += 1;

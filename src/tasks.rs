@@ -1,64 +1,38 @@
-use std::{
-    sync::{
-        mpsc::{channel, Receiver, Sender},
-        Arc, Mutex,
-    },
-    thread,
+use std::sync::{
+    mpsc::{channel, Receiver, Sender},
+    Mutex,
 };
 
-type Job = Box<dyn FnOnce() + Send>;
-
-/// A fixed set of worker threads for background work such as chunk generation and meshing.
-pub struct TaskPool {
-    jobs: Sender<Job>,
-    threads: usize,
-}
-
-impl Default for TaskPool {
-    fn default() -> Self {
-        // Leave a core for the main thread.
-        let cores = thread::available_parallelism().map_or(4, |n| n.get());
-        Self::new(cores.saturating_sub(1).clamp(1, 8))
-    }
-}
+/// Work done in the background, such as reading files, chunk generation and meshing, on
+/// the threads the whole engine shares ([`Pool`](crate::ecs::Pool)): the same ones systems
+/// run on, which take a frame's work first and leave a worker free for it. A resource, and
+/// only a handle: every `TaskPool` hands its work to the same threads.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct TaskPool;
 
 impl TaskPool {
-    pub fn new(threads: usize) -> Self {
-        let (jobs, receiver) = channel::<Job>();
-        let receiver = Arc::new(Mutex::new(receiver));
-        for i in 0..threads {
-            let receiver = receiver.clone();
-            thread::Builder::new()
-                .name(format!("mira worker {i}"))
-                .spawn(move || loop {
-                    // The guard is a temporary, so the lock is released before the job runs.
-                    let job = receiver.lock().unwrap().recv();
-                    match job {
-                        Ok(job) => job(),
-                        Err(_) => break, // the pool was dropped
-                    }
-                })
-                .expect("failed to spawn worker thread");
-        }
-        Self { jobs, threads }
+    /// A handle to the shared threads. The number is not used: how much is done at once is
+    /// settled for the whole engine, not asked for by each part of it.
+    pub fn new(_threads: usize) -> Self {
+        Self
     }
 
+    /// How many background jobs are done at once.
     pub fn threads(&self) -> usize {
-        self.threads
+        crate::ecs::Pool::global().background_threads()
     }
 
-    /// Runs `work` on a worker and delivers its result to `results`.
+    /// Runs `work` in the background and delivers its result to `results`.
     pub fn spawn<T: Send + 'static>(
         &self,
         results: &Sender<T>,
         work: impl FnOnce() -> T + Send + 'static,
     ) {
         let results = results.clone();
-        let job: Job = Box::new(move || {
+        crate::ecs::Pool::global().spawn(move || {
             // The receiver is gone if the app is shutting down; nothing to do about it.
             let _ = results.send(work());
         });
-        self.jobs.send(job).expect("worker threads are gone");
     }
 }
 

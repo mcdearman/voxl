@@ -48,7 +48,7 @@ pub mod prelude {
             GltfScene, Image, Leg, Limb, LodLevel, Lods, Material, Mesh, Mesh3d, NotShadowCaster,
             Pattern, Playing, PostProcess, RayTracingSettings, Reach, ShadowSettings, ViewMode, ViewTarget, VolumetricLight,
         },
-        relation::{Related, Relation},
+        relation::{Related, Relation, WhenTargetGoes},
         signal::{
             signal, signal_became_false, signal_became_true, Compare, Op, Signal, SignalChanged,
             SignalPlugin, Signals,

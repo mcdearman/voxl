@@ -619,6 +619,28 @@ mod batches {
             .collect()
     }
 
+    fn spawns(mut commands: Commands, _: Query<&Vel>) {
+        commands.spawn(Pos(0));
+    }
+
+    #[test]
+    fn a_system_whose_commands_can_wait_does_not_end_its_batch() {
+        // What a system queues, the next is meant to see: so the batch ends with it.
+        assert_eq!(plan((spawns, reads_pos, reads_count)), [0, 1, 1]);
+        // Told the commands can wait, it shares a batch with what it has nothing in common
+        // with, and still not with what it clashes with.
+        assert_eq!(plan((spawns.commands_can_wait(), reads_pos, reads_count)), [0, 0, 0]);
+        assert_eq!(plan((spawns.commands_can_wait(), writes_vel, reads_pos)), [0, 1, 1]);
+
+        // They are applied all the same, when the batch has run.
+        let mut world = World::new();
+        world.insert_resource(Counter(0));
+        let mut schedule = Schedule::default();
+        schedule.add_systems((spawns.commands_can_wait(), reads_pos, reads_count));
+        schedule.run(&mut world);
+        assert_eq!(world.query::<&Pos>().iter().count(), 1);
+    }
+
     #[test]
     fn systems_that_touch_nothing_in_common_share_a_batch() {
         // Readers together; a writer of what they read comes after; then readers again.
@@ -1012,4 +1034,164 @@ mod hooks {
             "told once, not once per despawn"
         );
     }
+}
+
+/// One query's work shared between threads comes to what the same work in a row would.
+#[test]
+fn a_querys_work_is_shared_between_threads_and_all_of_it_is_done() {
+    use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
+    // Enough entities that the work is handed out; fewer under Miri, which is slow.
+    let count = if cfg!(miri) { 400 } else { 20_000 };
+    let mut world = World::new();
+    for i in 0..count {
+        let entity = world.spawn((Pos(i), Vel(2)));
+        if i % 3 == 0 {
+            world.insert(entity, Marker);
+        }
+    }
+    // A few without a velocity, which the query must pass over.
+    for _ in 0..10 {
+        world.spawn(Pos(-1));
+    }
+
+    fn step(mut moving: Query<(&mut Pos, &Vel)>) {
+        moving.par_for_each_mut(|(mut pos, vel)| pos.0 += vel.0);
+    }
+    run(&mut world, step);
+    let moved: Vec<i32> = world.query::<(&Pos, &Vel)>().iter().map(|(pos, _)| pos.0).collect();
+    assert_eq!(moved.len(), count as usize);
+    assert!(moved.iter().enumerate().all(|(i, pos)| *pos == i as i32 + 2));
+    assert_eq!(world.query::<&Pos>().iter().filter(|pos| pos.0 == -1).count(), 10);
+
+    // Read only, with a filter, each match met exactly once.
+    static SUM: AtomicI64 = AtomicI64::new(0);
+    static MET: AtomicUsize = AtomicUsize::new(0);
+    fn add_up(marked: Query<(Entity, &Pos), With<Marker>>) {
+        marked.par_for_each(|(_, pos)| {
+            SUM.fetch_add(pos.0 as i64, Ordering::Relaxed);
+            MET.fetch_add(1, Ordering::Relaxed);
+        });
+    }
+    run(&mut world, add_up);
+    let marked = (0..count as i64).filter(|i| i % 3 == 0);
+    assert_eq!(MET.load(Ordering::Relaxed), marked.clone().count());
+    assert_eq!(SUM.load(Ordering::Relaxed), marked.map(|i| i + 2).sum::<i64>());
+
+    // Too few to hand out: done where they stand, and still done.
+    let mut small = World::new();
+    for i in 0..5 {
+        small.spawn((Pos(i), Vel(1)));
+    }
+    run(&mut small, step);
+    assert_eq!(small.query::<&Pos>().iter().map(|pos| pos.0).sum::<i32>(), 15);
+}
+
+/// Systems that run side by side may each share out a query of their own.
+#[test]
+fn systems_running_side_by_side_each_share_out_their_own_query() {
+    let count = if cfg!(miri) { 300 } else { 5_000 };
+    let mut world = World::new();
+    for i in 0..count {
+        world.spawn((Pos(i), Vel(i)));
+    }
+    fn positions(mut all: Query<&mut Pos>) {
+        all.par_for_each_mut(|mut pos| pos.0 += 1);
+    }
+    fn velocities(mut all: Query<&mut Vel>) {
+        all.par_for_each_mut(|mut vel| vel.0 *= 2);
+    }
+    let mut schedule = Schedule::default();
+    schedule.add_systems((positions, velocities));
+    for _ in 0..3 {
+        schedule.run(&mut world);
+    }
+    let after: Vec<(i32, i32)> = world.query::<(&Pos, &Vel)>().iter().map(|(p, v)| (p.0, v.0)).collect();
+    assert!(after.iter().enumerate().all(|(i, (p, v))| *p == i as i32 + 3 && *v == i as i32 * 8));
+}
+
+/// An event aimed at an entity is heard at once by what observes it, anywhere or there.
+#[test]
+fn an_event_aimed_at_an_entity_is_heard_by_its_observers() {
+    struct Hit(i32);
+    #[derive(Default)]
+    struct Heard(Vec<(Entity, &'static str, i32)>);
+    let mut world = World::new();
+    world.insert_resource(Heard::default());
+    let (wall, door) = (world.spawn(Pos(10)), world.spawn(Pos(5)));
+    world.observe::<Hit>(|world, entity, hit| {
+        world.resource_mut::<Heard>().0.push((entity, "anywhere", hit.0));
+        // Every hit wears the thing down; one that finishes it takes it away.
+        let left = world.get_mut::<Pos>(entity).map(|pos| {
+            pos.0 -= hit.0;
+            pos.0
+        });
+        if left.is_some_and(|left| left <= 0) {
+            world.despawn(entity);
+        }
+    });
+    world.observe_entity::<Hit>(door, |world, entity, hit| {
+        world.resource_mut::<Heard>().0.push((entity, "the door", hit.0));
+    });
+
+    assert_eq!(world.trigger(wall, Hit(3)), 1);
+    assert_eq!(world.trigger(door, Hit(2)), 2);
+    assert_eq!(world.get::<Pos>(wall), Some(&Pos(7)));
+    // The blow that ends the door is not passed on to what listened on the door itself.
+    assert_eq!(world.trigger(door, Hit(9)), 1);
+    assert!(!world.contains_entity(door));
+    assert_eq!(world.trigger(door, Hit(1)), 0);
+    // Nothing listens for this kind of event.
+    assert_eq!(world.trigger(wall, "a word"), 0);
+    assert_eq!(
+        world.resource::<Heard>().0,
+        [(wall, "anywhere", 3), (door, "anywhere", 2), (door, "the door", 2), (door, "anywhere", 9)]
+    );
+
+    // From a system, through commands: heard when they are applied.
+    fn strike(mut commands: Commands, walls: Query<Entity, With<Pos>>) {
+        for wall in &walls {
+            commands.entity(wall).trigger(Hit(1));
+        }
+    }
+    run(&mut world, strike);
+    assert_eq!(world.get::<Pos>(wall), Some(&Pos(6)));
+}
+
+/// What a stage's systems wrote is told, once for each entity, when the stage has run.
+#[test]
+fn a_component_that_was_written_is_told_of_when_the_stage_has_run() {
+    let mut world = World::new();
+    world.insert_resource(Counter(0));
+    let (a, b) = (world.spawn((Pos(1), Vel(0))), world.spawn((Pos(2), Vel(0))));
+    world.on_change::<Pos>(|world, entity| {
+        world.resource_mut::<Counter>().0 += 1;
+        // Keeps something else in step; writing the watched component here is not told again.
+        let pos = world.get::<Pos>(entity).map_or(0, |pos| pos.0);
+        world.insert(entity, Vel(pos * 10));
+        world.get_mut::<Pos>(entity).unwrap().0 += 0;
+    });
+    // Nothing written since the hook was added.
+    world.tell_of_changes();
+    assert_eq!(world.resource::<Counter>().0, 0);
+
+    fn move_first(mut all: Query<&mut Pos>) {
+        for mut pos in &mut all {
+            if pos.0 == 1 {
+                // Written twice, told once.
+                pos.0 = 5;
+                pos.0 = 7;
+            }
+        }
+    }
+    run(&mut world, move_first);
+    assert_eq!(world.resource::<Counter>().0, 1);
+    assert_eq!((world.get::<Vel>(a), world.get::<Vel>(b)), (Some(&Vel(70)), Some(&Vel(0))));
+    // Run again with nothing to write: nothing is told, the hook's own writing included.
+    run(&mut world, move_first);
+    assert_eq!(world.resource::<Counter>().0, 1);
+    // An arrival counts as a writing.
+    let c = world.spawn(Pos(3));
+    world.tell_of_changes();
+    assert_eq!(world.resource::<Counter>().0, 2);
+    assert_eq!(world.get::<Vel>(c), Some(&Vel(30)));
 }

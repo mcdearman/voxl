@@ -430,6 +430,9 @@ impl_query_filter_tuple!(F0, F1, F2, F3);
 
 // --- query ---
 
+/// A query shares its work between threads in pieces of at least this many entities.
+const PAR_LEAST: usize = 64;
+
 /// A view over every entity matching `D` and `F`.
 pub struct Query<'w, D: QueryData, F: QueryFilter = ()> {
     world: &'w World,
@@ -448,6 +451,13 @@ impl EntityList<'_> {
         match self {
             EntityList::Borrowed(s) => s.get(i).copied(),
             EntityList::Owned(v) => v.get(i).copied(),
+        }
+    }
+
+    fn len(&self) -> usize {
+        match self {
+            EntityList::Borrowed(s) => s.len(),
+            EntityList::Owned(v) => v.len(),
         }
     }
 }
@@ -490,6 +500,70 @@ impl<'w, D: QueryData, F: QueryFilter> Query<'w, D, F> {
         self.fetch_item(entity, usize::MAX)
     }
 
+    /// Calls `each` with every match, the work shared between the threads of the pool.
+    ///
+    /// # Safety
+    /// For mutable data the caller must hold the query mutably, so that nothing else makes
+    /// an item for an entity while this does.
+    unsafe fn par_unchecked<Each>(&self, each: &Each)
+    where
+        Each: Fn(D::Item<'_>) + Sync,
+        for<'a> D::Item<'a>: Send,
+    {
+        /// Lets threads share what is safe to share for this one purpose and no other.
+        struct Shared<T>(T);
+        // SAFETY: see where it is made.
+        unsafe impl<T> Sync for Shared<T> {}
+        unsafe impl<T> Send for Shared<T> {}
+        impl<T> Shared<T> {
+            fn get(&self) -> &T {
+                &self.0
+            }
+        }
+
+        let entities = self.entities();
+        let len = entities.len();
+        let pool = crate::pool::Pool::global();
+        let threads = pool.workers() + 1;
+        // Shares small enough that a thread held up elsewhere does not hold the rest up, and
+        // large enough that taking one costs little beside doing it.
+        let share = (len / (threads * 4)).max(PAR_LEAST);
+        if threads == 1 || len <= share {
+            for at in 0..len {
+                let Some(entity) = entities.get(at) else { break };
+                if let Some(item) = self.fetch_item(entity, at) {
+                    each(item);
+                }
+            }
+            return;
+        }
+        // SAFETY: the threads read the query's fetches, which are references to component
+        // storage whose values are `Send + Sync`, and each takes shares of the entity list
+        // that no other takes (the counter hands each start out once), so no two make an
+        // item for the same entity. Items go no further than the thread that made them.
+        let shared = Shared((self, &entities));
+        let next = std::sync::atomic::AtomicUsize::new(0);
+        let work = || {
+            let (query, entities) = shared.get();
+            loop {
+                let start = next.fetch_add(share, std::sync::atomic::Ordering::Relaxed);
+                if start >= len {
+                    break;
+                }
+                for at in start..(start + share).min(len) {
+                    let Some(entity) = entities.get(at) else { break };
+                    if let Some(item) = query.fetch_item(entity, at) {
+                        each(item);
+                    }
+                }
+            }
+        };
+        let others = (0..pool.workers())
+            .map(|_| Box::new(work) as Box<dyn FnOnce() + Send + '_>)
+            .collect();
+        pool.run(others, work);
+    }
+
     unsafe fn iter_unchecked(&self) -> QueryIter<'_, 'w, D, F> {
         QueryIter {
             query: self,
@@ -504,6 +578,37 @@ impl<'w, D: QueryData, F: QueryFilter> Query<'w, D, F> {
     {
         // SAFETY: read-only items may alias.
         unsafe { self.iter_unchecked() }
+    }
+
+    /// Calls `each` with every match, sharing the work out between threads: for a query
+    /// over many entities whose work for each is independent of the rest. The order is not
+    /// kept. A few entities are done where they stand, since handing them out would cost
+    /// more than doing them.
+    ///
+    /// ```ignore
+    /// fn steer(boids: Query<(&Transform, &mut Velocity)>, flock: Res<Flock>) {
+    ///     let mut boids = boids;
+    ///     boids.par_for_each_mut(|(at, mut velocity)| velocity.0 = flock.pull(at));
+    /// }
+    /// ```
+    pub fn par_for_each_mut<Each>(&mut self, each: Each)
+    where
+        Each: Fn(D::Item<'_>) + Sync,
+        for<'a> D::Item<'a>: Send,
+    {
+        // SAFETY: the query is held mutably, and each entity is visited once.
+        unsafe { self.par_unchecked(&each) }
+    }
+
+    /// [`par_for_each_mut`](Self::par_for_each_mut) for a query that only reads.
+    pub fn par_for_each<Each>(&self, each: Each)
+    where
+        D: ReadOnlyQueryData,
+        Each: Fn(D::Item<'_>) + Sync,
+        for<'a> D::Item<'a>: Send,
+    {
+        // SAFETY: the data is read-only, so items may alias.
+        unsafe { self.par_unchecked(&each) }
     }
 
     pub fn iter_mut(&mut self) -> QueryIter<'_, 'w, D, F> {

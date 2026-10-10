@@ -103,6 +103,46 @@ app.on_add::<Burning>(|world, entity| {
 Use a hook to keep two things in step; use a system with `Added<T>` or `Changed<T>` for work
 that can wait until its stage.
 
+`on_change` is the third hook, for a component that is written:
+
+```rust
+app.on_change::<Health>(|world, entity| {
+    let health = world.get::<Health>(entity).map_or(0.0, |health| health.0);
+    world.insert(entity, HealthBar::showing(health));
+});
+```
+
+Writing a component is only a borrow, so there is no moment to run code at; the hooks are
+told when the stage whose systems did the writing has run, before the next stage. Each
+entity is told of once however often it was written, an arrival counts as a writing, and
+what the hooks themselves write to that component is not told again.
+
+## Observers
+
+An event can be aimed at one entity, and heard at once by whatever observes that kind of
+event:
+
+```rust
+struct Hit { damage: f32 }
+
+app.observe::<Hit>(|world, entity, hit| {
+    if let Some(health) = world.get_mut::<Health>(entity) {
+        health.0 -= hit.damage;
+    }
+});
+
+// From a system:
+commands.entity(target).trigger(Hit { damage: 4.0 });
+// With the world in hand:
+world.trigger(target, Hit { damage: 4.0 });
+```
+
+`world.observe_entity::<Hit>(door, …)` listens on one entity only, after those that listen
+anywhere, and is forgotten when the entity is despawned. Observers run in the order they
+were added, with the whole world, and may trigger further events. Where `Events<T>` are
+read by systems in their stage, a frame at a time, a triggered event is heard there and
+then, by code that is told which entity it is about.
+
 ## Running at the same moment
 
 Systems that touch nothing in common run at the same moment, on several threads. Nothing has
@@ -137,13 +177,54 @@ machine: eight systems over 100,000 entities each ran 5.2 times faster on a ten-
 A panic on a worker thread is caught like any other in a debug build ([LIVE.md](LIVE.md)): the
 system is suspended, the rest of its batch finishes, and the game pauses.
 
+A system that queues commands ends its batch, so that the system after it sees them done.
+Where nothing in the stage needs to, say so, and it shares a batch like any other:
+
+```rust
+app.add_systems(Stage::Update, (spawn_sparks.commands_can_wait(), move_units, tick_timers));
+```
+
+The commands are still applied when the batch has run.
+
+## One system on many threads
+
+A system whose query covers many entities, each one's work independent of the rest, can
+share that work between the same threads:
+
+```rust
+fn steer(mut boids: Query<(&Transform, &mut Velocity)>, flock: Res<Flock>) {
+    boids.par_for_each_mut(|(at, mut velocity)| velocity.0 = flock.pull(at));
+}
+```
+
+`par_for_each` is the same for a query that only reads. The closure runs on several threads
+at once, so what it takes from outside must be shareable (a `Res`, an atomic, a lock), and
+the order entities are met in is not kept. Fewer than a few hundred entities are done where
+they stand: handing them out would cost more than doing them. Systems in one batch may each
+do this at the same moment; a thread waiting for its own shares does other queued work
+meanwhile.
+
+## One set of threads
+
+Systems, the shares of a query, and work in the background (pictures and model files being
+read, terrain being generated and meshed) all run on the same threads: one fewer than the
+machine has cores, at most seven, or `MIRA_THREADS` minus one. Work of the frame is always
+taken first, and background work is done by all the workers but one, so a level loading
+does not starve the frame of threads. `TaskPool` is the way in for background work of a
+game's own:
+
+```rust
+fn start(pool: Res<TaskPool>, found: Res<Mailbox<Path>>) {
+    pool.spawn(&found.sender, || find_a_way());   // the result arrives in the mailbox
+}
+```
+
 ## What isn't here yet
 
 - Batches are made in the order systems are written, so two systems that could share a
-  batch but have a clashing one between them don't. Queued commands end a batch; there is no
-  way yet to say that a later system needn't see them.
-- Work inside one system (a query over a million entities) is not split across threads.
-- Hooks are for components with a Rust type; a plugin can't yet hook its own.
+  batch but have a clashing one between them don't.
+- Hooks and observers are for Rust types; a plugin can't yet hook its own components or
+  observe events.
 - A condition on a tuple is asked once per system, not once for the group.
 - Plugins can order their systems ([PLUGINS.md](PLUGINS.md#order)) but can't yet give them
   run conditions.

@@ -4,6 +4,7 @@
 #     scripts/check.sh           build, test, lint, and build every example plugin
 #     scripts/check.sh --miri    also run the ECS tests under Miri (needs nightly + miri)
 #     scripts/check.sh --miri-only
+#     scripts/check.sh --tsan-only   the ECS tests under ThreadSanitizer (nightly + rust-src)
 #
 # The Haskell plugin tests skip themselves when GHC isn't installed. Set MIRA_REQUIRE_GHC=1
 # (as CI does) to make a missing GHC a failure instead.
@@ -19,8 +20,23 @@ miri() {
     MIRIFLAGS="${MIRIFLAGS:-} -Zmiri-ignore-leaks" cargo +nightly miri test -p mira_ecs
 }
 
+tsan() {
+    step "thread sanitizer"
+    # The ECS's tests again with every access to memory watched for two threads reaching
+    # it at once with no order between them. The standard library is built the same way,
+    # so what it does is seen too; that needs the nightly toolchain and its source.
+    host=$(rustc +nightly -vV | sed -n 's/^host: //p')
+    RUSTFLAGS="-Zsanitizer=thread" cargo +nightly test -p mira_ecs --lib \
+        -Zbuild-std --target "$host" --target-dir target/tsan
+}
+
 if [ "${1:-}" = "--miri-only" ]; then
     miri
+    exit 0
+fi
+
+if [ "${1:-}" = "--tsan-only" ]; then
+    tsan
     exit 0
 fi
 

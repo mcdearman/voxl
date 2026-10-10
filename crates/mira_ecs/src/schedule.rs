@@ -29,6 +29,8 @@ pub struct SystemConfig {
     conditions: Vec<BoxedCondition>,
     /// It panicked, and is left out until it is resumed or replaced.
     suspended: bool,
+    /// What it queues need not be seen by the systems that follow it in its stage.
+    commands_wait: bool,
     stats: SystemStats,
 }
 
@@ -82,6 +84,7 @@ impl SystemConfig {
             sets: Vec::new(),
             conditions: Vec::new(),
             suspended: false,
+            commands_wait: false,
             stats: SystemStats::default(),
         }
     }
@@ -260,8 +263,11 @@ impl Schedule {
     /// Whether systems after this one have to wait for it to finish entirely: it changes
     /// the world when it is done (commands), or isn't a system that can run beside others.
     fn ends_its_batch(&self, index: usize) -> bool {
-        let system = &self.systems[index].1.system;
-        !self.shareable[index] || system.access().is_none_or(Access::defers)
+        let config = &self.systems[index].1;
+        // What it queues is applied at the end of its batch in any case; unless it has said
+        // that will do, the batch ends with it so that the next system sees it done.
+        let queues = |access: &Access| access.defers() && !config.commands_wait;
+        !self.shareable[index] || config.system.access().is_none_or(queues)
     }
 
     /// Groups the systems, in running order, into batches of systems that could run at the
@@ -349,6 +355,9 @@ impl Schedule {
             }
             start = end;
         }
+        // What these systems wrote is told to whatever watches for it, before the next
+        // stage runs.
+        world.tell_of_changes();
     }
 
     /// Asks the conditions of the system at `place`, catching a panic if guarded. Returns
@@ -671,6 +680,19 @@ pub trait IntoSystems<Marker>: Sized {
         let mut configs = self.into_configs();
         for config in &mut configs {
             config.conditions.push(condition.clone().into_condition());
+        }
+        SystemConfigs(configs)
+    }
+
+    /// Says that what these queue with `Commands` need not be seen by the systems after
+    /// them in the stage: it is applied when their batch has run, as ever, but the batch no
+    /// longer ends with them, so systems that touch nothing in common with them can run at
+    /// the same moment. For a system whose commands are for a later stage or the next
+    /// frame: spawning effects, despawning what has expired.
+    fn commands_can_wait(self) -> SystemConfigs {
+        let mut configs = self.into_configs();
+        for config in &mut configs {
+            config.commands_wait = true;
         }
         SystemConfigs(configs)
     }

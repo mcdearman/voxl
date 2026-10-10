@@ -217,7 +217,8 @@ The layer Unreal's editor, saves, networking and Blueprints all stand on.
       a prefab and what it uses), with load states, `is_ready`, and unloading that follows it
 - [x] Asset processing, first part: picture files to BC7 with their smaller levels, on
       workers, cached on disk by content hash, with a limit on the cache
-- [ ] The rest of it: the textures inside model files, ASTC, meshes to a binary format
+- [x] The textures inside model files, compressed where the file is read
+- [ ] ASTC for the cards that want it; meshes to a binary format
 - [x] Skins and animations from glTF, in code (`GltfScene::spawn_animated`) and as data (a
       `Model` whose file has a skeleton gets an `Animator` and skinned parts)
 
@@ -238,8 +239,11 @@ and see it change in the running scene.
 - [x] The parallel executor: a pool of worker threads runs each batch, pinned systems stay on
       the main thread, commands are applied between batches in order; results identical to
       running in turn; clean under Miri with worker threads
-- [ ] Splitting one query's work across threads; relaxing "commands end a batch" where a
-      later system needn't see them; a ThreadSanitizer run in CI
+- [x] Splitting one query's work across threads: `Query::par_for_each` and
+      `par_for_each_mut`, on the systems' own pool, whose waiting threads now do queued work
+- [x] A ThreadSanitizer run of the ECS's tests in CI
+- [x] Relaxing "commands end a batch" where a later system needn't see them:
+      `.commands_can_wait()`
 - [x] A faster walk through the storage there is: a query guesses that an entity sits at the
       same place in each component it reads as in the one it walks, which is so for
       components spawned together. Measured with `examples/query_bench` (200,000 entities,
@@ -250,14 +254,18 @@ and see it change in the running scene.
       different orders" (about a third) and little else, for a rewrite of storage, queries
       and everything that reaches components by name; worth doing when a game shows that gap
 - [x] Hooks: run code when a component is added or removed (`on_add`, `on_remove`)
-- [ ] Observers for other events (a component changing, custom events aimed at an entity);
+- [x] Observers: `on_change` for a component that was written, told when the stage has run;
+      events aimed at an entity (`trigger`, `observe`, `observe_entity`), heard at once
+- [ ] The same from plugins;
       hooks from plugins
 - [x] Relations: any component that names another entity, with the way back kept by the
       engine (`Relation`, `Related<R>`); `Parent` and `Children` are one of them. See
       [RELATIONS.md](RELATIONS.md)
-- [ ] Relations with many targets of one kind; cleaning up when a target is despawned;
-      relations from plugins
-- [ ] One job system for systems, asset loading and voxel work
+- [x] Relations with many targets of one kind (`each_target`), and what becomes of a source
+      when its target is despawned (`WhenTargetGoes`: keep, unlink or despawn)
+- [ ] Relations from plugins
+- [x] One job system for systems, asset loading and voxel work: one pool with a queue for
+      the frame's work, taken first, and one for background work, which leaves a worker free
 
 **Exit test:** the Napoleonic demo's update time drops in proportion to cores used, with Miri
 and a thread sanitizer clean.
@@ -494,11 +502,12 @@ project grows.
 
 ## Next three steps
 
-1. The rest of Phase 1: dependencies between assets, an asset processing step with a cache,
-   skins and animations loaded from glTF through the asset server, and saving animation
-   state.
-2. The rest of Phase 2: one query's work split across threads, observers, relations with
-   many targets and their cleanup, and one job system under systems, assets and voxels.
-3. Then Phase 3, the GPU-driven renderer. In the app, the first run of the agent against
-   Claude Code is still to be made by hand, and the panels that wait on engine systems
-   (materials, animation, particles, audio, navigation) come as those systems do.
+1. Phase 3, the GPU-driven renderer: the frame as a graph of passes, culling and drawing
+   driven from the GPU, clustered lights, and materials as data.
+2. What Phases 1 and 2 leave: hooks, observers and relations from plugins; meshes in a
+   binary form and ASTC; table storage if a game shows the need. The Paris demo saved to a
+   scene and loaded back is still Phase 1's exit test, and waits on its assets going
+   through the asset server.
+3. In the app: the first run of the agent against Claude Code, made by hand, and the panels
+   that wait on engine systems (materials, animation, particles, audio, navigation) as
+   those systems arrive.

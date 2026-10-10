@@ -101,6 +101,15 @@ impl EntityCommands<'_> {
         self
     }
 
+    /// Aims an event at this entity when the commands are applied. See [`World::trigger`].
+    pub fn trigger<E: Send + Sync + 'static>(&mut self, event: E) -> &mut Self {
+        let entity = self.entity;
+        self.queue.push(move |world| {
+            world.trigger(entity, event);
+        });
+        self
+    }
+
     /// Queues arbitrary work on this entity that needs `&mut World`.
     pub fn add(&mut self, command: impl FnOnce(&mut World, Entity) + Send + 'static) -> &mut Self {
         let entity = self.entity;

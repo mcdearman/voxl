@@ -27,10 +27,41 @@ use crate::{
     ecs::{Component, Entity, World},
 };
 
-/// A component that relates its entity to another one.
+/// What becomes of the entities that name an entity which is despawned.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WhenTargetGoes {
+    /// Nothing: they go on naming an entity that is no more. For a link whose loss the
+    /// game wants to see and settle itself.
+    Keep,
+    /// The link is taken off them (or, where a component names several, that one name).
+    Unlink,
+    /// They are despawned too, and so on down: what belongs to a thing goes with it.
+    Despawn,
+}
+
+/// A component that relates its entity to another one, or to several.
 pub trait Relation: Component {
-    /// The entity this one is related to.
+    /// The entity this one is related to. A relation that names several gives the first,
+    /// and says the rest through [`each_target`](Self::each_target).
     fn target(&self) -> Entity;
+
+    /// Calls `each` with every entity this one is related to: the one `target`, unless the
+    /// component holds a list of them.
+    fn each_target(&self, each: &mut dyn FnMut(Entity)) {
+        each(self.target());
+    }
+
+    /// What becomes of this component's entity when one it names is despawned. Settled the
+    /// next time the relation is brought up to date, not at the moment of the despawn.
+    const WHEN_TARGET_GOES: WhenTargetGoes = WhenTargetGoes::Keep;
+
+    /// Under [`WhenTargetGoes::Unlink`], takes `gone` out of what this names, and says
+    /// whether anything is left to keep the component for. A relation that names one entity
+    /// has nothing left; one that holds a list takes the name out of it.
+    fn unlink(&mut self, gone: Entity) -> bool {
+        let _ = gone;
+        false
+    }
 }
 
 /// The entities whose `R` names this one, in entity order. The engine keeps it up to date
@@ -120,7 +151,13 @@ impl<R> PartialEq for Links<R> {
 fn by_target<R: Relation>(world: &mut World) -> HashMap<Entity, Vec<Entity>> {
     let mut targets: HashMap<Entity, Vec<Entity>> = HashMap::new();
     for (source, relation) in world.query::<(Entity, &R)>().iter() {
-        targets.entry(relation.target()).or_default().push(source);
+        relation.each_target(&mut |target| {
+            let sources = targets.entry(target).or_default();
+            // A list may name an entity twice; it is related to it once.
+            if sources.last() != Some(&source) {
+                sources.push(source);
+            }
+        });
     }
     targets
 }
@@ -141,8 +178,10 @@ pub fn sync<R: Relation>(world: &mut World) {
         for &source in relations.entities() {
             let ticks = relations.ticks(source).expect("listed, so present");
             links.newest_change = links.newest_change.max(ticks.changed);
-            let target = relations.get(source).expect("listed, so present").target();
-            links.dangling += !world.contains_entity(target) as usize;
+            let relation = relations.get(source).expect("listed, so present");
+            relation.each_target(&mut |target| {
+                links.dangling += !world.contains_entity(target) as usize;
+            });
         }
     }
     if world.get_resource::<Links<R>>() == Some(&links) {
@@ -150,7 +189,31 @@ pub fn sync<R: Relation>(world: &mut World) {
     }
     world.insert_resource(links);
 
-    let targets = by_target::<R>(world);
+    let mut targets = by_target::<R>(world);
+    // Settle what named an entity that has gone.
+    if R::WHEN_TARGET_GOES != WhenTargetGoes::Keep {
+        let gone: Vec<Entity> = targets.keys().filter(|target| !world.contains_entity(**target)).copied().collect();
+        for target in &gone {
+            for source in targets.remove(target).unwrap_or_default() {
+                match R::WHEN_TARGET_GOES {
+                    WhenTargetGoes::Keep => {}
+                    WhenTargetGoes::Unlink => {
+                        let kept = world.get_mut::<R>(source).is_some_and(|relation| relation.unlink(*target));
+                        if !kept {
+                            world.remove::<R>(source);
+                        }
+                    }
+                    // What named the source goes with it, and so on down.
+                    WhenTargetGoes::Despawn => {
+                        despawn_with_related::<R>(world, source);
+                    }
+                }
+            }
+        }
+        if !gone.is_empty() {
+            targets = by_target::<R>(world);
+        }
+    }
     // Take `Related` away from entities that nothing names any more.
     let stale: Vec<Entity> = world
         .query::<(Entity, &Related<R>)>()
@@ -250,6 +313,84 @@ mod tests {
         fn target(&self) -> Entity {
             self.0
         }
+    }
+
+    /// Belongs to a squad, and goes when the squad does.
+    struct InSquad(Entity);
+    impl Component for InSquad {}
+    impl Relation for InSquad {
+        fn target(&self) -> Entity {
+            self.0
+        }
+        const WHEN_TARGET_GOES: WhenTargetGoes = WhenTargetGoes::Despawn;
+    }
+
+    /// Aims at one thing, and at nothing once that is gone.
+    struct Aiming(Entity);
+    impl Component for Aiming {}
+    impl Relation for Aiming {
+        fn target(&self) -> Entity {
+            self.0
+        }
+        const WHEN_TARGET_GOES: WhenTargetGoes = WhenTargetGoes::Unlink;
+    }
+
+    /// Likes several others at once.
+    struct Likes(Vec<Entity>);
+    impl Component for Likes {}
+    impl Relation for Likes {
+        fn target(&self) -> Entity {
+            self.0[0]
+        }
+        fn each_target(&self, each: &mut dyn FnMut(Entity)) {
+            self.0.iter().copied().for_each(each);
+        }
+        const WHEN_TARGET_GOES: WhenTargetGoes = WhenTargetGoes::Unlink;
+        fn unlink(&mut self, gone: Entity) -> bool {
+            self.0.retain(|liked| *liked != gone);
+            !self.0.is_empty()
+        }
+    }
+
+    #[test]
+    fn what_named_an_entity_that_went_is_settled_as_its_relation_says() {
+        let mut app = App::new();
+        app.add_relation::<InSquad>().add_relation::<Aiming>().add_relation::<Follows>();
+        let squad = app.world.spawn(());
+        let soldier = app.world.spawn(InSquad(squad));
+        // What belongs to the soldier in the same way goes when the soldier does.
+        let pack = app.world.spawn(InSquad(soldier));
+        let archer = app.world.spawn(Aiming(squad));
+        let dog = app.world.spawn(Follows(squad));
+        app.update();
+        assert_eq!(related::<InSquad>(&app.world, squad), [soldier]);
+
+        app.world.despawn(squad);
+        app.update();
+        assert!(!app.world.contains_entity(soldier) && !app.world.contains_entity(pack));
+        // The archer is still there, aiming at nothing; the dog still follows what is gone.
+        assert!(app.world.contains_entity(archer) && !app.world.has::<Aiming>(archer));
+        assert!(app.world.get::<Follows>(dog).is_some_and(|follows| follows.0 == squad));
+    }
+
+    #[test]
+    fn a_relation_may_name_several_entities() {
+        let mut app = App::new();
+        app.add_relation::<Likes>();
+        let (ann, ben, cat) = (app.world.spawn(()), app.world.spawn(()), app.world.spawn(()));
+        app.world.insert(ann, Likes(vec![ben, cat, ben]));
+        app.world.insert(ben, Likes(vec![cat]));
+        app.update();
+        assert_eq!(related::<Likes>(&app.world, ben), [ann]);
+        assert_eq!(related::<Likes>(&app.world, cat), [ann, ben]);
+        assert!(related::<Likes>(&app.world, ann).is_empty());
+
+        // Cat goes: Ann still likes Ben, and Ben, liking no one now, has no `Likes` left.
+        app.world.despawn(cat);
+        app.update();
+        assert_eq!(app.world.get::<Likes>(ann).map(|likes| likes.0.clone()), Some(vec![ben, ben]));
+        assert!(!app.world.has::<Likes>(ben));
+        assert_eq!(related::<Likes>(&app.world, ben), [ann]);
     }
 
     fn owed(app: &App, lender: Entity) -> Vec<Entity> {
