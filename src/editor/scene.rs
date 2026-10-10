@@ -87,6 +87,22 @@ pub fn on_ground(ray: Ray, height: f32) -> Option<Vec3> {
     (along > 0.0).then(|| ray.from + ray.along * along)
 }
 
+/// How far along a line (from `start`, in the direction `axis`, in lengths of `axis`) the
+/// point is that comes nearest a ray: where on a handle the pointer is. Nothing if the
+/// line runs straight at the eye, where the pointer can't say how far along it is.
+pub fn along(ray: Ray, start: Vec3, axis: Vec3) -> Option<f32> {
+    // The standard nearest points of two lines.
+    let between = start - ray.from;
+    let (aa, ab, bb) = (
+        axis.dot(axis),
+        axis.dot(ray.along),
+        ray.along.dot(ray.along),
+    );
+    let (ac, bc) = (axis.dot(between), ray.along.dot(between));
+    let apart = aa * bb - ab * ab;
+    (apart.abs() > 1e-6 * aa * bb).then(|| (ab * bc - bb * ac) / apart)
+}
+
 /// The part of the picture a box covers, as its left, top, right and bottom, if all of it
 /// is in front of the camera.
 pub fn covers(
@@ -204,6 +220,29 @@ mod tests {
             along: Vec3::Y,
         };
         assert_eq!(on_ground(up, -1.0), None, "the ground is behind it");
+    }
+
+    #[test]
+    fn the_pointer_says_how_far_along_a_handle_it_is() {
+        // Looking north from the south, level: a handle running east.
+        let eye = Vec3::new(0.0, 1.0, 10.0);
+        let toward = |point: Vec3| Ray {
+            from: eye,
+            along: point - eye,
+        };
+        let start = Vec3::new(-1.0, 1.0, 0.0);
+        for reach in [0.0, 0.5, 3.0, -2.0] {
+            let found = along(toward(start + Vec3::X * reach), start, Vec3::X).unwrap();
+            assert!((found - reach).abs() < 1e-4, "{reach}: {found}");
+        }
+        // A longer axis counts in its own lengths.
+        let found = along(toward(Vec3::new(3.0, 1.0, 0.0)), start, Vec3::X * 2.0).unwrap();
+        assert!((found - 2.0).abs() < 1e-4);
+        // A handle pointing straight at the eye can't be read.
+        assert_eq!(
+            along(toward(Vec3::new(0.0, 1.0, 0.0)), eye + Vec3::NEG_Z, Vec3::Z),
+            None
+        );
     }
 
     #[test]
