@@ -23,7 +23,7 @@ mod volumetric;
 use glam::{Mat4, Vec2, Vec3, Vec4};
 
 pub use environment::{direction_to_uv, uv_to_direction, Environment};
-pub use gltf_scene::{GltfPart, GltfScene};
+pub use gltf_scene::{GltfPart, GltfScene, Imported};
 pub use gpu::{
     main_depth_state, main_multisample, Gpu, Targets, DEPTH_CLEAR, DEPTH_COMPARE, DEPTH_FORMAT,
     HDR_FORMAT, MSAA_SAMPLES,
@@ -1053,6 +1053,7 @@ impl Plugin for RenderPlugin {
         app.register_type::<Camera>()
             .register_type::<DirectionalLight>()
             .register_type::<Mesh3d>()
+            .register_type::<crate::asset_server::Model>()
             .register_type::<Material>()
             .register_type::<Lods>()
             .register_type::<NotShadowCaster>()
@@ -1072,7 +1073,11 @@ impl Plugin for RenderPlugin {
             .init_resource::<AssetServer>()
             .add_systems(
                 Stage::First,
-                (shaders::reload_changed, crate::asset_server::update_asset_server),
+                (
+                    shaders::reload_changed,
+                    crate::asset_server::update_asset_server,
+                    crate::asset_server::show_models,
+                ),
             )
             .init_resource::<RenderFrame>()
             .init_resource::<VolumetricLight>()

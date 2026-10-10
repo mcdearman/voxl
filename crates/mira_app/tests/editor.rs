@@ -310,10 +310,17 @@ fn the_app_is_worked_by_clicking_on_it() {
         .get::<Name>(placed)
         .expect("named for its file");
     assert_eq!(name.0, "hen_white");
-    assert!(
-        window.app().game().world.entity_count() > entities + 1,
-        "with its parts"
-    );
+    // Its file is read on a worker: the entity is there at once, its parts a little after.
+    assert_eq!(window.app().game().world.entity_count(), entities + 1);
+    let started = std::time::Instant::now();
+    while window.app().game().world.entity_count() == entities + 1 {
+        assert!(
+            started.elapsed() < Duration::from_secs(20),
+            "the model did not arrive"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+        window.frame(TICK, 1.0);
+    }
     window.frame(TICK, 1.0);
     if let Ok(path) = std::env::var("MIRA_EDITOR_SHOT") {
         window.app_mut().update(Message::Panel("Assets".to_owned()));

@@ -1,6 +1,6 @@
 # Hot reload
 
-Three kinds of thing can be changed while a mira app is running. Each is watched on disk,
+Four kinds of thing can be changed while a mira app is running. Each is watched on disk,
 reloaded a moment after it is saved, and left as it was if the new version is broken.
 
 | What | How to use it | When it is on |
@@ -8,6 +8,7 @@ reloaded a moment after it is saved, and left as it was if the new version is br
 | Gameplay code | Write it as a [native plugin](PLUGINS.md) | Always, unless `app.native_plugins().hot_reload = false` |
 | Shaders | Name them with `shader!` instead of `include_str!` | Debug builds; `MIRA_HOT_SHADERS=1` or `=0` overrides |
 | Textures | Load them through the `AssetServer` | Debug builds; `AssetServer::hot_reload` overrides |
+| Model files | Show them with a `Model` component | The same as textures |
 
 ## Shaders
 
@@ -52,3 +53,14 @@ fn setup(mut server: ResMut<AssetServer>, mut images: ResMut<Assets<Image>>) {
 Images loaded through the `AssetServer` are watched. When the file is saved again, the image is
 decoded on a worker thread and uploaded, and every material using it is rebuilt. A file that
 can't be decoded is reported and the old image stays. See [ASSETS.md](ASSETS.md).
+
+## Model files
+
+```rust
+commands.spawn((Transform::IDENTITY, Model::new("models/house.glb")));
+```
+
+A model file shown by a `Model` component is watched. When it is saved again (exported from
+Blender over the old file, say) it is read on a worker thread, and each entity showing it
+has its parts replaced by the new ones. A file that can't be read is reported and the old
+parts stay.

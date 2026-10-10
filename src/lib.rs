@@ -30,7 +30,7 @@ pub use glam;
 pub mod prelude {
     pub use crate::{
         app::{App, AppExit, DefaultPlugins, Plugin, Stage},
-        asset_server::AssetServer,
+        asset_server::{AssetServer, Model},
         assets::{Assets, Handle},
         ecs::prelude::*,
         input::{ButtonInput, KeyCode, Mouse, MouseButton},

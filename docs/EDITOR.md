@@ -66,7 +66,7 @@ its top; panels meet each other at single lines, which can be dragged to resize.
 | Panel | What it shows |
 |---|---|
 | Place | Things to put in the scene: a cube, a ball, a floor, a sun, a camera, an empty entity to hang others on. Each goes on the ground in the middle of the picture, named and chosen. Also Duplicate and Delete for the chosen entity (Cmd/Ctrl+D; Delete or Backspace), which take everything under it along, and **Save as prefab**, which writes the chosen entity and what is under it to `prefabs/<its name>.json` to be placed again from Assets. All of it can be taken back |
-| Assets | The project's models, pictures, and saved scenes and prefabs, by folder, with a box to narrow them. **Place** puts a model in the scene (an entity named for the file with the model's parts under it) or adds a saved scene or prefab to it, on the ground in the middle of the picture. Found when "Look again" is pressed |
+| Assets | The project's models, pictures, and saved scenes and prefabs, by folder, with a box to narrow them. **Place** puts a model in the scene (an entity named for the file, a `Model`: the file is read in the background, its parts appear under the entity when it has been, and again when the file is saved) or adds a saved scene or prefab to it, on the ground in the middle of the picture. Found when "Look again" is pressed |
 | Log | What the engine and the game have logged, newest at the bottom, by level; a box to show only lines with some text in them |
 | Console | A line to type anything the debug connection understands (`pause`, `entities with=mira.Camera`, `signal_set name=open value=true`), with the answers |
 | Profiler | The last frames as a graph, the usual and the worst frame, the time each stage took, and the slowest systems |

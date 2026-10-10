@@ -610,10 +610,12 @@ impl Editor {
                 }
             }
             kept.push(Value::Map(parts));
+            // What the engine makes again by itself (the parts of a model) is not kept.
             next.extend(
                 mira::relation::related::<Parent>(world, entity)
                     .iter()
-                    .rev(),
+                    .rev()
+                    .filter(|under| world.get::<NotSaved>(**under).is_none()),
             );
         }
         Value::List(kept)
@@ -781,8 +783,8 @@ impl Editor {
     }
 
     /// Puts a model file in the scene, on the ground in the middle of the picture: an
-    /// entity named for the file, with each part of the model under it. Says in the bar
-    /// why not, if it can't be read.
+    /// entity named for the file, which the engine fills with the model's parts once the
+    /// file has been read. The window is not held up while it is.
     fn put_in_model(&mut self, name: &str) {
         let at = self.before_the_eye();
         let world = &mut self.game.world;
@@ -793,42 +795,15 @@ impl Editor {
             self.told = "this game has nowhere to keep models".to_owned();
             return;
         }
-        // The file is read here, on the spot, the first time it is asked for.
-        let model = world.resource_scope(|world, server: &mut AssetServer| {
-            world.resource_scope(|world, meshes: &mut Assets<Mesh>| {
-                world.resource_scope(|_, images: &mut Assets<mira::render::Image>| {
-                    server.load_gltf(name, meshes, images)
-                })
-            })
-        });
-        let model = match model {
-            Ok(model) => model,
-            Err(why) => {
-                self.told = format!("{name} could not be read: {why:#}");
-                return;
-            }
-        };
         let called = std::path::Path::new(name)
             .file_stem()
             .map_or(name.to_owned(), |stem| stem.to_string_lossy().into_owned());
-        // Standing on the ground: lifted by however far it reaches below its own middle.
-        let lifted = at - Vec3::Y * model.min.y.min(0.0);
-        let root = world.spawn((Transform::from_translation(lifted), Name::new(called)));
-        for part in &model.parts {
-            let (scale, rotation, translation) = part.transform.to_scale_rotation_translation();
-            world.spawn((
-                Transform {
-                    translation,
-                    rotation,
-                    scale,
-                },
-                Mesh3d(part.mesh),
-                part.material,
-                Parent(root),
-            ));
-        }
-        // So that what is under it is known at once, to be kept with it and shown.
-        mira::relation::sync::<Parent>(world);
+        let root = world.spawn((
+            Transform::from_translation(at),
+            Name::new(called),
+            mira::asset_server::Model::new(name),
+        ));
+        self.told = format!("reading {name}");
         self.chosen = Some(root);
         let made = self.whole(root);
         self.remember(root, None, Some(made));

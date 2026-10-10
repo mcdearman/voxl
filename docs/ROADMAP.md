@@ -209,7 +209,9 @@ The layer Unreal's editor, saves, networking and Blueprints all stand on.
       [ASSETS.md](ASSETS.md)
 - [x] Unloading assets nothing refers to, by tracing reflected components (handles stay
       plain ids): `AssetServer::unload_unused`
-- [ ] Model files loaded off the main thread and watched, dependencies between assets
+- [x] Model files read on a worker and watched: a `Model` component names the file, its
+      parts appear under the entity when read and again when the file is saved
+- [ ] Dependencies between assets
 - [ ] Asset processing: textures to BC7/ASTC with mips, meshes to a binary format, cached by
       content hash
 - [ ] Load skins and animations from glTF
