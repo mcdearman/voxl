@@ -147,10 +147,12 @@ game in the window, so it sees the frame, reads every entity and signal, and can
 step and change the game, the same as an agent outside ([MCP.md](MCP.md)). It may also read
 the project's files.
 
-What it can't do yet: anything that needs a yes from you, such as changing a file or
-running a command, is refused: Neo now has the row for asking, but how Claude Code hands
-such a question to the program that runs it is not written down for its command line, so
-that part waits on finding out.
+When it wants to do something that needs a yes from you, such as changing a file or running
+a command, the question appears in the conversation with **Allow** and **Refuse**; it waits
+up to ten minutes for the answer and takes no answer as a no. (Behind this: Claude Code is
+told to put such questions to mira's `mira_approve` tool, which leaves the question in the
+game for the app to show.) Each thing you ask also carries, unseen, which entity is chosen
+in the app and what it is made of, so that "it" and "this" mean something.
 
 The reading of Claude Code's output was written from its documentation and tested against
 a stand-in program that prints the same lines; it has not yet been run against Claude Code

@@ -80,6 +80,8 @@ pub enum Message {
     Ask,
     /// The agent is told to stop.
     Stop,
+    /// Something the agent asked leave for is allowed, or refused.
+    Approve(u64, bool),
     /// A use of a tool in the conversation was opened, or shut.
     Unfolded(String, bool),
     /// A drag on a field began, or ended: what is changed in between is one change.
@@ -450,6 +452,9 @@ pub struct Editor {
     desktop: Desktop,
     agent: Box<dyn Agent>,
     said: Vec<Entry<String, Message>>,
+    /// The questions from the agent that are shown in the conversation and not yet
+    /// answered: each by its number, and where in the conversation it is.
+    asks: Vec<(u64, usize)>,
     writing: Document,
     working: bool,
     heard: (Sender<Heard>, Receiver<Heard>),
@@ -505,6 +510,7 @@ impl Editor {
             // By the app's name, not the program's, so that an example of it is the same app.
             desktop: Desktop::with_prefs_file(AppPrefs::path_for("mira")),
             agent: Box::new(NoAgent),
+            asks: Vec::new(),
             said: Vec::new(),
             writing: Document::new(""),
             working: false,
@@ -991,9 +997,59 @@ impl Editor {
         self.said.push(Entry::Said(Said::new(who, text.into())));
     }
 
+    /// What the agent is told with each thing asked, without its being typed: what is
+    /// chosen in the app, so that "this" and "it" mean something.
+    fn context(&self) -> String {
+        let Some(entity) = self.chosen else {
+            return String::new();
+        };
+        let named = self.lists.names.iter().find(|(named, _)| *named == entity);
+        let parts: Vec<&str> = self
+            .lists
+            .chosen
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .collect();
+        format!(
+            "(In the mira app, the entity chosen is {} (entity id {}), which has: {}.)\n\n",
+            named.map_or("unnamed".to_owned(), |(_, name)| format!("\"{name}\"")),
+            entity.to_bits(),
+            parts.join(", "),
+        )
+    }
+
+    /// Shows in the conversation what the agent has asked leave for and is still waiting
+    /// on, each with the buttons to allow or refuse it. Says whether anything was added.
+    fn hear_asks(&mut self) -> bool {
+        let waiting: Vec<mira::remote::Approval> = self
+            .game
+            .world
+            .get_resource::<mira::remote::Approvals>()
+            .map_or(Vec::new(), |approvals| {
+                approvals.waiting().cloned().collect()
+            });
+        let mut any = false;
+        for asked in waiting {
+            if self.asks.iter().any(|(id, _)| *id == asked.id) {
+                continue;
+            }
+            any = true;
+            self.asks.push((asked.id, self.said.len()));
+            self.said.push(Entry::Ask(Asking {
+                what: format!("The agent wants to use {}", asked.what),
+                detail: asked.detail,
+                choices: vec![
+                    ("Allow".to_owned(), Message::Approve(asked.id, true)),
+                    ("Refuse".to_owned(), Message::Approve(asked.id, false)),
+                ],
+            }));
+        }
+        any
+    }
+
     /// Takes in what the agent has said since last looked. Says whether there was anything.
     fn listen(&mut self) -> bool {
-        let mut any = false;
+        let mut any = self.hear_asks();
         while let Ok(heard) = self.heard.1.try_recv() {
             any = true;
             match heard {
@@ -2422,7 +2478,27 @@ impl App for Editor {
                 self.writing = Document::new("");
                 self.note(Speaker::You, asked.clone());
                 self.working = true;
-                self.agent.ask(&asked, self.heard.0.clone());
+                let told = format!("{}{asked}", self.context());
+                self.agent.ask(&told, self.heard.0.clone());
+            }
+            Message::Approve(id, allowed) => {
+                let Some(at) = self.asks.iter().position(|(asked, _)| *asked == id) else {
+                    return;
+                };
+                let (_, place) = self.asks.remove(at);
+                if let Some(approvals) = self.resource::<mira::remote::Approvals>() {
+                    approvals.answer(id, allowed);
+                }
+                // The question gives way to a line saying how it was answered.
+                if let Some(Entry::Ask(asked)) = self.said.get(place) {
+                    let wanted = asked.what.trim_start_matches("The agent wants to use ");
+                    let said = if allowed {
+                        format!("Allowed: {wanted}")
+                    } else {
+                        format!("Refused: {wanted}")
+                    };
+                    self.said[place] = Entry::Said(Said::new(Speaker::Note, said));
+                }
             }
             Message::Unfolded(id, open) => {
                 if let Some(tool) = self.tool(&id) {
@@ -3849,6 +3925,63 @@ mod tests {
         let mut named = Vec::new();
         panels::assets_in(&value, &mut named);
         assert_eq!(named, ["mesh  hen.glb#mesh0", "image  wall.png"]);
+    }
+
+    #[test]
+    fn the_agent_asks_leave_and_is_told_what_is_chosen() {
+        use mira::prelude::*;
+        use mira::remote::Approvals;
+        /// Keeps what it was asked, to be looked at.
+        struct Listening(std::rc::Rc<std::cell::RefCell<Vec<String>>>);
+        impl Agent for Listening {
+            fn ask(&mut self, asked: &str, _: Sender<Heard>) {
+                self.0.borrow_mut().push(asked.to_owned());
+            }
+            fn stop(&mut self) {}
+        }
+        let mut game = mira::app::App::new();
+        game.add_plugins(mira::transform::TransformPlugin);
+        let tank = game.world.spawn((Transform::IDENTITY, Name::new("Tank")));
+        let told = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let mut editor = Editor::new(game).with_agent(Listening(told.clone()));
+
+        // With nothing chosen, the agent hears only what was typed; with something chosen,
+        // which thing "it" is comes first. The conversation shows only what was typed.
+        editor.writing = Document::new("What is in the scene?");
+        editor.update(Message::Ask);
+        editor.working = false;
+        editor.update(Message::Chosen(tank));
+        editor.writing = Document::new("Make it red.");
+        editor.update(Message::Ask);
+        let told = told.borrow();
+        assert_eq!(told[0], "What is in the scene?");
+        assert!(told[1].contains("\"Tank\"") && told[1].contains(&tank.to_bits().to_string()));
+        assert!(told[1].contains("mira.Transform") && told[1].ends_with("Make it red."));
+        assert_eq!(editor.said()[1].text, "Make it red.");
+
+        // A question from the agent's tools is shown once, with its buttons, and answered
+        // from there; then it is a line in the conversation.
+        editor.game_mut().world.init_resource::<Approvals>();
+        let id = editor
+            .game_mut()
+            .world
+            .resource_mut::<Approvals>()
+            .ask("Edit", "src/main.rs");
+        assert!(editor.listen() && !editor.listen());
+        let Some(Entry::Ask(asked)) = editor.said.last() else {
+            panic!("the question is in the conversation");
+        };
+        assert_eq!(asked.what, "The agent wants to use Edit");
+        assert_eq!(asked.choices.len(), 2);
+        editor.update(Message::Approve(id, true));
+        assert_eq!(editor.said().last().unwrap().text, "Allowed: Edit");
+        let approvals = editor.game().world.resource::<Approvals>();
+        assert_eq!(approvals.waiting().count(), 0, "it has its answer");
+        // Answered twice, or one that was never asked: nothing more.
+        let length = editor.said.len();
+        editor.update(Message::Approve(id, false));
+        editor.update(Message::Approve(99, true));
+        assert_eq!(editor.said.len(), length);
     }
 
     #[test]

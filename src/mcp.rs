@@ -43,6 +43,14 @@ const TOOLS: &[Tool] = &[
         arguments: &[],
     },
     Tool {
+        command: "approve",
+        about: "Asks the person at the engine app whether something may be done, and waits for their answer. For an agent run from the app, whose requests to change files or run commands are put to them this way.",
+        arguments: &[
+            "tool_name: string: what is wanted, by the name of the tool that would do it",
+            "input?: object: what that tool would be given",
+        ],
+    },
+    Tool {
         command: "status",
         about: "The game at a glance: frame, seconds of game time, time scale, whether it is paused, how many systems have failed, how many entities there are. Start here.",
         arguments: &[],
@@ -432,6 +440,17 @@ fn call(game: &mut dyn Game, name: &str, arguments: Option<&Value>) -> Value {
             Err(why) => content(vec![words(why)], true),
         };
     }
+    if tool.command == "approve" {
+        let Some(wanted) = argument("tool_name") else {
+            return content(vec![words("this tool needs `tool_name`")], true);
+        };
+        let input = arguments
+            .and_then(|arguments| arguments.field("input"))
+            .cloned()
+            .unwrap_or(Value::Map(Vec::new()));
+        let answer = approve(game, wanted, &input, std::time::Duration::from_secs(600));
+        return content(vec![words(json::to_line(&answer))], false);
+    }
     if tool.command == "log" {
         let lines = arguments
             .and_then(|arguments| arguments.field("lines"))
@@ -473,6 +492,50 @@ fn call(game: &mut dyn Game, name: &str, arguments: Option<&Value>) -> Value {
 
 /// Waits until the game has run the frames it was asked to step, and returns its status.
 /// Gives up after a while and returns the status as it is, with `stepping` still above zero.
+/// Puts a request to the person at the app and waits, for no longer than `patience`, for
+/// their yes or no. The answer is in the shape an agent's permission prompt expects:
+/// `{"behavior": "allow", "updatedInput": …}` or `{"behavior": "deny", "message": …}`.
+/// Anything that goes wrong is a no.
+fn approve(
+    game: &mut dyn Game,
+    wanted: &str,
+    input: &Value,
+    patience: std::time::Duration,
+) -> Value {
+    let deny = |why: String| map(vec![("behavior", text("deny")), ("message", text(why))]);
+    let asked = game.ask(&map(vec![
+        ("cmd", text("approval_ask")),
+        ("what", text(wanted)),
+        ("detail", text(json::to_string(input))),
+    ]));
+    let id = match asked.as_ref().map(|asked| asked.field("id").cloned()) {
+        Ok(Some(id)) => id,
+        Ok(None) => return deny("the game did not take the question".to_owned()),
+        Err(why) => return deny(format!("the question could not be put: {why}")),
+    };
+    let after = map(vec![("cmd", text("approval_answer")), ("id", id)]);
+    let started = std::time::Instant::now();
+    loop {
+        match game.ask(&after) {
+            Ok(answer) if answer.field("answered") == Some(&Value::Bool(true)) => {
+                return if answer.field("allowed") == Some(&Value::Bool(true)) {
+                    map(vec![
+                        ("behavior", text("allow")),
+                        ("updatedInput", input.clone()),
+                    ])
+                } else {
+                    deny("refused by the person at the mira app".to_owned())
+                };
+            }
+            Ok(_) if started.elapsed() < patience => {
+                std::thread::sleep(std::time::Duration::from_millis(150));
+            }
+            Ok(_) => return deny("nobody at the mira app answered in time".to_owned()),
+            Err(why) => return deny(format!("the answer could not be had: {why}")),
+        }
+    }
+}
+
 fn wait_for_steps(game: &mut dyn Game) -> Result<Value, String> {
     let status = map(vec![("cmd", text("status"))]);
     let started = std::time::Instant::now();
@@ -753,6 +816,37 @@ mod tests {
             shot.get_path("content.0.data"),
             Some(&text(base64("\u{89}PNG fake 640".as_bytes())))
         );
+    }
+
+    #[test]
+    fn an_agent_asks_the_person_at_the_app_and_takes_their_answer() {
+        use crate::remote::Approvals;
+        let mut game = Local(App::new());
+        let input = json::parse(r#"{"file_path": "src/main.rs"}"#).unwrap();
+        // Nobody answers: it is a no, and says why.
+        let unanswered = approve(&mut game, "Edit", &input, std::time::Duration::ZERO);
+        assert_eq!(unanswered.field("behavior"), Some(&text("deny")));
+        // Answered beforehand for the test's sake: the question just asked is the newest.
+        let answer_next = |game: &mut Local, allowed: bool| {
+            let approvals = game.0.world.resource_mut::<Approvals>();
+            let id = approvals.ask("Bash", "ls");
+            approvals.answer(id, allowed);
+            id
+        };
+        let id = answer_next(&mut game, true);
+        let after = map(vec![
+            ("cmd", text("approval_answer")),
+            ("id", Value::Int(id as i64)),
+        ]);
+        assert_eq!(
+            game.ask(&after).unwrap().field("allowed"),
+            Some(&Value::Bool(true))
+        );
+        // Through the tool: the question waits in the game, where the app finds it.
+        let (said, failed) = tool(&mut game, "mira_approve", "{}");
+        assert!(failed && said[0].contains("tool_name"));
+        let waiting = game.0.world.resource::<Approvals>().waiting().count();
+        assert_eq!(waiting, 1, "the unanswered one from before is still there");
     }
 
     #[test]
