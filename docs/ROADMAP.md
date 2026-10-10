@@ -259,8 +259,9 @@ and see it change in the running scene.
 - [x] Relations: any component that names another entity, with the way back kept by the
       engine (`Relation`, `Related<R>`); `Parent` and `Children` are one of them. See
       [RELATIONS.md](RELATIONS.md)
-- [ ] Relations with many targets of one kind; cleaning up when a target is despawned;
-      relations from plugins
+- [x] Relations with many targets of one kind (`each_target`), and what becomes of a source
+      when its target is despawned (`WhenTargetGoes`: keep, unlink or despawn)
+- [ ] Relations from plugins
 - [ ] One job system for systems, asset loading and voxel work
 
 **Exit test:** the Napoleonic demo's update time drops in proportion to cores used, with Miri
