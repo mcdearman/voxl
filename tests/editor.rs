@@ -94,10 +94,10 @@ fn the_app_is_worked_by_clicking_on_it() {
     );
 
     // The bar's first button pauses the game, and then resumes it.
-    window.click(Point::new(43.0, 73.0));
+    window.click(Point::new(29.0, 71.0));
     window.frame(TICK, 1.0);
     assert!(paused(&window), "Pause was pressed");
-    window.click(Point::new(43.0, 73.0));
+    window.click(Point::new(29.0, 71.0));
     window.frame(TICK, 1.0);
     assert!(!paused(&window), "Resume was pressed");
 
@@ -126,7 +126,7 @@ fn the_app_is_worked_by_clicking_on_it() {
             .x
     };
     let before = x(&window);
-    let field = Point::new(920.0, 509.0);
+    let field = Point::new(930.0, 523.0);
     window.event(Event::PointerMoved { pos: field });
     window.event(Event::PointerPressed {
         pos: field,
@@ -197,7 +197,7 @@ fn the_app_is_worked_by_clicking_on_it() {
     window.frame(TICK, 1.0);
     let child = window.app().chosen().expect("the row that was moved");
     assert_eq!((child.index(), parent_of(&window, child)), (6, Some(5)));
-    drag(&mut window, row(4), Point::new(950.0, 642.0));
+    drag(&mut window, row(4), Point::new(950.0, 668.0));
     assert_eq!(
         parent_of(&window, child),
         Some(4),
@@ -216,7 +216,7 @@ fn the_app_is_worked_by_clicking_on_it() {
     }
 
     // The bar's Settings button opens the panel every Neo app has, over the rest.
-    window.click(Point::new(554.0, 73.0));
+    window.click(Point::new(1071.0, 71.0));
     window.frame(TICK, 1.0);
     assert!(window.app().settings_open());
     if let Ok(path) = std::env::var("MIRA_EDITOR_SHOT") {

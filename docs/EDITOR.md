@@ -36,6 +36,16 @@ terms. "Mouselook" holds and hides the pointer for games that turn with the mous
 lets go). The bar follows the game, so a game paused from outside, by an agent say, shows as
 paused. Everything else on this page is still to come.
 
+### How it looks
+
+The app is a Neo app and looks like one: it follows the appearance set for the Neo desktop
+(light or dark, the accent, corners), and its window is glass, translucent with what is
+behind it blurred. Glass is the app's default; **Settings** (the gear at the right of the
+tool bar, or Cmd/Ctrl+comma) has the switch to make the window solid, and the choice is
+kept. The tool bar is the one part that is mira's own and not Neo's standard buttons: flat
+icons in groups on one strip (run or pause, step; undo, redo, save; mouselook), with the
+frame count and the settings gear at the right. The window opens at 1440 by 900.
+
 ### Changing things, and keeping them
 
 - Every change made from the app (a field, a parent, a name) can be taken back and made

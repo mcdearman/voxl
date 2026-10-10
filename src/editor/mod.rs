@@ -572,22 +572,65 @@ impl Editor {
                 column()
                     .width(Length::Fill)
                     .height(Length::Fill)
-                    .push(
-                        container(conversation(&self.said, Message::Unfolded)).height(Length::Fill),
-                    )
+                    .push(if self.said.is_empty() {
+                        // Before anything is said: what this is for.
+                        container(
+                            column()
+                                .spacing(6.0)
+                                .align(Align::Center)
+                                .push(icon(icons::BOT).size(26.0).tone(Tone::Faint))
+                                .push(
+                                    text("An agent that can see this game, read everything in it, and change it.")
+                                        .tone(Tone::Muted),
+                                )
+                                .push(
+                                    text("Ask why something is happening, or for a change to be made.")
+                                        .size(12.0)
+                                        .tone(Tone::Faint),
+                                ),
+                        )
+                        .width(Length::Fill)
+                        .height(Length::Fill)
+                        .align_x(Align::Center)
+                        .align_y(Align::Center)
+                    } else {
+                        container(conversation(&self.said, Message::Unfolded)).height(Length::Fill)
+                    })
                     .push(
                         container(row().spacing(8.0).align(Align::End).push(asking).push(stop))
                             .padding(8.0),
                     )
                     .into()
             }
-            SIGNALS => lines(self.lists.signals.iter().map(|(name, value)| {
-                let shown = match value {
-                    Signal::Bool(value) => value.to_string(),
-                    Signal::Number(value) => format!("{value:.2}"),
-                };
-                (name.clone(), shown, value.is_true())
-            })),
+            SIGNALS => {
+                // A lamp for each, lit while it is true; its value at the right.
+                let mut rows = column().spacing(2.0).width(Length::Fill);
+                for (name, value) in &self.lists.signals {
+                    let shown = match value {
+                        Signal::Bool(value) => value.to_string(),
+                        Signal::Number(value) => format!("{value:.2}"),
+                    };
+                    let lit = value.is_true();
+                    let lamp = if lit { Tone::Good } else { Tone::Faint };
+                    let name = text(name.clone()).mono().size(12.5).no_wrap();
+                    rows = rows.push(
+                        container(
+                            row()
+                                .spacing(8.0)
+                                .align(Align::Center)
+                                .push(icon(icons::CIRCLE_DOT).size(11.0).tone(lamp))
+                                .push(if lit { name } else { name.tone(Tone::Muted) })
+                                .push(Space::fill_x())
+                                .push(text(shown).mono().size(12.5).tone(Tone::Muted)),
+                        )
+                        .padding([3.0, 4.0]),
+                    );
+                }
+                if self.lists.signals.is_empty() {
+                    rows = rows.push(text("This game has no signals.").tone(Tone::Muted));
+                }
+                scrollable(container(rows).padding(8.0)).into()
+            }
             _ => text("").into(),
         }
     }
@@ -595,23 +638,49 @@ impl Editor {
     /// What the chosen entity is made of, each field in a control that changes it.
     fn inspector(&self) -> Element<Message> {
         let Some(entity) = self.chosen else {
-            return lines(
-                [(
-                    "Choose an entity in the tree.".to_owned(),
-                    String::new(),
-                    false,
-                )]
-                .into_iter(),
-            );
+            return container(
+                column()
+                    .spacing(6.0)
+                    .align(Align::Center)
+                    .push(icon(icons::SLIDERS_HORIZONTAL).size(24.0).tone(Tone::Faint))
+                    .push(
+                        text("Choose an entity in the tree to see what it is made of.")
+                            .tone(Tone::Muted),
+                    ),
+            )
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .align_x(Align::Center)
+            .align_y(Align::Center)
+            .into();
         };
         let mut rows = column().spacing(6.0).width(Length::Fill);
+        // What it is called, large, and which entity it is, small.
+        let named = self.lists.names.iter().find(|(named, _)| *named == entity);
         rows = rows.push(
-            text(format!("entity {}", entity.index()))
-                .mono()
-                .tone(Tone::Muted),
+            row()
+                .spacing(8.0)
+                .align(Align::Center)
+                .push(
+                    text(named.map_or("Unnamed", |(_, name)| name.as_str()))
+                        .size(16.0)
+                        .weight(Weight::SEMIBOLD),
+                )
+                .push(
+                    text(format!("entity {}", entity.index()))
+                        .size(12.0)
+                        .tone(Tone::Faint),
+                ),
         );
         for (component, value) in &self.lists.chosen {
-            rows = rows.push(text(short(component)).weight(Weight::SEMIBOLD));
+            // Each component under a rule and its name.
+            rows = rows.push(container(Divider::horizontal()).padding([6.0, 0.0, 2.0, 0.0]));
+            rows = rows.push(
+                text(short(component))
+                    .size(12.0)
+                    .weight(Weight::SEMIBOLD)
+                    .tone(Tone::Accent),
+            );
             rows = fields(rows, component, &mut Vec::new(), value);
         }
         scrollable(container(rows).padding(10.0)).into()
@@ -639,7 +708,20 @@ impl Editor {
                     None => format!("{}  {}", entity.index(), what.join(", ")),
                 };
                 // A shut entity's children are still built, so it shows that it has some.
-                TreeNode::new(*entity, label).with(open, self.entity_tree(Some(*entity)))
+                // A picture of what it mostly is.
+                let has = |name: &str| components.iter().any(|component| component == name);
+                let glyph = if has("Camera") {
+                    icons::VIDEO
+                } else if has("DirectionalLight") {
+                    icons::SUN
+                } else if has("Mesh3d") {
+                    icons::BOX
+                } else {
+                    icons::CIRCLE_DOT
+                };
+                TreeNode::new(*entity, label)
+                    .icon(glyph)
+                    .with(open, self.entity_tree(Some(*entity)))
             })
             .collect()
     }
@@ -877,23 +959,6 @@ fn fields(
     rows.push(field_row(&name, depth.saturating_sub(1), control))
 }
 
-/// A list of rows, each a name and what there is to say of it, scrolling when it is long.
-/// A row that is `lit` has its name in full strength; the rest are quieter.
-fn lines(rows: impl Iterator<Item = (String, String, bool)>) -> Element<Message> {
-    let mut list = column().spacing(4.0).width(Length::Fill);
-    for (name, said, lit) in rows {
-        let name = text(name).mono().no_wrap();
-        let name = if lit { name } else { name.tone(Tone::Muted) };
-        list = list.push(
-            row()
-                .spacing(10.0)
-                .push(name)
-                .push(text(said).mono().tone(Tone::Muted)),
-        );
-    }
-    scrollable(container(list).padding(10.0)).into()
-}
-
 /// The key the game knows a window's key by: where it is on the keyboard, as near as the
 /// name of what it types can say.
 pub fn key_code(key: &KeyEvent) -> Option<KeyCode> {
@@ -962,6 +1027,16 @@ impl App for Editor {
             (true, "y") => Some(Message::Redo),
             (true, "s") => Some(Message::Save),
             _ => None,
+        }
+    }
+
+    /// Room for a game and the panels round it.
+    fn window(&self) -> WindowSettings {
+        WindowSettings {
+            size: neo::Size::new(1440.0, 900.0),
+            min_size: Some(neo::Size::new(960.0, 600.0)),
+            app_id: Some("dev.mira.Editor".to_owned()),
+            ..WindowSettings::default()
         }
     }
 
@@ -1176,29 +1251,59 @@ impl App for Editor {
 
     fn view(&self) -> Element<Message> {
         let Status { paused, frame } = self.status;
+        // The tool bar is mira's own, not a row of Neo's buttons: small flat icons in
+        // groups on one lifted strip, with the one filled button the one that runs the game.
+        let tool = |glyph, press: Option<Message>| {
+            icon_button(glyph, 30.0)
+                .kind(ButtonKind::Ghost)
+                .on_press_maybe(press)
+        };
+        let gap = || {
+            container(Divider::vertical())
+                .height(18.0)
+                .padding([0.0, 4.0])
+        };
+        let (undo, redo) = self.can_undo();
+        let said = if self.told.is_empty() {
+            format!("frame {frame}")
+        } else {
+            format!("{}  ·  frame {frame}", self.told)
+        };
         let bar = row()
-            .spacing(8.0)
+            .spacing(2.0)
             .align(Align::Center)
-            .push(button(if paused { "Resume" } else { "Pause" }).on_press(Message::Pause))
-            .push(button("Step").on_press_maybe(paused.then_some(Message::Step)))
             .push(
-                button(if self.mouselook {
-                    "Mouselook: on"
-                } else {
-                    "Mouselook: off"
-                })
-                .on_press(Message::Mouselook),
+                icon_button(if paused { icons::PLAY } else { icons::PAUSE }, 30.0)
+                    .kind(ButtonKind::Accent)
+                    .on_press(Message::Pause),
             )
-            .push(button("Undo").on_press_maybe(self.can_undo().0.then_some(Message::Undo)))
-            .push(button("Redo").on_press_maybe(self.can_undo().1.then_some(Message::Redo)))
-            .push(button("Save").on_press(Message::Save))
-            .push(button("Settings").on_press(Message::Desktop(DesktopMsg::OpenSettings)))
-            .push(text(format!(
-                "frame {frame}{}{}{}",
-                if paused { ", paused" } else { "" },
-                if self.told.is_empty() { "" } else { "  ·  " },
-                self.told
-            )));
+            .push(tool(icons::STEP_FORWARD, paused.then_some(Message::Step)))
+            .push(gap())
+            .push(tool(icons::UNDO_2, undo.then_some(Message::Undo)))
+            .push(tool(icons::REDO_2, redo.then_some(Message::Redo)))
+            .push(tool(icons::SAVE, Some(Message::Save)))
+            .push(gap())
+            .push(tool(icons::MOUSE_POINTER_2, Some(Message::Mouselook)).selected(self.mouselook))
+            .push(Space::fill_x())
+            .push(
+                text(if paused {
+                    format!("paused  ·  {said}")
+                } else {
+                    said
+                })
+                .size(12.0)
+                .tone(Tone::Muted),
+            )
+            .push(gap())
+            .push(tool(
+                icons::SETTINGS,
+                Some(Message::Desktop(DesktopMsg::OpenSettings)),
+            ));
+        let bar = container(bar)
+            .surface(Surface::Card)
+            .radius(12.0)
+            .padding([4.0, 6.0])
+            .width(Length::Fill);
         let panels = dock(
             &self.layout,
             |panel| panel.to_owned(),
@@ -1208,7 +1313,7 @@ impl App for Editor {
         let whole = column()
             .width(Length::Fill)
             .height(Length::Fill)
-            .push(container(bar).padding(8.0))
+            .push(container(bar).padding([4.0, 8.0, 6.0, 8.0]))
             .push(panels);
         // The settings panel, over everything while it is open.
         self.desktop
