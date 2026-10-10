@@ -163,7 +163,7 @@ dependencies = [
 [[package]]
 name = "armature"
 version = "0.1.0"
-source = "git+https://github.com/mcdearman/armature?rev=359d6352b9d097f3b4273db3cdfa602bca48550f#359d6352b9d097f3b4273db3cdfa602bca48550f"
+source = "git+https://github.com/mcdearman/armature?rev=1ccfbad33ccd34f396e942d13b3d77cd4ee696b1#1ccfbad33ccd34f396e942d13b3d77cd4ee696b1"
 dependencies = [
  "arboard",
  "armature-render",
@@ -180,7 +180,7 @@ dependencies = [
 [[package]]
 name = "armature-render"
 version = "0.1.0"
-source = "git+https://github.com/mcdearman/armature?rev=359d6352b9d097f3b4273db3cdfa602bca48550f#359d6352b9d097f3b4273db3cdfa602bca48550f"
+source = "git+https://github.com/mcdearman/armature?rev=1ccfbad33ccd34f396e942d13b3d77cd4ee696b1#1ccfbad33ccd34f396e942d13b3d77cd4ee696b1"
 dependencies = [
  "bytemuck",
  "glyphon",
@@ -1522,7 +1522,7 @@ dependencies = [
 [[package]]
 name = "neo"
 version = "0.1.0"
-source = "git+https://github.com/mcdearman/neo?rev=1b62dc227f9b9f455c1a5b653be26cb66170db4d#1b62dc227f9b9f455c1a5b653be26cb66170db4d"
+source = "git+https://github.com/mcdearman/neo?rev=8e355245b24e8b490f6145d1b517d7b6738fa58e#8e355245b24e8b490f6145d1b517d7b6738fa58e"
 dependencies = [
  "armature",
  "armature-render",
@@ -1532,7 +1532,7 @@ dependencies = [
 [[package]]
 name = "neo-desktop"
 version = "0.1.0"
-source = "git+https://github.com/mcdearman/neo?rev=1b62dc227f9b9f455c1a5b653be26cb66170db4d#1b62dc227f9b9f455c1a5b653be26cb66170db4d"
+source = "git+https://github.com/mcdearman/neo?rev=8e355245b24e8b490f6145d1b517d7b6738fa58e#8e355245b24e8b490f6145d1b517d7b6738fa58e"
 dependencies = [
  "chrono",
  "neo",
@@ -1542,7 +1542,7 @@ dependencies = [
 [[package]]
 name = "neo-theme"
 version = "0.1.0"
-source = "git+https://github.com/mcdearman/neo?rev=1b62dc227f9b9f455c1a5b653be26cb66170db4d#1b62dc227f9b9f455c1a5b653be26cb66170db4d"
+source = "git+https://github.com/mcdearman/neo?rev=8e355245b24e8b490f6145d1b517d7b6738fa58e#8e355245b24e8b490f6145d1b517d7b6738fa58e"
 dependencies = [
  "armature-render",
 ]

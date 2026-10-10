@@ -2283,6 +2283,11 @@ impl App for Editor {
         }
     }
 
+    /// The game goes on, and answers its debug connection, while the window is covered.
+    fn steps_unseen(&self) -> bool {
+        true
+    }
+
     fn graphics(&mut self, graphics: &Graphics) {
         self.graphics = Some(graphics.clone());
     }

@@ -199,6 +199,16 @@ app.host_resized(width, height);
 - `examples/hosted_game` is a host with no window at all: it opens a device, runs the
   sacred-site game on it, changes its size and saves a frame.
 
+## Pictures of the app
+
+The game goes on while the app's window is covered or minimised, ten times a second in
+place of every frame, so its debug connection still answers. A picture of the window, in
+front or not, is taken with NeoCap by the app's process:
+
+```sh
+neo-recorder --pid <pid> --screenshot --out shot.png
+```
+
 ## Panels to come
 
 What other engines' editors have (Unreal, Unity, Godot), sorted by how near mira is to
