@@ -330,12 +330,23 @@ fn the_app_is_worked_by_clicking_on_it() {
         "Statistics",
         "Signal graph",
         "Place",
+        "References",
+        "Changes",
+        "Tests",
+        "Build",
     ] {
         if matches!(panel, "Log" | "Console" | "World" | "Place") {
             // Open already, behind another: brought to the front by being shut and opened.
             window.app_mut().update(Message::Panel(panel.to_owned()));
         }
         window.app_mut().update(Message::Panel(panel.to_owned()));
+        if panel == "Changes" {
+            // What git says of the project, given a moment to say it.
+            window
+                .app_mut()
+                .update(Message::RunFor(panel.to_owned(), 0));
+            std::thread::sleep(Duration::from_millis(700));
+        }
         window.frame(TICK, 1.0);
         let frame = window.frame(TICK, 1.0);
         assert_eq!(frame.len(), 1100 * 700 * 4, "{panel} drew");

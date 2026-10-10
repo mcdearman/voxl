@@ -148,6 +148,103 @@ fn size_said(bytes: u64) -> String {
     }
 }
 
+/// A program a panel can run, and what to call it.
+pub(super) struct Program {
+    pub called: &'static str,
+    pub program: &'static str,
+    pub arguments: &'static [&'static str],
+    /// Set in the program's surroundings while it runs.
+    pub with: &'static [(&'static str, &'static str)],
+}
+
+/// The programs each panel can run, in the project's folder.
+pub(super) fn programs(panel: &str) -> &'static [Program] {
+    match panel {
+        super::CHANGES => &[
+            Program {
+                called: "What has changed",
+                program: "git",
+                arguments: &["status", "--short", "--branch"],
+                with: &[],
+            },
+            Program {
+                called: "By how much",
+                program: "git",
+                arguments: &["diff", "--stat"],
+                with: &[],
+            },
+            Program {
+                called: "Lately",
+                program: "git",
+                arguments: &["log", "--oneline", "-n", "20"],
+                with: &[],
+            },
+        ],
+        super::TESTS => &[
+            Program {
+                called: "Unit tests",
+                program: "cargo",
+                arguments: &["test", "--lib", "--color", "never"],
+                with: &[],
+            },
+            Program {
+                called: "Pictures of scenes",
+                program: "cargo",
+                arguments: &["test", "--test", "frames", "--color", "never"],
+                with: &[("MIRA_FRAME_TESTS", "1")],
+            },
+            Program {
+                called: "Everything",
+                program: "cargo",
+                arguments: &["test", "--workspace", "--color", "never"],
+                with: &[],
+            },
+        ],
+        super::BUILD => &[
+            Program {
+                called: "Check",
+                program: "cargo",
+                arguments: &["check", "--workspace", "--color", "never"],
+                with: &[],
+            },
+            Program {
+                called: "Build",
+                program: "cargo",
+                arguments: &["build", "--workspace", "--color", "never"],
+                with: &[],
+            },
+            Program {
+                called: "Build to ship",
+                program: "cargo",
+                arguments: &["build", "--release", "--color", "never"],
+                with: &[],
+            },
+        ],
+        _ => &[],
+    }
+}
+
+/// A program run for a panel: what it has said, and how it is getting on.
+#[derive(Default)]
+pub(super) struct Run {
+    /// Which of the panel's programs it is.
+    pub which: usize,
+    pub lines: Vec<String>,
+    /// The program, while it runs, so that it can be stopped.
+    pub running: Option<std::sync::Arc<std::sync::Mutex<Option<std::process::Child>>>>,
+    /// How it ended: well, or not. Nothing while it runs.
+    pub ended: Option<bool>,
+}
+
+/// What a running program sends back: for which panel, and a line it said or how it ended.
+pub(super) struct Ran {
+    pub panel: String,
+    pub said: Result<String, bool>,
+}
+
+/// How many of a program's last lines are kept.
+const RUN_KEPT: usize = 1500;
+
 /// A console command as it is typed, `pause` or `entities with=mira.Camera`, as the request
 /// the debug connection takes. Values are read as JSON where they are JSON (numbers, true,
 /// lists) and as words otherwise.
@@ -250,6 +347,241 @@ impl Editor {
                     .size(12.0)
                     .tone(Tone::Faint),
             );
+        page(rows)
+    }
+
+    /// Runs one of a panel's programs in the project's folder, in place of whatever the
+    /// panel was running, and shows what it says as it says it.
+    pub(super) fn run_for(&mut self, panel: &str, which: usize) {
+        let Some(program) = programs(panel).get(which) else {
+            return;
+        };
+        self.stop_for(panel);
+        let mut command = std::process::Command::new(program.program);
+        command
+            .args(program.arguments)
+            .envs(program.with.iter().copied())
+            .current_dir(self.assets_root())
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+        let mut run = Run {
+            which,
+            ..Run::default()
+        };
+        match command.spawn() {
+            Ok(mut child) => {
+                let outs = (child.stdout.take(), child.stderr.take());
+                let held = std::sync::Arc::new(std::sync::Mutex::new(Some(child)));
+                run.running = Some(held.clone());
+                // One reader for what it says and one for what it complains of, so that
+                // neither waits on the other; the first to finish says how it ended.
+                let listen = |from: Box<dyn std::io::Read + Send>, ends: bool| {
+                    let (panel, to, held) =
+                        (panel.to_owned(), self.said_by_runs.0.clone(), held.clone());
+                    std::thread::spawn(move || {
+                        use std::io::BufRead;
+                        for line in std::io::BufReader::new(from).lines().map_while(Result::ok) {
+                            let said = Ok(line);
+                            if to
+                                .send(Ran {
+                                    panel: panel.clone(),
+                                    said,
+                                })
+                                .is_err()
+                            {
+                                return;
+                            }
+                        }
+                        if ends {
+                            // Stopped from here, there is nothing left to wait for.
+                            let child = held.lock().unwrap_or_else(|p| p.into_inner()).take();
+                            if let Some(mut child) = child {
+                                let well = child.wait().is_ok_and(|status| status.success());
+                                let _ = to.send(Ran {
+                                    panel,
+                                    said: Err(well),
+                                });
+                            }
+                        }
+                    });
+                };
+                if let (Some(out), Some(err)) = outs {
+                    listen(Box::new(err), false);
+                    listen(Box::new(out), true);
+                }
+            }
+            Err(why) => {
+                run.lines
+                    .push(format!("{} could not be run: {why}", program.program));
+                run.ended = Some(false);
+            }
+        }
+        self.runs.retain(|(of, _)| of != panel);
+        self.runs.push((panel.to_owned(), run));
+    }
+
+    /// Stops the program a panel is running, if it is running one.
+    pub(super) fn stop_for(&mut self, panel: &str) {
+        let Some((_, run)) = self.runs.iter_mut().find(|(of, _)| of == panel) else {
+            return;
+        };
+        if let Some(held) = run.running.take() {
+            if let Some(mut child) = held.lock().unwrap_or_else(|p| p.into_inner()).take() {
+                let _ = child.kill();
+                let _ = child.wait();
+                run.lines.push("Stopped.".to_owned());
+                run.ended = Some(false);
+            }
+        }
+    }
+
+    /// Takes in what the running programs have said since last looked. Says whether there
+    /// was anything.
+    pub(super) fn hear_runs(&mut self) -> bool {
+        let mut any = false;
+        while let Ok(ran) = self.said_by_runs.1.try_recv() {
+            let Some((_, run)) = self.runs.iter_mut().find(|(of, _)| *of == ran.panel) else {
+                continue;
+            };
+            any = true;
+            match ran.said {
+                Ok(line) => {
+                    run.lines.push(line);
+                    let over = run.lines.len().saturating_sub(RUN_KEPT);
+                    run.lines.drain(..over);
+                }
+                // One that was stopped has said so already.
+                Err(well) => {
+                    if run.running.take().is_some() {
+                        run.ended = Some(well);
+                    }
+                }
+            }
+        }
+        any
+    }
+
+    /// A panel that runs programs in the project's folder: a button for each, and what the
+    /// last one run has said.
+    pub(super) fn run_panel(&self, panel: &'static str) -> Element<Message> {
+        let run = self
+            .runs
+            .iter()
+            .find(|(of, _)| of == panel)
+            .map(|(_, run)| run);
+        let running = run.is_some_and(|run| run.running.is_some());
+        let mut bar = row().spacing(6.0).align(Align::Center);
+        for (which, program) in programs(panel).iter().enumerate() {
+            let chosen = run.is_some_and(|run| run.which == which);
+            bar =
+                bar.push(button(program.called).selected(chosen).on_press_maybe(
+                    (!running).then_some(Message::RunFor(panel.to_owned(), which)),
+                ));
+        }
+        bar = bar.push(Space::fill_x());
+        if let Some(run) = run {
+            let (said, tone) = match (running, run.ended) {
+                (true, _) => ("running…", Tone::Muted),
+                (false, Some(true)) => ("went well", Tone::Good),
+                (false, _) => ("did not go well", Tone::Bad),
+            };
+            bar = bar.push(text(said).size(12.0).tone(tone));
+        }
+        if running {
+            bar = bar.push(button("Stop").on_press(Message::StopFor(panel.to_owned())));
+        }
+        let said: Element<Message> = match run {
+            Some(run) if !run.lines.is_empty() => {
+                let mut rows = column().spacing(1.0).width(Length::Fill);
+                for line in &run.lines {
+                    // What went wrong stands out; what is only noise stands back.
+                    let low = line.to_lowercase();
+                    let tone = if low.contains("error")
+                        || low.contains("failed")
+                        || low.contains("panicked")
+                    {
+                        Tone::Bad
+                    } else if low.contains("warning") {
+                        Tone::Warn
+                    } else if line.trim_start().starts_with("Compiling")
+                        || line.trim_start().starts_with("Running")
+                    {
+                        Tone::Faint
+                    } else {
+                        Tone::Inherit
+                    };
+                    rows = rows.push(text(line.clone()).mono().size(12.0).tone(tone));
+                }
+                scrollable(container(rows).padding(8.0))
+                    .follow_end(true)
+                    .into()
+            }
+            Some(_) => nothing(icons::ACTIVITY, "Nothing said yet."),
+            None => nothing(
+                icons::ACTIVITY,
+                "Runs in the project's folder; what it says is shown here.",
+            ),
+        };
+        column()
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .push(container(bar).padding([8.0, 6.0]))
+            .push(Divider::horizontal())
+            .push(container(said).height(Length::Fill))
+            .into()
+    }
+
+    /// Which files of the project the scene uses, and which entities use each.
+    pub(super) fn references_panel(&self) -> Element<Message> {
+        let world = &self.game.world;
+        let Some(registry) = world.get_resource::<TypeRegistry>() else {
+            return nothing(
+                icons::LAYERS,
+                "This game has nothing registered to look through.",
+            );
+        };
+        // Every mention of an asset in any component of any entity, by the asset's name. A
+        // scene captured as if to save it is where handles are written as names.
+        let mut used: std::collections::BTreeMap<String, Vec<mira::ecs::Entity>> =
+            Default::default();
+        for kept in mira::reflect::Scene::capture(world, registry).entities {
+            let entity = mira::ecs::Entity::from_bits(kept.id);
+            let mut named = Vec::new();
+            for (_, value) in &kept.components {
+                assets_in(value, &mut named);
+            }
+            for name in named {
+                let users = used.entry(name).or_default();
+                if !users.contains(&entity) {
+                    users.push(entity);
+                }
+            }
+        }
+        if used.is_empty() {
+            return nothing(icons::LAYERS, "Nothing in the scene uses a file by name.");
+        }
+        let mut rows = column().spacing(3.0);
+        for (name, users) in used {
+            rows = rows.push(pair(name, format!("used by {}", users.len())));
+            let mut by = row().spacing(4.0);
+            for entity in users.into_iter().take(12) {
+                let called = self
+                    .lists
+                    .names
+                    .iter()
+                    .find(|(named, _)| *named == entity)
+                    .map_or(format!("entity {}", entity.index()), |(_, name)| {
+                        name.clone()
+                    });
+                by = by.push(
+                    button(called)
+                        .kind(ButtonKind::Ghost)
+                        .on_press(Message::Chosen(entity)),
+                );
+            }
+            rows = rows.push(by);
+        }
         page(rows)
     }
 
@@ -780,6 +1112,16 @@ impl Editor {
             }
         }
         page(rows)
+    }
+}
+
+/// The names of the assets a value mentions, wherever in it they are.
+pub(super) fn assets_in(value: &Value, named: &mut Vec<String>) {
+    match value {
+        Value::Asset { kind, name } => named.push(format!("{kind}  {name}")),
+        Value::List(items) => items.iter().for_each(|item| assets_in(item, named)),
+        Value::Map(fields) => fields.iter().for_each(|(_, field)| assets_in(field, named)),
+        _ => {}
     }
 }
 
