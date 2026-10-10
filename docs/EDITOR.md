@@ -32,8 +32,7 @@ cargo run --example sacred_sites_editor    # a game written in Rust, opened in t
 ```
 
 What is done in the viewport is the game's: pointer, wheel and keys, in the game's own
-terms. "Mouselook" holds and hides the pointer for games that turn with the mouse (Escape
-lets go). The bar follows the game, so a game paused from outside, by an agent say, shows as
+terms. See "Working in the picture" below for what the pointer does there. The bar follows the game, so a game paused from outside, by an agent say, shows as
 paused. Everything else on this page is still to come.
 
 ### How it looks
@@ -44,8 +43,27 @@ behind it blurred. Glass is the app's default; **Settings** (the gear at the rig
 tool bar, or Cmd/Ctrl+comma) has the switch to make the window solid, and the choice is
 kept. The tool bar is the one part that is mira's own and not Neo's standard buttons: flat
 icons set edge to edge with no room between or around them, a thin line between one group
-and the next (run or pause, step; undo, redo, save; mouselook), the frame count and the
+and the next (run or pause, step; undo, redo, save; what the pointer does), the frame count and the
 settings gear at the right, and one line under the bar to part it from the panels. The window opens at 1440 by 900.
+
+### Working in the picture
+
+Three buttons in the tool bar say what the pointer does in the picture of the game:
+
+- **Move** (the arrow, the one it starts with): a press chooses the entity under the
+  pointer, the same as choosing it in the tree, and frames it. Dragging slides it over
+  level ground at the height it was taken hold of, keeping its own height; a child goes
+  where the pointer is whatever its parent is doing. One drag is one change to take back.
+  The game hears none of this.
+- **Play** (the gamepad): the picture is the game's, as in a window of its own: clicks and
+  keys go to it.
+- **Look** (the mouse): the game's, with the pointer held in the picture and hidden, for
+  games that turn with the mouse. Escape lets it go.
+
+What is under the pointer is found from each entity's mesh, as a box round it; an entity
+with no mesh (a light) is a small box where it stands. The camera the game is seen through
+can't be picked. Moving up and down, turning and sizing in the picture are not there yet:
+use the inspector's fields.
 
 ### Changing things, and keeping them
 

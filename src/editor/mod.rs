@@ -19,6 +19,7 @@
 //! `.mira/editor.layout` in the folder the app is run from. See `docs/EDITOR.md`.
 
 pub mod agent;
+pub mod scene;
 
 use std::{
     sync::mpsc::{channel, Receiver, Sender},
@@ -27,15 +28,20 @@ use std::{
 
 use agent::{Agent, Heard, NoAgent};
 
+use glam::{Mat4, Vec3};
+
 use crate::{
+    assets::Assets,
     ecs::Entity,
     input::{ButtonInput, KeyCode, Mouse, MouseButton},
     live::Live,
     prelude::Vec2,
     reflect::{Scene, TypeRegistry, Value},
     render::frame_texture,
+    render::{Camera, Mesh, Mesh3d},
     signal::{Signal, Signals},
     time::Time,
+    transform::GlobalTransform,
     transform::Parent,
 };
 use neo::prelude::*;
@@ -53,8 +59,8 @@ pub enum Message {
     Pause,
     /// Run a paused game one frame on.
     Step,
-    /// Hold the pointer in the viewport, for games that turn with the mouse, or stop.
-    Mouselook,
+    /// What the pointer does in the picture of the game from now on.
+    Tool(Tool),
     /// The panels were rearranged.
     Arranged(Dock),
     /// An entity was chosen in the tree.
@@ -86,6 +92,30 @@ pub enum Message {
     /// The settings every Neo app has: the panel opened or shut, the window's glass turned
     /// on or off, the desktop's appearance looked at again.
     Desktop(DesktopMsg),
+}
+
+/// What the pointer does in the picture of the game.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Tool {
+    /// Chooses the entity under it, and moves it over the ground when dragged. The game
+    /// hears nothing of it.
+    #[default]
+    Move,
+    /// Is the game's: clicks and keys go to it, as when it is played in a window of its own.
+    Play,
+    /// Is the game's and held in the picture, hidden, for games that turn with the mouse.
+    /// Escape lets it go.
+    Look,
+}
+
+/// An entity being moved over the ground in the picture.
+#[derive(Clone, Copy, Debug)]
+struct Held {
+    entity: Entity,
+    /// How high the ground it slides over is: where it was taken hold of.
+    height: f32,
+    /// From where it was taken hold of to its own place.
+    reach: Vec3,
 }
 
 /// One thing changed in the game from the app: a component of an entity as it was and as
@@ -213,7 +243,11 @@ pub struct Editor {
     /// The game's frame, and the picture of it the window draws. Kept while the game keeps
     /// drawing into the same texture.
     shown: Option<(wgpu::Texture, Image)>,
-    mouselook: bool,
+    tool: Tool,
+    /// The entity being dragged in the picture, and the part of the picture the chosen one
+    /// covers (left, top, right, bottom, each from 0 to 1).
+    held: Option<Held>,
+    outline: Option<[f32; 4]>,
     /// What the bar says of the game, as last looked at.
     status: Status,
     layout: Dock,
@@ -261,7 +295,9 @@ impl Editor {
             size: (0, 0),
             scale: 1.0,
             shown: None,
-            mouselook: false,
+            tool: Tool::default(),
+            held: None,
+            outline: None,
             status: Status::default(),
             layout: std::fs::read_to_string(LAYOUT_FILE)
                 .ok()
@@ -462,8 +498,149 @@ impl Editor {
         self.game.world.get_resource_mut::<R>()
     }
 
+    /// The camera the game is seen through, and where it is.
+    fn eye(&mut self) -> Option<(Camera, Mat4)> {
+        let world = &mut self.game.world;
+        let seen = world.query::<(&Camera, &GlobalTransform)>();
+        let eye = seen
+            .iter()
+            .find(|(camera, _)| camera.active)
+            .map(|(camera, placed)| (*camera, placed.0));
+        eye
+    }
+
+    /// How wide the picture is for how tall, and a place in it (in points) counted from 0
+    /// to 1 across and down.
+    fn place(&self, at: Point) -> (f32, Vec2) {
+        let (wide, tall) = (self.size.0.max(1) as f32, self.size.1.max(1) as f32);
+        let at = Vec2::new(at.x * self.scale / wide, at.y * self.scale / tall);
+        (wide / tall, at)
+    }
+
+    /// The box an entity fills, in its own space: its mesh's, or a small one for what has
+    /// none (a light, a camera).
+    fn extent(&self, entity: Entity) -> (Vec3, Vec3) {
+        let world = &self.game.world;
+        let mesh = world
+            .get::<Mesh3d>(entity)
+            .zip(world.get_resource::<Assets<Mesh>>())
+            .and_then(|(mesh, meshes)| meshes.get(mesh.0));
+        let Some(mesh) = mesh.filter(|mesh| !mesh.vertices.is_empty()) else {
+            return (Vec3::splat(-0.25), Vec3::splat(0.25));
+        };
+        mesh.vertices.iter().fold(
+            (Vec3::splat(f32::INFINITY), Vec3::splat(f32::NEG_INFINITY)),
+            |(least, most), vertex| {
+                let at = Vec3::from(vertex.position);
+                (least.min(at), most.max(at))
+            },
+        )
+    }
+
+    /// The entity nearest the eye along a line of sight, and where the line enters it.
+    fn under(&mut self, ray: scene::Ray) -> Option<(Entity, Vec3)> {
+        let placed: Vec<(Entity, Mat4)> = self
+            .game
+            .world
+            .query::<(Entity, &GlobalTransform)>()
+            .iter()
+            .map(|(entity, placed)| (entity, placed.0))
+            .collect();
+        placed
+            .into_iter()
+            // The eye is not something seen.
+            .filter(|(entity, _)| self.game.world.get::<Camera>(*entity).is_none())
+            .filter_map(|(entity, placed)| {
+                let (least, most) = self.extent(entity);
+                Some((entity, scene::enters(ray, placed, least, most)?))
+            })
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|(entity, along)| (entity, ray.from + ray.along * along))
+    }
+
+    /// Does in the scene what was done in the picture of it: a press chooses what is under
+    /// the pointer and takes hold of it, a drag slides it over the ground, letting go
+    /// leaves it there. The whole drag is one change to take back.
+    fn work(&mut self, event: ViewportEvent) {
+        match event {
+            ViewportEvent::Pressed(at, PointerButton::Primary) => {
+                let Some((camera, eye)) = self.eye() else {
+                    return;
+                };
+                let (aspect, at) = self.place(at);
+                let ray = scene::sight(&camera, eye, at, aspect);
+                self.held = None;
+                let Some((entity, taken)) = self.under(ray) else {
+                    return;
+                };
+                self.update(Message::Chosen(entity));
+                let Some(placed) = self.game.world.get::<GlobalTransform>(entity) else {
+                    return;
+                };
+                let own = placed.0.transform_point3(Vec3::ZERO);
+                self.held = Some(Held {
+                    entity,
+                    height: taken.y,
+                    reach: own - taken,
+                });
+                self.update(Message::Scrub(true));
+            }
+            ViewportEvent::Moved(at) => {
+                let (Some(held), Some((camera, eye))) = (self.held, self.eye()) else {
+                    return;
+                };
+                let (aspect, at) = self.place(at);
+                let ray = scene::sight(&camera, eye, at, aspect);
+                let Some(ground) = scene::on_ground(ray, held.height) else {
+                    return;
+                };
+                // Where it is to be in the world, and so where under its parent.
+                let world = &self.game.world;
+                let mut to = ground + held.reach;
+                let parent = world
+                    .get::<Parent>(held.entity)
+                    .and_then(|parent| world.get::<GlobalTransform>(parent.0));
+                if let Some(parent) = parent {
+                    to = parent.0.inverse().transform_point3(to);
+                }
+                let Some(mut whole) = self.component(held.entity, "mira.Transform") else {
+                    return;
+                };
+                let translation = Value::List(
+                    to.to_array()
+                        .into_iter()
+                        .map(|part| Value::Float(part as f64))
+                        .collect(),
+                );
+                let path = vec!["translation".to_owned()];
+                if put(&mut whole, &path, translation) {
+                    self.change(held.entity, "mira.Transform", path, Some(whole));
+                }
+            }
+            ViewportEvent::Released(_, PointerButton::Primary) | ViewportEvent::AllReleased
+                if self.held.take().is_some() =>
+            {
+                self.update(Message::Scrub(false));
+            }
+            _ => {}
+        }
+    }
+
+    /// The part of the picture the chosen entity covers, as it is now.
+    fn outlined(&mut self) -> Option<[f32; 4]> {
+        let entity = self.chosen?;
+        let (camera, eye) = self.eye()?;
+        let placed = self.game.world.get::<GlobalTransform>(entity)?.0;
+        let (least, most) = self.extent(entity);
+        let aspect = self.place(Point::new(0.0, 0.0)).0;
+        scene::covers(&camera, eye, aspect, placed, least, most)
+    }
+
     /// Passes on to the game what was done in the viewport.
     fn hear(&mut self, event: ViewportEvent) {
+        if self.tool == Tool::Move {
+            return self.work(event);
+        }
         let scale = self.scale;
         // The game counts in pixels; the window, in points.
         let pixels = move |at: Point| Vec2::new(at.x * scale, at.y * scale);
@@ -534,13 +711,21 @@ impl Editor {
     /// What a panel shows.
     fn panel(&self, panel: &str) -> Element<Message> {
         match panel {
-            GAME => viewport(self.shown.as_ref().map(|(_, image)| image))
-                .on_resize(Message::Resized)
-                .on_input(Message::Input)
-                // The game is always being drawn, running or held still.
-                .playing(true)
-                .capture(self.mouselook)
-                .into(),
+            GAME => {
+                let picture = viewport(self.shown.as_ref().map(|(_, image)| image))
+                    .on_resize(Message::Resized)
+                    .on_input(Message::Input)
+                    // The game is always being drawn, running or held still.
+                    .playing(true)
+                    .capture(self.tool == Tool::Look);
+                // Over the picture, a frame round the chosen entity while things are being
+                // moved; the game's own picture is left alone.
+                let frame = (self.tool == Tool::Move).then_some(self.outline).flatten();
+                stack()
+                    .push(picture)
+                    .push(Element::new(Outline(frame)))
+                    .into()
+            }
             ENTITIES => scrollable(
                 container(
                     tree(&self.entity_tree(None), self.chosen.as_ref())
@@ -739,6 +924,45 @@ impl Editor {
                 .get_resource::<Time>()
                 .map_or(0, Time::frame_count),
         }
+    }
+}
+
+/// A frame drawn over the picture round what is chosen. It takes up the picture's whole
+/// space and nothing that is done there: the picture underneath hears it all.
+struct Outline(Option<[f32; 4]>);
+
+impl neo::Widget<Message> for Outline {
+    fn width(&self) -> Length {
+        Length::Fill
+    }
+
+    fn height(&self) -> Length {
+        Length::Fill
+    }
+
+    fn layout(&mut self, _: &mut neo::Cx, limits: neo::Limits) -> neo::Size {
+        limits.max
+    }
+
+    fn draw(&self, cx: &mut neo::DrawCx) {
+        let Some([left, top, right, bottom]) = self.0 else {
+            return;
+        };
+        let within = cx.bounds();
+        let frame = Rect::new(
+            within.x + left * within.w - 3.0,
+            within.y + top * within.h - 3.0,
+            (right - left) * within.w + 6.0,
+            (bottom - top) * within.h + 6.0,
+        );
+        cx.scene.push_clip(within);
+        let edge = Some((1.5, Color::rgb(1.0, 0.72, 0.2)));
+        cx.scene.fill(frame, 4.0, Color::TRANSPARENT, edge);
+        cx.scene.pop_clip();
+    }
+
+    fn event(&mut self, _: &mut neo::EventCx<Message>, _: &neo::Event) -> neo::Status {
+        neo::Status::Ignored
     }
 }
 
@@ -1085,6 +1309,8 @@ impl App for Editor {
             });
             changed = true;
         }
+        let outline = self.outlined();
+        changed |= std::mem::replace(&mut self.outline, outline) != outline;
         let status = self.look();
         // The lists are read a few times a second: often enough to watch, and not a walk
         // of every component on every frame.
@@ -1126,7 +1352,10 @@ impl App for Editor {
                     live.step_frames(1);
                 }
             }
-            Message::Mouselook => self.mouselook = !self.mouselook,
+            Message::Tool(tool) => {
+                self.tool = tool;
+                self.held = None;
+            }
             Message::Chosen(entity) => {
                 self.chosen = Some(entity);
                 self.lists = Lists::of(&self.game, self.chosen);
@@ -1283,7 +1512,19 @@ impl App for Editor {
             .push(tool(icons::REDO_2, redo.then_some(Message::Redo)))
             .push(tool(icons::SAVE, Some(Message::Save)))
             .push(gap())
-            .push(tool(icons::MOUSE_POINTER_2, Some(Message::Mouselook)).selected(self.mouselook))
+            // What the pointer does in the picture: move things, play the game, look about.
+            .push(
+                tool(icons::MOUSE_POINTER_2, Some(Message::Tool(Tool::Move)))
+                    .selected(self.tool == Tool::Move),
+            )
+            .push(
+                tool(icons::GAMEPAD_2, Some(Message::Tool(Tool::Play)))
+                    .selected(self.tool == Tool::Play),
+            )
+            .push(
+                tool(icons::MOUSE, Some(Message::Tool(Tool::Look)))
+                    .selected(self.tool == Tool::Look),
+            )
             .push(Space::fill_x())
             .push(
                 text(if paused {
@@ -1864,11 +2105,104 @@ mod tests {
     }
 
     #[test]
+    fn an_entity_is_chosen_and_moved_in_the_picture() {
+        use crate::prelude::*;
+        let mut game = crate::app::App::new();
+        game.add_plugins(crate::transform::TransformPlugin);
+        // Looking straight down from ten metres up, north at the top of the picture.
+        let eye = Transform::from_xyz(0.0, 10.0, 0.0).looking_at(Vec3::ZERO, Vec3::NEG_Z);
+        game.world.spawn((eye, Camera::default()));
+        let near = game.world.spawn(Transform::from_xyz(2.0, 3.0, 0.0));
+        let far = game.world.spawn(Transform::from_xyz(2.0, 0.0, 0.0));
+        let carrier = game.world.spawn(Transform::from_xyz(-3.0, 0.0, 1.0));
+        let carried = game
+            .world
+            .spawn((Transform::from_xyz(0.0, 0.0, -2.0), Parent(carrier)));
+        game.update();
+        let mut editor = Editor::new(game);
+        editor.update(Message::Resized(Rect::new(0.0, 0.0, 800.0, 600.0), 1.0));
+        assert_eq!(editor.tool, Tool::Move);
+
+        // Where a point of the world is in the picture, in points.
+        let shown = |editor: &mut Editor, point: Vec3| {
+            let (camera, eye) = editor.eye().expect("a camera");
+            let at = scene::in_picture(&camera, eye, point, 800.0 / 600.0).expect("in view");
+            Point::new(at.x * 800.0, at.y * 600.0)
+        };
+        let place = |editor: &Editor, entity: Entity| {
+            editor
+                .game()
+                .world
+                .get::<Transform>(entity)
+                .unwrap()
+                .translation
+        };
+        let press = |at| Message::Input(ViewportEvent::Pressed(at, PointerButton::Primary));
+        let release = |at| Message::Input(ViewportEvent::Released(at, PointerButton::Primary));
+
+        // Two things in a line from the eye: the nearer is the one chosen.
+        // (Taken hold of by the middle of its top, so that where it goes is easy to say.)
+        let at = shown(&mut editor, Vec3::new(2.0, 3.25, 0.0));
+        editor.update(press(at));
+        assert_eq!(editor.chosen(), Some(near));
+        // Dragged, it slides over level ground at the height it was taken hold of, to
+        // under the pointer, and keeps its height.
+        let to = shown(&mut editor, Vec3::new(-1.0, 3.25, 2.0));
+        editor.update(Message::Input(ViewportEvent::Moved(to)));
+        editor.update(Message::Input(ViewportEvent::Moved(to)));
+        editor.update(release(to));
+        let moved = place(&editor, near);
+        assert!(
+            (moved - Vec3::new(-1.0, 3.0, 2.0)).length() < 0.02,
+            "{moved}"
+        );
+        assert_eq!(
+            place(&editor, far),
+            Vec3::new(2.0, 0.0, 0.0),
+            "the one behind stays"
+        );
+        // The whole drag is one change.
+        assert_eq!(editor.done.len(), 1);
+        editor.update(Message::Undo);
+        assert_eq!(place(&editor, near), Vec3::new(2.0, 3.0, 0.0));
+
+        // A child is moved to where the pointer is in the world, whatever its parent is.
+        editor.game_mut().update();
+        let at = shown(&mut editor, Vec3::new(-3.0, 0.25, -1.0));
+        editor.update(press(at));
+        assert_eq!(editor.chosen(), Some(carried));
+        let to = shown(&mut editor, Vec3::new(1.0, 0.25, 1.0));
+        editor.update(Message::Input(ViewportEvent::Moved(to)));
+        editor.update(release(to));
+        let local = place(&editor, carried);
+        assert!(
+            (local - Vec3::new(4.0, 0.0, 0.0)).length() < 0.02,
+            "{local}"
+        );
+
+        // A press on nothing takes hold of nothing; the chosen entity is framed in the
+        // picture; with another tool, the picture is the game's and nothing is moved.
+        editor.update(press(Point::new(790.0, 10.0)));
+        assert!(editor.held.is_none());
+        editor.game_mut().update();
+        let [left, top, right, bottom] = editor.outlined().expect("the chosen one is in view");
+        assert!(left < right && top < bottom && right - left < 0.3);
+        editor.update(Message::Tool(Tool::Play));
+        let before = place(&editor, carried);
+        let at = shown(&mut editor, Vec3::new(1.0, 0.25, 1.0));
+        editor.update(press(at));
+        editor.update(Message::Input(ViewportEvent::Moved(Point::new(10.0, 10.0))));
+        assert_eq!(place(&editor, carried), before);
+    }
+
+    #[test]
     fn what_is_done_in_the_viewport_reaches_the_game() {
         let mut game = crate::app::App::new();
         game.add_plugins(crate::input::InputPlugin);
         let mut editor = Editor::new(game);
         editor.update(Message::Resized(Rect::new(0.0, 40.0, 400.0, 300.0), 2.0));
+        // With the tool that makes the picture the game's.
+        editor.update(Message::Tool(Tool::Play));
         assert_eq!(editor.size, (800, 600));
 
         // Points in the window are pixels in the game.

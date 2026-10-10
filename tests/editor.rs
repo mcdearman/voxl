@@ -204,6 +204,25 @@ fn the_app_is_worked_by_clicking_on_it() {
         "the row dropped on the field is the parent now"
     );
 
+    // In the picture of the game, a press chooses what is under the pointer and a drag
+    // slides it over the ground: the western site, pulled towards the camera.
+    let site = Point::new(262.0, 314.0);
+    window.click(site);
+    window.frame(TICK, 1.0);
+    let chosen = window.app().chosen().expect("the site under the pointer");
+    assert_eq!(chosen.index(), 0, "the first site");
+    let place = |window: &Harness<Editor>| {
+        let world = &window.app().game().world;
+        world.get::<Transform>(chosen).expect("a place").translation
+    };
+    let before = place(&window);
+    drag(&mut window, site, Point::new(262.0, 395.0));
+    let after = place(&window);
+    assert!(
+        after.z > before.z + 2.0 && (after.x - before.x).abs() < 0.2 && after.y == before.y,
+        "from {before} to {after}"
+    );
+
     // Further down the inspector, for the picture: the entity's colour.
     window.event(Event::Wheel {
         pos: Point::new(930.0, 600.0),
