@@ -55,3 +55,15 @@ jobs:
     - uses: Swatinem/rust-cache@v2
     - name: Miri
       run: scripts/check.sh --miri-only
+
+  tsan:
+    # Systems run side by side and share out their queries' work between threads;
+    # ThreadSanitizer watches the ECS's tests for two threads at the same memory.
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Install nightly with its source
+      run: rustup toolchain install nightly --component rust-src
+    - uses: Swatinem/rust-cache@v2
+    - name: ThreadSanitizer
+      run: scripts/check.sh --tsan-only

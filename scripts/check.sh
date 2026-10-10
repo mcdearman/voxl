@@ -19,8 +19,23 @@ miri() {
     MIRIFLAGS="${MIRIFLAGS:-} -Zmiri-ignore-leaks" cargo +nightly miri test -p mira_ecs
 }
 
+tsan() {
+    step "thread sanitizer"
+    # The ECS's tests again with every access to memory watched for two threads reaching
+    # it at once with no order between them. The standard library is built the same way,
+    # so what it does is seen too; that needs the nightly toolchain and its source.
+    host=$(rustc +nightly -vV | sed -n 's/^host: //p')
+    RUSTFLAGS="-Zsanitizer=thread" cargo +nightly test -p mira_ecs --lib \
+        -Zbuild-std --target "$host" --target-dir target/tsan
+}
+
 if [ "${1:-}" = "--miri-only" ]; then
     miri
+    exit 0
+fi
+
+if [ "${1:-}" = "--tsan-only" ]; then
+    tsan
     exit 0
 fi
 

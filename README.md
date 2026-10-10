@@ -114,6 +114,7 @@ Where the engine is headed: [docs/ROADMAP.md](docs/ROADMAP.md).
 ```
 cargo test
 cargo +nightly miri test -p mira_ecs        # the ECS's unsafe code
+scripts/check.sh --tsan-only                # the ECS's threads, under ThreadSanitizer
 MIRA_SCREENSHOT=frame.png cargo run --release --example voxel_world   # render a frame to a file and quit
 MIRA_FRAME_TESTS=1 cargo test --test frames     # draw fixed scenes and compare with stored frames
 ```
