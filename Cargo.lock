@@ -1315,6 +1315,7 @@ dependencies = [
  "mira_derive",
  "mira_ecs",
  "mira_plugin",
+ "neo",
  "pollster 0.3.0",
  "wgpu",
  "winit",
@@ -1335,16 +1336,6 @@ version = "0.1.0"
 dependencies = [
  "log",
  "mira_derive",
-]
-
-[[package]]
-name = "mira_editor"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "image",
- "mira",
- "neo",
 ]
 
 [[package]]

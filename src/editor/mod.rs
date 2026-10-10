@@ -1,10 +1,10 @@
-//! mira's engine app: a game shown and worked on inside a [Neo](https://github.com/mcdearman/neo)
-//! window.
+//! The engine app: a game shown and worked on inside a [Neo](https://github.com/mcdearman/neo)
+//! window. Bare `cargo run` opens it (`src/main.rs`).
 //!
 //! ```ignore
 //! fn main() -> anyhow::Result<()> {
 //!     let game = my_game::build()?;      // a mira `App`, as it would be run
-//!     mira_editor::run(game)?;
+//!     mira::editor::run(game)?;
 //!     Ok(())
 //! }
 //! ```
@@ -15,8 +15,8 @@
 //!
 //! The window is a dock of panels that can be dragged about, split and stacked as tabs:
 //! the game, its entities as a tree, what the chosen entity is made of, its signals, and a
-//! conversation with an agent that is working on the game. How they are arranged is kept in `.mira/editor.layout`
-//! in the folder the app is run from. See mira's `docs/EDITOR.md` for what is to come.
+//! conversation with an agent that is working on the game. How they are arranged is kept in
+//! `.mira/editor.layout` in the folder the app is run from. See `docs/EDITOR.md`.
 
 pub mod agent;
 
@@ -27,7 +27,7 @@ use std::{
 
 use agent::{Agent, Heard, NoAgent};
 
-use mira::{
+use crate::{
     ecs::Entity,
     input::{ButtonInput, KeyCode, Mouse, MouseButton},
     live::Live,
@@ -121,7 +121,7 @@ struct Lists {
 }
 
 impl Lists {
-    fn of(game: &mira::app::App, chosen: Option<Entity>) -> Self {
+    fn of(game: &crate::app::App, chosen: Option<Entity>) -> Self {
         let world = &game.world;
         let mut made_of = Vec::new();
         let mut entities: std::collections::BTreeMap<Entity, Vec<String>> = Default::default();
@@ -165,7 +165,7 @@ impl Lists {
 
 /// The app: a game, and the window's view of it.
 pub struct Editor {
-    game: mira::app::App,
+    game: crate::app::App,
     graphics: Option<Graphics>,
     hosted: bool,
     /// The viewport's room, in pixels, and how many of them make a point.
@@ -198,7 +198,7 @@ struct Status {
 }
 
 impl Editor {
-    pub fn new(game: mira::app::App) -> Self {
+    pub fn new(game: crate::app::App) -> Self {
         Self {
             game,
             graphics: None,
@@ -304,11 +304,11 @@ impl Editor {
     }
 
     /// The game being shown.
-    pub fn game(&self) -> &mira::app::App {
+    pub fn game(&self) -> &crate::app::App {
         &self.game
     }
 
-    pub fn game_mut(&mut self) -> &mut mira::app::App {
+    pub fn game_mut(&mut self) -> &mut crate::app::App {
         &mut self.game
     }
 
@@ -753,15 +753,15 @@ pub fn key_code(key: &KeyEvent) -> Option<KeyCode> {
         Key::End => KeyCode::End,
         Key::PageUp => KeyCode::PageUp,
         Key::PageDown => KeyCode::PageDown,
-        Key::F(n @ 1..=12) => mira::input::key_named(&format!("F{n}"))?,
+        Key::F(n @ 1..=12) => crate::input::key_named(&format!("F{n}"))?,
         Key::Character(typed) => {
             let mut letters = typed.chars();
             let (letter, None) = (letters.next()?, letters.next()) else {
                 return None;
             };
             match letter.to_ascii_uppercase() {
-                letter @ 'A'..='Z' => mira::input::key_named(&format!("Key{letter}"))?,
-                digit @ '0'..='9' => mira::input::key_named(&format!("Digit{digit}"))?,
+                letter @ 'A'..='Z' => crate::input::key_named(&format!("Key{letter}"))?,
+                digit @ '0'..='9' => crate::input::key_named(&format!("Digit{digit}"))?,
                 _ => return None,
             }
         }
@@ -992,7 +992,7 @@ fn tools_program() -> std::path::PathBuf {
 ///
 /// The app's agent is Claude Code, given the game's tools: the game is made to listen for
 /// them on a port of its own if it is not listening already. See [`agent::ClaudeCode`].
-pub fn run(mut game: mira::app::App) -> Result<(), Box<dyn std::error::Error>> {
+pub fn run(mut game: crate::app::App) -> Result<(), Box<dyn std::error::Error>> {
     let listening = match game.debugger_address() {
         Some(address) => Some(address),
         None => game.listen_for_debugger("127.0.0.1:0").ok(),
@@ -1062,9 +1062,9 @@ mod tests {
 
     #[test]
     fn the_lists_say_what_is_in_the_game() {
-        use mira::prelude::*;
-        let mut game = mira::app::App::new();
-        game.add_plugins(mira::transform::TransformPlugin)
+        use crate::prelude::*;
+        let mut game = crate::app::App::new();
+        game.add_plugins(crate::transform::TransformPlugin)
             .add_plugins(SignalPlugin);
         let entity = game.world.spawn(Transform::from_xyz(1.0, 2.0, 3.0));
         game.world.resource_mut::<Signals>().set("open", true);
@@ -1084,9 +1084,9 @@ mod tests {
 
     #[test]
     fn a_field_changed_in_the_inspector_is_changed_in_the_game() {
-        use mira::prelude::*;
-        let mut game = mira::app::App::new();
-        game.add_plugins(mira::transform::TransformPlugin);
+        use crate::prelude::*;
+        let mut game = crate::app::App::new();
+        game.add_plugins(crate::transform::TransformPlugin);
         let entity = game.world.spawn(Transform::from_xyz(1.0, 2.0, 3.0));
         let mut editor = Editor::new(game);
         editor.update(Message::Chosen(entity));
@@ -1159,9 +1159,9 @@ mod tests {
 
     #[test]
     fn entities_are_a_tree_that_dragging_rearranges() {
-        use mira::prelude::*;
-        let mut game = mira::app::App::new();
-        game.add_plugins(mira::transform::TransformPlugin);
+        use crate::prelude::*;
+        let mut game = crate::app::App::new();
+        game.add_plugins(crate::transform::TransformPlugin);
         let tank = game.world.spawn(Transform::IDENTITY);
         let turret = game.world.spawn((Transform::IDENTITY, Parent(tank)));
         let barrel = game.world.spawn((Transform::IDENTITY, Parent(turret)));
@@ -1248,7 +1248,7 @@ mod tests {
             Heard::Done,
         ];
         let mut editor =
-            Editor::new(mira::app::App::new()).with_agent(Scripted(script, stops.clone()));
+            Editor::new(crate::app::App::new()).with_agent(Scripted(script, stops.clone()));
         let write = |editor: &mut Editor, text: &str| {
             editor.writing = Document::new(text);
             editor.update(Message::Ask);
@@ -1315,7 +1315,7 @@ mod tests {
         assert_eq!(editor.said().len(), length);
 
         // With no agent, asking says how to have one.
-        let mut alone = Editor::new(mira::app::App::new());
+        let mut alone = Editor::new(crate::app::App::new());
         write(&mut alone, "Hello?");
         alone.listen();
         assert!(alone.said()[1].text.contains("There is no agent"));
@@ -1324,8 +1324,8 @@ mod tests {
 
     #[test]
     fn what_is_done_in_the_viewport_reaches_the_game() {
-        let mut game = mira::app::App::new();
-        game.add_plugins(mira::input::InputPlugin);
+        let mut game = crate::app::App::new();
+        game.add_plugins(crate::input::InputPlugin);
         let mut editor = Editor::new(game);
         editor.update(Message::Resized(Rect::new(0.0, 40.0, 400.0, 300.0), 2.0));
         assert_eq!(editor.size, (800, 600));

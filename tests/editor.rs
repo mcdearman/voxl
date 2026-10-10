@@ -4,25 +4,25 @@
 //! Needs a graphics card, so it only runs when asked, like mira's frame tests:
 //!
 //! ```sh
-//! MIRA_FRAME_TESTS=1 cargo test -p mira_editor --test window
+//! MIRA_FRAME_TESTS=1 cargo test --test editor
 //! ```
 //!
 //! `MIRA_EDITOR_SHOT=<path>` also saves a picture of the window at the end.
 
 use std::{sync::mpsc::Sender, time::Duration};
 
+use mira::editor::{
+    agent::{Agent, Heard},
+    Editor,
+};
 use mira::{
     live::Live,
     prelude::{Entity, Parent, Transform},
 };
-use mira_editor::{
-    agent::{Agent, Heard},
-    Editor,
-};
 use neo::testing::Harness;
 use neo::{Event, Key, Point, PointerButton, Size};
 
-#[path = "../../../examples/sacred_sites/game.rs"]
+#[path = "../examples/sacred_sites/game.rs"]
 mod game;
 
 const TICK: Duration = Duration::from_millis(16);

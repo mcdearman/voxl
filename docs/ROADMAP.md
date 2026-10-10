@@ -357,7 +357,10 @@ editor needs from it.
 - [x] The game run by a host: on a device it is given, with no window or loop of its own,
       its frames a texture for the host to show (`App::host`, `render::frame_texture`)
 - [x] The first app: a Neo window with the game in a viewport, and a bar to pause, resume
-      and step it (`crates/mira_editor`)
+      and step it
+- [x] The app is the engine's own program: bare `cargo run` opens it, on a starter scene or
+      on the plugins named; the editor is `mira::editor`, on by default; the voxel world
+      that used to be `cargo run` is `--example voxel_world`
 - [x] Panels in a dock, arranged by dragging and kept between runs; the game's entities and
       signals listed live beside it
 
@@ -461,10 +464,11 @@ project grows.
 
 ## Next three steps
 
-1. Model files loaded off the main thread and watched (Phase 1).
-2. Agree with Neo what the engine app needs from it (Phase 5), the agent window among it;
-   then the app's first panels. Two things seen in screenshots to fix on the way: the
-   built-in sky is dull next to the sun it comes with; and objects that move every frame
-   smear under temporal anti-aliasing (it has no motion vectors).
-3. The rest of Phase 1C (screenshot viewpoints and overlays, events through MCP); then
-   observers and what is left of Phase 2.
+1. The app's working loop (Phase 5): undo and redo; saving what was edited as a scene and
+   opening one; names for entities; then the asset browser with drag to place, and gizmos.
+2. The agent in the app: a first run against Claude Code itself, approvals so that it can
+   change code, and what is selected passed to it. Then model files loaded off the main
+   thread and watched (Phase 1), which the app needs before it can host the big demos.
+3. Two things seen in screenshots: the built-in sky is dull next to the sun it comes with,
+   and objects that move every frame smear under temporal anti-aliasing (it has no motion
+   vectors). Then the rest of Phase 1C and of Phase 2, and on to Phase 3.

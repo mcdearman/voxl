@@ -6,7 +6,8 @@ project and what exists on each side.
 
 ## What there is
 
-`crates/mira_editor`: a Neo window with the game in a viewport, under a bar to pause, resume
+`cargo run` opens it. It is the engine's own program (`src/main.rs`, on `mira::editor`,
+which is `src/editor`): a Neo window with the game in a viewport, under a bar to pause, resume
 and step it. Beside it: the game's entities as a tree (children under their `Parent`; drag
 one onto another to make it its child, or beside one to share its parent), an inspector
 in which the chosen entity's parts are fields to change (numbers and vectors drag or take a
@@ -21,11 +22,13 @@ between two to resize. The arrangement is kept in `.mira/editor.layout` in the f
 is run from. The game is any mira `App`, built as it would be to run alone:
 
 ```rust
-mira_editor::run(my_game::build()?)?;
+mira::editor::run(my_game::build()?)?;
 ```
 
 ```sh
-cargo run -p mira_editor --example sacred_sites_editor
+cargo run                                  # a small scene to start from
+cargo run -- chase scoreboard              # a game made of plugins (built into target/, or paths)
+cargo run --example sacred_sites_editor    # a game written in Rust, opened in the app
 ```
 
 What is done in the viewport is the game's: pointer, wheel and keys, in the game's own
@@ -41,7 +44,7 @@ Each use of a tool is a row of its own that opens to show what the tool was give
 came back, with the picture if it was a screenshot. Stop stops it.
 
 The agent is a program of its own that the window runs, behind a small interface
-(`mira_editor::agent::Agent`: ask, stop), so another can be put there with
+(`mira::editor::agent::Agent`: ask, stop), so another can be put there with
 `Editor::with_agent`. The one the app starts with is Claude Code (`agent::ClaudeCode`), run
 once for each thing asked and resuming the same conversation. It is found at `MIRA_AGENT`,
 else `~/.local/bin/claude`, else `claude` on the path. It is given mira's own tools
@@ -59,13 +62,13 @@ The reading of Claude Code's output was written from its documentation and teste
 a stand-in program that prints the same lines; it has not yet been run against Claude Code
 itself.
 
-The app is tested as a person works it: `crates/mira_editor/tests/window.rs` opens it in
+The app is tested as a person works it: `tests/editor.rs` opens it in
 Neo's test window, which is drawn but never shown, and clicks its buttons and tree rows.
 It needs a graphics card, so it runs when asked:
 
 ```sh
-MIRA_FRAME_TESTS=1 cargo test -p mira_editor --test window
-MIRA_FRAME_TESTS=1 MIRA_EDITOR_SHOT=window.png cargo test -p mira_editor --test window   # and a picture
+MIRA_FRAME_TESTS=1 cargo test --test editor
+MIRA_FRAME_TESTS=1 MIRA_EDITOR_SHOT=window.png cargo test --test editor   # and a picture
 ```
 
 ## The game inside another program
