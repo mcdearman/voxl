@@ -12,6 +12,7 @@
 //! impulses, warm started from the last step, with Coulomb friction and restitution.
 
 mod collide;
+mod debug;
 pub mod fluid;
 mod query;
 mod shape;
@@ -22,6 +23,7 @@ use std::collections::HashMap;
 
 use glam::{Mat3, Quat, Vec3};
 
+pub use debug::PhysicsDebug;
 pub use collide::{closest_on_segment, closest_on_triangle, closest_segments, Manifold, MARGIN};
 pub use query::{CharacterController, RayHit};
 pub use shape::{ray_triangle, Aabb, Iso, Shape, TriMesh};
@@ -406,12 +408,14 @@ impl Plugin for PhysicsPlugin {
             .register_type::<Collider>()
             .register_type::<Joint>()
             .register_type::<CharacterController>();
+        app.init_resource::<PhysicsDebug>()
+            .register_resource_type::<PhysicsDebug>();
         app.init_resource::<PhysicsWorld>()
             .add_systems(
                 Stage::FixedUpdate,
                 (step, publish_contacts, query::move_characters, fluid::step_water, fluid::step_particles),
             )
-            .add_systems(Stage::PostUpdate, fluid::update_fluid_meshes);
+            .add_systems(Stage::PostUpdate, (fluid::update_fluid_meshes, debug::draw));
     }
 }
 

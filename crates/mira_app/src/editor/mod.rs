@@ -37,6 +37,7 @@ use mira::{
     ecs::Entity,
     input::{ButtonInput, KeyCode, Mouse, MouseButton},
     live::Live,
+    physics::PhysicsDebug,
     prelude::Vec2,
     reflect::{NotSaved, Scene, TypeRegistry, Value},
     render::frame_texture,
@@ -135,6 +136,8 @@ pub enum Message {
     Jump(usize),
     /// Moments of the game are kept to go back to, or no longer.
     Record(bool),
+    /// A part of physics is drawn over the scene, or no longer.
+    PhysicsDrawn(Drawn, bool),
     /// The game goes back this many frames.
     Rewind(u64),
     /// Game time runs this fast against the clock.
@@ -241,6 +244,15 @@ struct Change {
     after: Option<Value>,
 }
 
+/// A part of physics that can be drawn over the scene.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Drawn {
+    Colliders,
+    Contacts,
+    Velocities,
+    Joints,
+}
+
 /// The panels, by the names the layout knows them by.
 const GAME: &str = "Game";
 const ENTITIES: &str = "Entities";
@@ -264,11 +276,13 @@ const CHANGES: &str = "Changes";
 const TESTS: &str = "Tests";
 const BUILD: &str = "Build";
 const REFERENCES: &str = "References";
+const PHYSICS: &str = "Physics";
 
 /// Every panel there is, in the order the Window menu lists them.
-const PANELS: [&str; 22] = [
+const PANELS: [&str; 23] = [
     GAME, ENTITIES, PLACE, ASSETS, INSPECTOR, WORLD, SIGNALS, GRAPH, AGENT, LOG, CONSOLE, PROFILER,
-    SYSTEMS, HISTORY, TIME, FAILURES, PLUGINS, STATISTICS, REFERENCES, CHANGES, TESTS, BUILD,
+    SYSTEMS, PHYSICS, HISTORY, TIME, FAILURES, PLUGINS, STATISTICS, REFERENCES, CHANGES, TESTS,
+    BUILD,
 ];
 
 /// Where the arrangement of the panels is kept, in the folder the app is run from.
@@ -1641,6 +1655,7 @@ impl Editor {
             FAILURES => self.failures_panel(),
             PLUGINS => self.plugins_panel(),
             STATISTICS => self.statistics_panel(),
+            PHYSICS => self.physics_panel(),
             _ => text("").into(),
         }
     }
@@ -2370,6 +2385,16 @@ impl App for Editor {
             Message::Rewind(frames) => {
                 mira::live::History::rewind(&mut self.game.world, frames);
                 self.lists = Lists::of(&self.game, self.chosen);
+            }
+            Message::PhysicsDrawn(which, on) => {
+                if let Some(shown) = self.resource::<PhysicsDebug>() {
+                    match which {
+                        Drawn::Colliders => shown.colliders = on,
+                        Drawn::Contacts => shown.contacts = on,
+                        Drawn::Velocities => shown.velocities = on,
+                        Drawn::Joints => shown.joints = on,
+                    }
+                }
             }
             Message::Speed(speed) => {
                 if let Some(time) = self.resource::<Time>() {

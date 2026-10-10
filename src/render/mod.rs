@@ -1,4 +1,5 @@
 mod animation;
+mod debug_lines;
 mod environment;
 pub mod frame_diff;
 pub mod gait;
@@ -22,6 +23,7 @@ mod volumetric;
 
 use glam::{Mat4, Vec2, Vec3, Vec4};
 
+pub use debug_lines::DebugLines;
 pub use environment::{direction_to_uv, uv_to_direction, Environment};
 pub use gltf_scene::{GltfPart, GltfScene, Imported};
 pub use gpu::{
@@ -1088,6 +1090,8 @@ impl Plugin for RenderPlugin {
             .add_systems(Stage::Prepare, prepare)
             .add_systems(Stage::Render, render);
         app.world.init_resource::<Overlays>();
+        app.world.init_resource::<DebugLines>();
+        app.world.resource_mut::<Overlays>().0.push(debug_lines::draw);
         app.world.init_resource::<DrawFunctions>();
         app.world.init_resource::<TransparentDrawFunctions>();
         app.world.init_resource::<ShadowDrawFunctions>();

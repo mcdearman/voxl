@@ -72,6 +72,7 @@ its top; panels meet each other at single lines, which can be dragged to resize.
 | Profiler | The last frames as a graph, the usual and the worst frame, the time each stage took, and the slowest systems |
 | Signal graph | The game's rules as a circuit, the one `mira_ui` draws inside a game: wires lit while true, rewired by dragging, lamps clicked to force a signal, lines clicked to type over them |
 | Systems | Every system by stage, in the order and the batch it runs in, with how much it reads and writes; one that has failed is red |
+| Physics | Switches that draw physics over the scene as lines (colliders coloured by what moves them, contacts, velocities, joints), and what the last step found: bodies, how many are asleep, colliders, contacts, gravity |
 | World | The world's settings (ambient light, fog, post-processing, shadows, voxels: every registered resource), each field a control like the inspector's, with undo |
 | History | Every change made from the app, to click back and forward through |
 | Time | How fast game time runs; keeping moments to go back to, and going back |
@@ -238,7 +239,6 @@ having each. "Ready" means the engine already holds the data and only the panel 
 | Navigation | Navigation, NavMesh | Navmesh and pathfinding (Phase 4) |
 | Behaviour tree | Behavior Tree editor | AI (Phase 4) |
 | Game UI designer | UMG, UI Builder | A visual layout for `mira_ui` interfaces |
-| Physics debugger | Physics Debugger, Collision view | Drawing colliders, contacts and joints over the scene |
 | Lighting | Lightmass, Light Mixer | Baked or dynamic global illumination (Phase 6) |
 | Size map (references are built) | Size Map | How much each asset weighs, and what depends on what |
 | Packaging (building is built) | Project Launcher, Build Settings | Packaging a game for a platform |
