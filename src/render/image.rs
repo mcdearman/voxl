@@ -1,5 +1,10 @@
 use anyhow::Context;
 
+// The block compressor has a part in C++, whose runtime the linker is not told of on Linux.
+#[cfg(target_os = "linux")]
+#[link(name = "stdc++")]
+extern "C" {}
+
 /// A picture made ready for the graphics card ahead of time: every level, from the whole
 /// picture down, compressed into the 4 by 4 blocks the card reads directly. A quarter of the
 /// memory of plain pixels, and nothing left to do when it is first drawn.
