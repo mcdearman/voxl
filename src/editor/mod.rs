@@ -116,7 +116,28 @@ struct Held {
     height: f32,
     /// From where it was taken hold of to its own place.
     reach: Vec3,
+    /// Taken by one of its handles: which way that handle runs, where the entity was, and
+    /// how far along the handle the pointer was. It then moves only that way.
+    handle: Option<(Vec3, Vec3, f32)>,
 }
+
+/// The handles drawn on the chosen entity: where it is in the picture, and where the end
+/// of each of the three (east, up, south) is. All counted 0 to 1 across and down.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Handles {
+    middle: Vec2,
+    ends: [Vec2; 3],
+    /// How long a handle is in the world, so that it is the same length in the picture
+    /// however far off the entity is.
+    length: f32,
+}
+
+/// The ways the handles run, and what they are drawn in: red east, green up, blue south.
+const WAYS: [(Vec3, [f32; 3]); 3] = [
+    (Vec3::X, [0.94, 0.33, 0.31]),
+    (Vec3::Y, [0.45, 0.82, 0.35]),
+    (Vec3::Z, [0.33, 0.55, 0.96]),
+];
 
 /// One thing changed in the game from the app: a component of an entity as it was and as
 /// it became. Either may be nothing, for a component that was added or taken away.
@@ -248,6 +269,7 @@ pub struct Editor {
     /// covers (left, top, right, bottom, each from 0 to 1).
     held: Option<Held>,
     outline: Option<[f32; 4]>,
+    handles: Option<Handles>,
     /// What the bar says of the game, as last looked at.
     status: Status,
     layout: Dock,
@@ -298,6 +320,7 @@ impl Editor {
             tool: Tool::default(),
             held: None,
             outline: None,
+            handles: None,
             status: Status::default(),
             layout: std::fs::read_to_string(LAYOUT_FILE)
                 .ok()
@@ -570,6 +593,12 @@ impl Editor {
                 let (aspect, at) = self.place(at);
                 let ray = scene::sight(&camera, eye, at, aspect);
                 self.held = None;
+                // A handle of the chosen entity comes before whatever is behind it.
+                if let Some(held) = self.handle_at(at, ray) {
+                    self.held = Some(held);
+                    self.update(Message::Scrub(true));
+                    return;
+                }
                 let Some((entity, taken)) = self.under(ray) else {
                     return;
                 };
@@ -582,6 +611,7 @@ impl Editor {
                     entity,
                     height: taken.y,
                     reach: own - taken,
+                    handle: None,
                 });
                 self.update(Message::Scrub(true));
             }
@@ -591,12 +621,18 @@ impl Editor {
                 };
                 let (aspect, at) = self.place(at);
                 let ray = scene::sight(&camera, eye, at, aspect);
-                let Some(ground) = scene::on_ground(ray, held.height) else {
+                let to = match held.handle {
+                    // By a handle: as far that way as the pointer has gone along it.
+                    Some((way, from, taken)) => {
+                        scene::along(ray, from, way).map(|now| from + way * (now - taken))
+                    }
+                    None => scene::on_ground(ray, held.height).map(|ground| ground + held.reach),
+                };
+                let Some(mut to) = to else {
                     return;
                 };
                 // Where it is to be in the world, and so where under its parent.
                 let world = &self.game.world;
-                let mut to = ground + held.reach;
                 let parent = world
                     .get::<Parent>(held.entity)
                     .and_then(|parent| world.get::<GlobalTransform>(parent.0));
@@ -624,6 +660,73 @@ impl Editor {
             }
             _ => {}
         }
+    }
+
+    /// The handles of the chosen entity, as they are in the picture now.
+    fn handled(&mut self) -> Option<Handles> {
+        let entity = self.chosen?;
+        let (camera, eye) = self.eye()?;
+        let own = self
+            .game
+            .world
+            .get::<GlobalTransform>(entity)?
+            .0
+            .transform_point3(Vec3::ZERO);
+        let aspect = self.place(Point::new(0.0, 0.0)).0;
+        // A seventh of the picture's height long, wherever the entity is.
+        let ahead = -eye.inverse().transform_point3(own).z;
+        let (widening, half_height) = camera.spread();
+        let length = (widening * ahead + half_height) * 2.0 / 7.0;
+        let seen = |point| scene::in_picture(&camera, eye, point, aspect);
+        Some(Handles {
+            middle: seen(own)?,
+            ends: [
+                seen(own + WAYS[0].0 * length)?,
+                seen(own + WAYS[1].0 * length)?,
+                seen(own + WAYS[2].0 * length)?,
+            ],
+            length,
+        })
+    }
+
+    /// The handle of the chosen entity that a place in the picture is on, taken hold of.
+    fn handle_at(&mut self, at: Vec2, ray: scene::Ray) -> Option<Held> {
+        let (entity, handles) = (self.chosen?, self.handled()?);
+        // In points, so that near means the same across and down.
+        let (wide, tall) = (
+            self.size.0 as f32 / self.scale,
+            self.size.1 as f32 / self.scale,
+        );
+        let points = |place: Vec2| Vec2::new(place.x * wide, place.y * tall);
+        let pointer = points(at);
+        let middle = points(handles.middle);
+        // How far the pointer is from each handle's line in the picture; the nearest
+        // within reach is the one, its outer two thirds only, to leave the middle for
+        // taking hold of the entity itself.
+        let nearest = (0..3)
+            .filter_map(|which| {
+                let end = points(handles.ends[which]);
+                let line = end - middle;
+                let far = ((pointer - middle).dot(line) / line.length_squared().max(1e-6))
+                    .clamp(0.33, 1.0);
+                let off = (pointer - (middle + line * far)).length();
+                (off < 9.0).then_some((which, off))
+            })
+            .min_by(|a, b| a.1.total_cmp(&b.1))?
+            .0;
+        let way = WAYS[nearest].0;
+        let from = self
+            .game
+            .world
+            .get::<GlobalTransform>(entity)?
+            .0
+            .transform_point3(Vec3::ZERO);
+        Some(Held {
+            entity,
+            height: from.y,
+            reach: Vec3::ZERO,
+            handle: Some((way, from, scene::along(ray, from, way)?)),
+        })
     }
 
     /// The part of the picture the chosen entity covers, as it is now.
@@ -723,7 +826,10 @@ impl Editor {
                 let frame = (self.tool == Tool::Move).then_some(self.outline).flatten();
                 stack()
                     .push(picture)
-                    .push(Element::new(Outline(frame)))
+                    .push(Element::new(Outline(
+                        frame,
+                        (self.tool == Tool::Move).then_some(self.handles).flatten(),
+                    )))
                     .into()
             }
             ENTITIES => scrollable(
@@ -808,7 +914,7 @@ impl Editor {
                                 .push(Space::fill_x())
                                 .push(text(shown).mono().size(12.5).tone(Tone::Muted)),
                         )
-                        .padding([3.0, 4.0]),
+                        .padding([4.0, 3.0]),
                     );
                 }
                 if self.lists.signals.is_empty() {
@@ -929,7 +1035,7 @@ impl Editor {
 
 /// A frame drawn over the picture round what is chosen. It takes up the picture's whole
 /// space and nothing that is done there: the picture underneath hears it all.
-struct Outline(Option<[f32; 4]>);
+struct Outline(Option<[f32; 4]>, Option<Handles>);
 
 impl neo::Widget<Message> for Outline {
     fn width(&self) -> Length {
@@ -945,10 +1051,28 @@ impl neo::Widget<Message> for Outline {
     }
 
     fn draw(&self, cx: &mut neo::DrawCx) {
+        let within = cx.bounds();
+        // The handles: a line each way from the middle, with a knob to take hold of.
+        if let Some(handles) = self.1 {
+            let at = |place: Vec2| {
+                Point::new(within.x + place.x * within.w, within.y + place.y * within.h)
+            };
+            cx.scene.push_clip(within);
+            for (end, (_, [r, g, b])) in handles.ends.iter().zip(WAYS) {
+                let (from, to, colour) = (at(handles.middle), at(*end), Color::rgb(r, g, b));
+                cx.scene.line(from, to, 2.0, colour);
+                cx.scene.fill(
+                    Rect::new(to.x - 4.5, to.y - 4.5, 9.0, 9.0),
+                    4.5,
+                    colour,
+                    None,
+                );
+            }
+            cx.scene.pop_clip();
+        }
         let Some([left, top, right, bottom]) = self.0 else {
             return;
         };
-        let within = cx.bounds();
         let frame = Rect::new(
             within.x + left * within.w - 3.0,
             within.y + top * within.h - 3.0,
@@ -1309,6 +1433,8 @@ impl App for Editor {
             });
             changed = true;
         }
+        let handles = self.handled();
+        changed |= std::mem::replace(&mut self.handles, handles) != handles;
         let outline = self.outlined();
         changed |= std::mem::replace(&mut self.outline, outline) != outline;
         let status = self.look();
@@ -1491,7 +1617,7 @@ impl App for Editor {
         let gap = || {
             container(Divider::vertical())
                 .height(18.0)
-                .padding([0.0, 4.0])
+                .padding([5.0, 0.0])
         };
         let (undo, redo) = self.can_undo();
         let said = if self.told.is_empty() {
@@ -1540,11 +1666,12 @@ impl App for Editor {
                 icons::SETTINGS,
                 Some(Message::Desktop(DesktopMsg::OpenSettings)),
             ));
-        // No strip of its own and no room round it: the buttons sit against the window's
-        // edge, and one line marks where the bar ends and the panels begin.
+        // No strip of its own: the buttons sit side by side with nothing between them, a
+        // little in from the window's edge, and one line marks where the bar ends and the
+        // panels begin.
         let bar = column()
             .width(Length::Fill)
-            .push(container(bar).padding([2.0, 6.0]).width(Length::Fill))
+            .push(container(bar).padding([10.0, 3.0]).width(Length::Fill))
             .push(Divider::horizontal());
         let panels = dock(
             &self.layout,
@@ -2179,6 +2306,28 @@ mod tests {
             (local - Vec3::new(4.0, 0.0, 0.0)).length() < 0.02,
             "{local}"
         );
+
+        // The chosen entity has handles: east, up and south. Taken by the one that points
+        // up, it moves up and down and no other way.
+        editor.game_mut().update();
+        let own = Vec3::new(1.0, 0.0, 1.0);
+        let handles = editor.handled().expect("handles on the chosen one");
+        assert!(handles.length > 0.5 && handles.ends[0].x > handles.middle.x);
+        let up = Point::new(handles.ends[2].x * 800.0, handles.ends[2].y * 600.0);
+        editor.update(press(up));
+        assert!(
+            matches!(editor.held, Some(Held { handle: Some((way, ..)), .. }) if way == Vec3::Z)
+        );
+        // (Seen from above, south is the one that can be read; up points at the eye.)
+        let further = shown(&mut editor, own + Vec3::Z * (handles.length + 1.5));
+        editor.update(Message::Input(ViewportEvent::Moved(further)));
+        editor.update(release(further));
+        let local = place(&editor, carried);
+        assert!(
+            (local - Vec3::new(4.0, 0.0, 1.5)).length() < 0.05,
+            "{local}"
+        );
+        editor.game_mut().update();
 
         // A press on nothing takes hold of nothing; the chosen entity is framed in the
         // picture; with another tool, the picture is the game's and nothing is moved.

@@ -374,7 +374,7 @@ editor needs from it.
 - [x] Neo's look: the desktop's appearance, a glass window by default with a switch in
       Settings, and a tool bar of mira's own
 - [x] Choosing an entity by clicking it in the picture, and moving it over the ground by
-      dragging; a frame round the chosen one
+      dragging, or along one direction by a handle; a frame round the chosen one
 - [x] Undo and redo of what is changed from the app; saving the scene and opening one;
       names for entities (`Name`), given in the tree
 - [ ] Play in editor: the scene as edited kept apart from the game as it runs, so that

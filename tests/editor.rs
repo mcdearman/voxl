@@ -94,16 +94,16 @@ fn the_app_is_worked_by_clicking_on_it() {
     );
 
     // The bar's first button pauses the game, and then resumes it.
-    window.click(Point::new(15.0, 66.0));
+    window.click(Point::new(25.0, 63.0));
     window.frame(TICK, 1.0);
     assert!(paused(&window), "Pause was pressed");
-    window.click(Point::new(15.0, 66.0));
+    window.click(Point::new(25.0, 63.0));
     window.frame(TICK, 1.0);
     assert!(!paused(&window), "Resume was pressed");
 
     // A row of the tree chooses its entity; the arrow keys move on from it.
     assert_eq!(window.app().chosen(), None);
-    window.click(Point::new(900.0, 139.0));
+    window.click(Point::new(900.0, 133.0));
     window.frame(TICK, 1.0);
     let first = window
         .app()
@@ -126,7 +126,7 @@ fn the_app_is_worked_by_clicking_on_it() {
             .x
     };
     let before = x(&window);
-    let field = Point::new(930.0, 513.0);
+    let field = Point::new(930.0, 507.0);
     window.event(Event::PointerMoved { pos: field });
     window.event(Event::PointerPressed {
         pos: field,
@@ -187,7 +187,7 @@ fn the_app_is_worked_by_clicking_on_it() {
         window.frame(TICK, 1.0);
         window.frame(TICK, 1.0);
     };
-    let row = |index: usize| Point::new(900.0, 139.0 + 26.0 * index as f32);
+    let row = |index: usize| Point::new(900.0, 133.0 + 26.0 * index as f32);
     let parent_of = |window: &Harness<Editor>, child: Entity| {
         let world = &window.app().game().world;
         world.get::<Parent>(child).map(|parent| parent.0.index())
@@ -197,7 +197,7 @@ fn the_app_is_worked_by_clicking_on_it() {
     window.frame(TICK, 1.0);
     let child = window.app().chosen().expect("the row that was moved");
     assert_eq!((child.index(), parent_of(&window, child)), (6, Some(5)));
-    drag(&mut window, row(4), Point::new(950.0, 658.0));
+    drag(&mut window, row(4), Point::new(950.0, 652.0));
     assert_eq!(
         parent_of(&window, child),
         Some(4),
@@ -206,7 +206,7 @@ fn the_app_is_worked_by_clicking_on_it() {
 
     // In the picture of the game, a press chooses what is under the pointer and a drag
     // slides it over the ground: the western site, pulled towards the camera.
-    let site = Point::new(262.0, 314.0);
+    let site = Point::new(262.0, 310.0);
     window.click(site);
     window.frame(TICK, 1.0);
     let chosen = window.app().chosen().expect("the site under the pointer");
@@ -216,7 +216,7 @@ fn the_app_is_worked_by_clicking_on_it() {
         world.get::<Transform>(chosen).expect("a place").translation
     };
     let before = place(&window);
-    drag(&mut window, site, Point::new(262.0, 395.0));
+    drag(&mut window, site, Point::new(262.0, 391.0));
     let after = place(&window);
     assert!(
         after.z > before.z + 2.0 && (after.x - before.x).abs() < 0.2 && after.y == before.y,
@@ -235,7 +235,7 @@ fn the_app_is_worked_by_clicking_on_it() {
     }
 
     // The bar's Settings button opens the panel every Neo app has, over the rest.
-    window.click(Point::new(1081.0, 66.0));
+    window.click(Point::new(1075.0, 63.0));
     window.frame(TICK, 1.0);
     assert!(window.app().settings_open());
     if let Ok(path) = std::env::var("MIRA_EDITOR_SHOT") {
