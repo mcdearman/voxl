@@ -116,7 +116,9 @@ impl Gpu {
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("mira device"),
-                required_features: if traced { rt_features } else { wgpu::Features::empty() },
+                // Lines for polygons, where there are any, are for the wireframe view.
+                required_features: (if traced { rt_features } else { wgpu::Features::empty() })
+                    | (adapter.features() & wgpu::Features::POLYGON_MODE_LINE),
                 required_limits: wgpu::Limits {
                     // Big merged scenery meshes.
                     max_buffer_size: available.max_buffer_size,

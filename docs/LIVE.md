@@ -223,6 +223,17 @@ yellow for a kinematic one, white for what never moves, purple for a sensor), `c
 cargo run --bin mira-debug -- resource name=mira.PhysicsDebug value='{"colliders": true}'
 ```
 
+## Seeing the scene another way
+
+The `ViewMode` resource changes how everything is drawn: `Lit` as usual, `Unlit` for each
+surface's own colour, `LightingOnly` for the light on plain grey, `Normals`, and `Wireframe`
+(where the graphics card can draw polygons as lines; elsewhere it is `Unlit`). The three
+that are readings and not pictures skip the haze, bloom and film curve, over a plain ground.
+
+```sh
+cargo run --bin mira-debug -- resource name=mira.ViewMode value=Wireframe
+```
+
 ## What isn't here yet
 
 - A timeline of a frame (which system ran on which thread, when), and marks inside a system.

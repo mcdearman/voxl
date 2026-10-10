@@ -126,6 +126,10 @@ struct Batch {
 pub struct MeshRenderer {
     /// Indexed by `BatchKey::variant`: bit 0 alpha-tested, bit 1 double-sided, bit 2 decal.
     pipelines: [wgpu::RenderPipeline; 8],
+    /// Draws triangles as their edges, where the graphics card can.
+    wire: Option<wgpu::RenderPipeline>,
+    /// Whether to draw with `wire` this frame.
+    pub(crate) wireframe: bool,
     shadow_opaque: wgpu::RenderPipeline,
     shadow_masked: wgpu::RenderPipeline,
     material_layout: wgpu::BindGroupLayout,
@@ -181,7 +185,7 @@ impl MeshRenderer {
             bind_group_layouts: &[Some(&view.layout), Some(&material_layout)],
             immediate_size: 0,
         });
-        let pipeline = |masked: bool, double_sided: bool, decal: bool| {
+        let pipeline = |masked: bool, double_sided: bool, decal: bool, lines: bool| {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some("mesh pipeline"),
                 layout: Some(&layout),
@@ -203,6 +207,7 @@ impl MeshRenderer {
                 }),
                 primitive: wgpu::PrimitiveState {
                     cull_mode: (!double_sided).then_some(wgpu::Face::Back),
+                    polygon_mode: if lines { wgpu::PolygonMode::Line } else { wgpu::PolygonMode::Fill },
                     ..Default::default()
                 },
                 depth_stencil: Some(if decal {
@@ -224,7 +229,11 @@ impl MeshRenderer {
                 cache: None,
             })
         };
-        let pipelines = std::array::from_fn(|variant| pipeline(variant & 1 != 0, variant & 2 != 0, variant & 4 != 0));
+        let pipelines = std::array::from_fn(|variant| pipeline(variant & 1 != 0, variant & 2 != 0, variant & 4 != 0, false));
+        let wire = device
+            .features()
+            .contains(wgpu::Features::POLYGON_MODE_LINE)
+            .then(|| pipeline(false, true, false, true));
 
         let shadow_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("mesh shadow layout"),
@@ -277,6 +286,8 @@ impl MeshRenderer {
         let instance_capacity = 64;
         Self {
             pipelines,
+            wire,
+            wireframe: false,
             shadow_opaque: shadow_pipeline(false),
             shadow_masked: shadow_pipeline(true),
             material_layout,
@@ -297,6 +308,7 @@ impl MeshRenderer {
     /// this one's meshes, textures and materials.
     pub(crate) fn adopt_pipelines(&mut self, fresh: Self) {
         self.pipelines = fresh.pipelines;
+        self.wire = fresh.wire;
         self.shadow_opaque = fresh.shadow_opaque;
         self.shadow_masked = fresh.shadow_masked;
     }
@@ -479,7 +491,10 @@ impl MeshRenderer {
     }
 
     pub fn draw(&self, pass: &mut wgpu::RenderPass<'_>) {
-        self.draw_with(pass, &self.batches, |key| &self.pipelines[key.variant as usize]);
+        match (&self.wire, self.wireframe) {
+            (Some(wire), true) => self.draw_with(pass, &self.batches, |_| wire),
+            _ => self.draw_with(pass, &self.batches, |key| &self.pipelines[key.variant as usize]),
+        }
     }
 
     /// A mesh's vertex and index buffers on the GPU.

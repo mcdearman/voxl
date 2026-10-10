@@ -44,7 +44,7 @@ pub use renderer::MeshRenderer;
 pub use screenshot::Screenshot;
 pub use shadow::{shadow_depth_state, CascadeData, ShadowMaps, ShadowSettings, CASCADES};
 pub use texture::TextureArray;
-pub use view::ViewBinding;
+pub use view::{ViewBinding, ViewMode};
 use probes::ProbeBaker;
 
 use crate::{
@@ -698,6 +698,7 @@ fn prepare(
     mut frame: ResMut<RenderFrame>,
     rt: Option<ResMut<RayTracing>>,
     mut skinner: ResMut<skin::Skinner>,
+    mode: Res<ViewMode>,
 ) {
     let mut rt = rt;
     if sky.gpu_environment.generation != environment.generation {
@@ -705,7 +706,8 @@ fn prepare(
         view.rebind(&gpu, &shadows, &sky.gpu_environment, rt.as_deref());
     }
     let probes = rt.as_deref().map_or([[0.0, 0.0, 0.0, 1.0], [1.0, 1.0, 1.0, 0.0]], |rt| rt.probes.uniform());
-    view.write(&gpu, &frame, sky.gpu_environment.mip_count, &shadows, probes);
+    view.write(&gpu, &frame, *mode, sky.gpu_environment.mip_count, &shadows, probes);
+    renderer.wireframe = *mode == ViewMode::Wireframe;
     shadows.write(&gpu, &frame.cascades);
     renderer.sync_meshes(&gpu, &mut meshes);
     renderer.sync_images(&gpu, &mut images);
@@ -952,7 +954,8 @@ fn render(world: &mut World) {
         }
     });
     world.resource_scope(|world, post: &mut PostRenderer| {
-        post.render(world.resource::<Gpu>(), &mut encoder, &scene, &target, &settings, time);
+        let plain = world.resource::<ViewMode>().is_plain();
+        post.render(world.resource::<Gpu>(), &mut encoder, &scene, &target, &settings, time, plain);
     });
 
     // The frame itself is done; overlays draw on top of it, and a screenshot is taken of
@@ -1063,7 +1066,9 @@ impl Plugin for RenderPlugin {
             .register_resource_type::<Fog>()
             .register_resource_type::<PostProcess>()
             .register_resource_type::<ShadowSettings>()
-            .register_resource_type::<VolumetricLight>();
+            .register_resource_type::<VolumetricLight>()
+            .init_resource::<ViewMode>()
+            .register_resource_type::<ViewMode>();
         app.init_resource::<Assets<Mesh>>()
             .init_resource::<Assets<Image>>()
             .init_resource::<AmbientLight>()

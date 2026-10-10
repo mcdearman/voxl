@@ -4,7 +4,8 @@
 struct Post {
     // x: exposure, y: bloom strength, z: vignette strength, w: saturation
     params: vec4<f32>,
-    // x: contrast (1 = plain AgX), y: the look's extra saturation
+    // x: contrast (1 = plain AgX), y: the look's extra saturation, z: 1 to show the scene's
+    // values as they are, for the view modes that are a reading and not a picture
     look: vec4<f32>,
     // Colour grading: tints multiplying the shadows and the highlights of the finished image.
     shadows: vec4<f32>,
@@ -97,6 +98,10 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     var color = unsquash(clamp(middle + (middle - around) * post.extra.x, vec3<f32>(0.0), vec3<f32>(0.999)));
     // White balance: warmer or cooler light.
     color *= vec3<f32>(1.0 + post.extra.w * 0.12, 1.0, 1.0 - post.extra.w * 0.12);
+    if post.look.z > 0.5 {
+        // No bloom, grading or film curve: only the exposure, which those modes divided by.
+        return vec4<f32>(clamp(unsquash(middle) * post.params.x, vec3<f32>(0.0), vec3<f32>(1.0)), 1.0);
+    }
     let bloom = textureSampleLevel(bloom_texture, linear_sampler, in.uv, 0.0).rgb;
     color += bloom * post.params.y;
     color *= post.params.x;

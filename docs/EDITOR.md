@@ -106,6 +106,11 @@ and move the pointer to turn; with it held, W A S D fly and E and Q rise and sin
 moves in and out. The button again gives the view back to the game. The app's camera is
 never saved with the scene and is not in the tree.
 
+**View modes.** The **View** menu changes how the scene is drawn, the mode it is in marked:
+*Lit* (the game as it is), *Unlit* (each surface in its own colour), *Lighting only* (the
+light on plain grey), *Normals* (which way surfaces face) and *Wireframe* (the edges of
+every triangle). It is the `ViewMode` resource, so a game or an agent can set it too.
+
 What is under the pointer is found from each entity's mesh, as a box round it; an entity
 with no mesh (a light) is a small box where it stands. The camera the game is seen through
 can't be picked.
@@ -221,7 +226,7 @@ having each. "Ready" means the engine already holds the data and only the panel 
 | Assets (built, as a list) | Content Browser, Project, FileSystem | Thumbnails; dragging into the scene; pictures put to use from there |
 | Place (built, but for prefabs and dragging in) | Place Actors, Create menu | Prefabs in the palette; dragging a thing to where it is wanted |
 | Prefab editor (saving and placing are built) | Blueprint/Prefab mode | Opening a prefab by itself; placed copies that follow the file, their overrides shown apart |
-| View modes (the scene camera itself is built) | Editor viewport camera, view modes | Wireframe, unlit and overdraw views |
+| More view modes (five are built) | View modes | Overdraw, shader cost, light and collision views |
 | Game view | Unity's Game beside Scene | A second viewport: the game as the player sees it beside the scene as the editor does |
 | Material editor | Material Editor, Shader Graph | A material system with graphs (Phase 3) |
 | Voxel tools | Landscape, Foliage, Modeling modes; Tile Palette | Brushes for sculpting and painting blocks; a block palette |

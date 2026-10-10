@@ -33,5 +33,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // The haze thickens toward the horizon, as it does over the land.
     let below = saturate(-dir.y * 8.0);
     color = mix(color, sample_sky(normalize(vec3<f32>(dir.x, 0.03, dir.z)), view.fog.w - 4.0), below);
+    // The view modes that are readings of the scene want a plain ground to be read against.
+    if view.shadow_params.z == 1.0 || view.shadow_params.z == 3.0 {
+        color = vec3<f32>(0.03) / max(view.camera_forward.w, 1e-4);
+    }
     return vec4<f32>(color, 1.0);
 }

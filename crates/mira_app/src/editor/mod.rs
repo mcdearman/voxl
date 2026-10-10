@@ -41,7 +41,7 @@ use mira::{
     prelude::Vec2,
     reflect::{NotSaved, Scene, TypeRegistry, Value},
     render::frame_texture,
-    render::{Camera, DirectionalLight, Material, Mesh, Mesh3d},
+    render::{Camera, DirectionalLight, Material, Mesh, Mesh3d, ViewMode},
     signal::{Signal, Signals},
     time::Time,
     transform::Parent,
@@ -136,6 +136,8 @@ pub enum Message {
     Jump(usize),
     /// Moments of the game are kept to go back to, or no longer.
     Record(bool),
+    /// The scene is drawn this way from now on.
+    ViewMode(ViewMode),
     /// A part of physics is drawn over the scene, or no longer.
     PhysicsDrawn(Drawn, bool),
     /// The game goes back this many frames.
@@ -2130,7 +2132,24 @@ impl App for Editor {
                 menu.push(MenuEntry::new(label, Message::Panel((*panel).to_owned())))
             },
         );
-        vec![window]
+        // How the scene is drawn, the mode it is in marked.
+        let now = self
+            .game
+            .world
+            .get_resource::<ViewMode>()
+            .copied()
+            .unwrap_or_default();
+        let view = ViewMode::ALL.into_iter().fold(Menu::new("View"), |menu, mode| {
+            let mark = if mode == now { "✓ " } else { "" };
+            let label = format!("{mark}{}", mode.name());
+            menu.push(MenuEntry::new(label, Message::ViewMode(mode)))
+        });
+        vec![window, view]
+    }
+
+    /// Lines for polygons, where the graphics card has them: the wireframe view's.
+    fn wanted_features(&self, available: wgpu::Features) -> wgpu::Features {
+        available & wgpu::Features::POLYGON_MODE_LINE
     }
 
     fn app_menu(&self) -> Vec<MenuEntry<Message>> {
@@ -2385,6 +2404,12 @@ impl App for Editor {
             Message::Rewind(frames) => {
                 mira::live::History::rewind(&mut self.game.world, frames);
                 self.lists = Lists::of(&self.game, self.chosen);
+            }
+            Message::ViewMode(mode) => {
+                if let Some(now) = self.resource::<ViewMode>() {
+                    *now = mode;
+                    self.told = format!("drawn {}", mode.name().to_lowercase());
+                }
             }
             Message::PhysicsDrawn(which, on) => {
                 if let Some(shown) = self.resource::<PhysicsDebug>() {
@@ -2754,6 +2779,20 @@ mod tests {
         assert!(PANELS
             .iter()
             .all(|panel| !panel.contains([',', '*', '(', ')'])));
+    }
+
+    #[test]
+    fn the_view_menu_changes_how_the_scene_is_drawn() {
+        let mut game = mira::app::App::new();
+        game.world.insert_resource(ViewMode::default());
+        let mut editor = Editor::new(game);
+        let view = &editor.menus()[1];
+        assert_eq!(view.entries.len(), ViewMode::ALL.len());
+        editor.update(Message::ViewMode(ViewMode::Wireframe));
+        assert_eq!(
+            editor.game.world.get_resource::<ViewMode>().copied(),
+            Some(ViewMode::Wireframe)
+        );
     }
 
     #[test]
