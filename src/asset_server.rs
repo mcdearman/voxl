@@ -90,23 +90,40 @@ impl Processing {
         if let (Some(processed), false) = (&cached, self.keep_pixels) {
             return Ok(Image::from_processed(processed.clone()));
         }
-        let mut image = Image::from_bytes(bytes, srgb)?;
+        Ok(self.finish(Image::from_bytes(bytes, srgb)?, &key, cached))
+    }
+
+    /// Compresses a picture that is here as pixels, keeping the result under `key`; or takes
+    /// what the cache already had for it.
+    fn finish(&self, mut image: Image, key: &str, cached: Option<crate::render::Processed>) -> Image {
         let Some(processed) = cached.or_else(|| {
             let processed = image.process()?;
             if let Some(dir) = &self.cache {
-                crate::asset_cache::write(dir, &key, &processed);
+                crate::asset_cache::write(dir, key, &processed);
                 crate::asset_cache::prune(dir, self.limit);
             }
             Some(processed)
         }) else {
             // A size blocks can't hold: it stays as plain pixels.
-            return Ok(image);
+            return image;
         };
         if !self.keep_pixels {
             image.data = Vec::new();
         }
         image.processed = Some(Arc::new(processed));
-        Ok(image)
+        image
+    }
+
+    /// The same for a picture that came as pixels, from inside a model file: named in the
+    /// cache by its pixels.
+    fn pixels(&self, image: Image) -> Image {
+        if !self.compress {
+            return image;
+        }
+        let how = format!("bc7-{}-pixels-{}x{}", if image.srgb { "srgb" } else { "linear" }, image.width, image.height);
+        let key = crate::asset_cache::key(&image.data, &how);
+        let cached = self.cache.as_ref().and_then(|dir| crate::asset_cache::read(dir, &key));
+        self.finish(image, &key, cached)
     }
 }
 
@@ -556,12 +573,7 @@ impl AssetServer {
         self.loading += 1;
         self.images_loading.insert(id);
         self.images_failed.remove(&id);
-        let how = Processing {
-            compress: self.compress,
-            keep_pixels: self.keep_pixels,
-            cache: self.cache.then(|| self.cache_dir()),
-            limit: self.cache_limit,
-        };
+        let how = self.processing();
         let pool = self.pool.get_or_insert_with(|| TaskPool::new(2));
         pool.spawn(&self.decoded.sender, move || {
             let image = std::fs::read(&path)
@@ -572,6 +584,15 @@ impl AssetServer {
                 });
             DecodedImage { id, path, image }
         });
+    }
+
+    fn processing(&self) -> Processing {
+        Processing {
+            compress: self.compress,
+            keep_pixels: self.keep_pixels,
+            cache: self.cache.then(|| self.cache_dir()),
+            limit: self.cache_limit,
+        }
     }
 
     /// Where processed assets are kept.
@@ -844,9 +865,14 @@ impl AssetServer {
         self.models_loading.insert(name.to_owned());
         self.loading += 1;
         let (name, path) = (name.to_owned(), self.path(name));
+        let how = self.processing();
         let pool = self.pool.get_or_insert_with(|| TaskPool::new(2));
         pool.spawn(&self.imported.sender, move || ImportedModel {
-            imported: GltfScene::import(&path),
+            // Its textures are compressed here too, where the file is read.
+            imported: GltfScene::import(&path).map(|mut imported| {
+                imported.prepare(|image| how.pixels(image));
+                imported
+            }),
             name,
         });
     }
@@ -1451,6 +1477,38 @@ mod tests {
         let odd = load(false, "odd.png");
         assert!(odd.processed.is_none() && odd.has_pixels());
         assert_eq!(cached(), 3);
+    }
+
+    #[test]
+    fn a_model_files_textures_are_compressed_where_the_file_is_read() {
+        let dir = TempDir::new("model-textures");
+        let hen =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("res/paris/models/animals/hen_white.glb");
+        std::fs::copy(&hen, dir.0.join("bird.glb")).unwrap();
+        let load = |compress: bool| {
+            let mut server = AssetServer::new(&dir.0);
+            server.compress = compress;
+            let (mut meshes, mut images) = (Assets::<Mesh>::default(), Assets::<Image>::default());
+            assert!(!server.request_gltf("bird.glb"));
+            server.wait_for_models(&mut meshes, &mut images);
+            let scene = server.model("bird.glb").expect("the model arrived");
+            let textures: Vec<Image> = scene
+                .parts
+                .iter()
+                .filter_map(|part| part.material.base_color_texture)
+                .filter_map(|handle| images.get(handle).cloned())
+                .collect();
+            assert!(!textures.is_empty(), "the hen has a texture");
+            textures
+        };
+        // Sides that blocks can hold are compressed and keep no pixels; without compression
+        // they are as they were.
+        let fits = |image: &Image| image.width.is_multiple_of(4) && image.height.is_multiple_of(4);
+        for texture in load(true) {
+            assert_eq!(texture.processed.is_some(), fits(&texture));
+            assert_eq!(texture.has_pixels(), !fits(&texture));
+        }
+        assert!(load(false).iter().all(|texture| texture.processed.is_none() && texture.has_pixels()));
     }
 
     #[test]

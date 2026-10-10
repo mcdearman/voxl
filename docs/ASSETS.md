@@ -134,7 +134,8 @@ registered, goes stale when its asset is unloaded. Protect those with `server.ke
 - A model's parts come all at once, and a reloaded model is rebuilt whole.
 - Textures a model file refers to in other files are read with it, not as assets of their
   own with their own names.
-- Only picture files are processed. Textures inside a model file are uploaded as plain
-  pixels, meshes are not yet turned into a binary form, and there is no ASTC for the cards
-  that want it in place of BC.
+- Pictures are processed, in files of their own and inside model files shown by a `Model`
+  (a model loaded with `load_gltf` on the calling thread is left as it is). Meshes are not
+  yet turned into a binary form, and there is no ASTC for the cards that want it in place
+  of BC.
 - The Napoleonic and Paris demos still load their assets directly.

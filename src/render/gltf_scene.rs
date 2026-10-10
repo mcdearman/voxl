@@ -26,6 +26,9 @@ pub struct Imported {
     document: gltf::Document,
     buffers: Vec<gltf::buffer::Data>,
     images: Vec<gltf::image::Data>,
+    /// Images made ready ahead of the build, by which image of the file and whether it is
+    /// colour: see [`Imported::prepare`].
+    ready: HashMap<(usize, bool), Image>,
 }
 
 /// One drawable piece of a glTF scene: a primitive, its material, and where it sits relative
@@ -72,9 +75,37 @@ impl GltfScene {
             document,
             buffers,
             images,
+            ready: HashMap::new(),
         })
     }
 
+}
+
+impl Imported {
+    /// Makes the file's textures into images now, each passed through `finish`, so that
+    /// work on them (compressing them for the graphics card, say) is done where the file
+    /// was read and not where the scene is built. Each image is made once for each way the
+    /// file's materials use it: as colour, as data, or both.
+    pub fn prepare(&mut self, finish: impl Fn(Image) -> Image) {
+        let mut uses: Vec<(usize, bool)> = Vec::new();
+        for material in self.document.materials() {
+            let pbr = material.pbr_metallic_roughness();
+            let colour = pbr.base_color_texture().map(|t| (t.texture().source().index(), true));
+            let normal = material.normal_texture().map(|t| (t.texture().source().index(), false));
+            let rough = pbr.metallic_roughness_texture().map(|t| (t.texture().source().index(), false));
+            uses.extend(colour.into_iter().chain(normal).chain(rough));
+        }
+        uses.sort_unstable();
+        uses.dedup();
+        for (index, srgb) in uses {
+            if let Some(data) = self.images.get(index) {
+                self.ready.insert((index, srgb), finish(to_image(data, srgb)));
+            }
+        }
+    }
+}
+
+impl GltfScene {
     /// Makes a scene of a file that has been read: its meshes and images go into the asset
     /// stores, as [`load`](Self::load) says.
     pub fn build(imported: Imported, meshes: &mut Assets<Mesh>, images: &mut Assets<Image>) -> anyhow::Result<Self> {
@@ -82,6 +113,7 @@ impl GltfScene {
             document,
             buffers,
             images: image_data,
+            mut ready,
         } = imported;
 
         // An image may be colour in one material and data in another; upload each use once.
@@ -91,9 +123,16 @@ impl GltfScene {
         let mut image = |index: usize, srgb: bool| -> Handle<Image> {
             *uploaded.entry((index, srgb)).or_insert_with(|| {
                 let data = &image_data[index];
-                let key = (content_hash(&data.pixels, data.width, data.height), srgb);
+                let key = (images.store(), content_hash(&data.pixels, data.width, data.height), srgb);
                 let mut shared = SHARED_IMAGES.lock().unwrap_or_else(|e| e.into_inner());
-                *shared.get_or_insert_with(HashMap::new).entry(key).or_insert_with(|| images.add(to_image(data, srgb)))
+                let shared = shared.get_or_insert_with(HashMap::new);
+                // One shared earlier may have been unloaded since.
+                if let Some(handle) = shared.get(&key).filter(|handle| images.contains_id(handle.id())) {
+                    return *handle;
+                }
+                let handle = images.add(ready.remove(&(index, srgb)).unwrap_or_else(|| to_image(data, srgb)));
+                shared.insert(key, handle);
+                handle
             })
         };
         let materials: Vec<Material> = document
@@ -411,8 +450,9 @@ fn to_image(data: &gltf::image::Data, srgb: bool) -> Image {
     Image::from_rgba(data.width, data.height, rgba, srgb)
 }
 
-/// Images loaded from any glTF file, by content, so identical ones are uploaded once.
-type SharedImages = HashMap<(u64, bool), Handle<Image>>;
+/// Images loaded from any glTF file, by the store they went into and their content, so
+/// identical ones are uploaded once.
+type SharedImages = HashMap<(u64, u64, bool), Handle<Image>>;
 static SHARED_IMAGES: std::sync::Mutex<Option<SharedImages>> = std::sync::Mutex::new(None);
 
 fn content_hash(pixels: &[u8], width: u32, height: u32) -> u64 {

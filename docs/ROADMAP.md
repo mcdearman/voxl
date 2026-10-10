@@ -217,7 +217,8 @@ The layer Unreal's editor, saves, networking and Blueprints all stand on.
       a prefab and what it uses), with load states, `is_ready`, and unloading that follows it
 - [x] Asset processing, first part: picture files to BC7 with their smaller levels, on
       workers, cached on disk by content hash, with a limit on the cache
-- [ ] The rest of it: the textures inside model files, ASTC, meshes to a binary format
+- [x] The textures inside model files, compressed where the file is read
+- [ ] ASTC for the cards that want it; meshes to a binary format
 - [x] Skins and animations from glTF, in code (`GltfScene::spawn_animated`) and as data (a
       `Model` whose file has a skeleton gets an `Animator` and skinned parts)
 
