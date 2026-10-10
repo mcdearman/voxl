@@ -57,6 +57,7 @@ agent's group, and can be dragged anywhere from there.
 
 | Panel | What it shows |
 |---|---|
+| Place | Things to put in the scene: a cube, a ball, a floor, a sun, a camera, an empty entity to hang others on. Each goes on the ground in the middle of the picture, named and chosen. Also Duplicate and Delete for the chosen entity (Cmd/Ctrl+D; Delete or Backspace), which take everything under it along. All of it can be taken back |
 | Log | What the engine and the game have logged, newest at the bottom, by level; a box to show only lines with some text in them |
 | Console | A line to type anything the debug connection understands (`pause`, `entities with=mira.Camera`, `signal_set name=open value=true`), with the answers |
 | Profiler | The last frames as a graph, the usual and the worst frame, the time each stage took, and the slowest systems |
@@ -82,6 +83,14 @@ Three buttons in the tool bar say what the pointer does in the picture of the ga
   keys go to it.
 - **Look** (the mouse): the game's, with the pointer held in the picture and hidden, for
   games that turn with the mouse. Escape lets it go.
+
+**The scene camera.** The camera button at the end of those tools looks at the scene
+through a camera of the app's own instead of the game's: it starts where the game's camera
+is, in perspective whatever the game's view is, and the game's camera is left where it was
+and can now be chosen and moved like anything else. Hold the right button in the picture
+and move the pointer to turn; with it held, W A S D fly and E and Q rise and sink; the wheel
+moves in and out. The button again gives the view back to the game. The app's camera is
+never saved with the scene and is not in the tree.
 
 What is under the pointer is found from each entity's mesh, as a box round it; an entity
 with no mesh (a light) is a small box where it stands. The camera the game is seen through
@@ -194,9 +203,9 @@ having each. "Ready" means the engine already holds the data and only the panel 
 | Panel | In other engines | What is missing |
 |---|---|---|
 | Assets | Content Browser, Project, FileSystem | Thumbnails; a listing of files on disk and not only what is loaded; dragging into the scene |
-| Place | Place Actors, Create menu | A palette of shapes, lights, cameras and prefabs to drag in; needs spawn and delete from the app |
+| Place (built, but for prefabs and dragging in) | Place Actors, Create menu | Prefabs in the palette; dragging a thing to where it is wanted |
 | Prefab editor | Blueprint/Prefab mode | Opening a prefab by itself, its overrides shown apart |
-| Scene camera | Editor viewport camera, view modes | A camera of the app's own to fly about with, apart from the game's; wireframe, unlit, overdraw views |
+| View modes (the scene camera itself is built) | Editor viewport camera, view modes | Wireframe, unlit and overdraw views |
 | Game view | Unity's Game beside Scene | A second viewport: the game as the player sees it beside the scene as the editor does |
 | Material editor | Material Editor, Shader Graph | A material system with graphs (Phase 3) |
 | Voxel tools | Landscape, Foliage, Modeling modes; Tile Palette | Brushes for sculpting and painting blocks; a block palette |

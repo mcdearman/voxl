@@ -13,11 +13,11 @@ use std::{sync::mpsc::Sender, time::Duration};
 
 use mira::{
     live::Live,
-    prelude::{Entity, Parent, Transform},
+    prelude::{Entity, Mesh3d, Parent, Transform},
 };
 use mira_app::editor::{
     agent::{Agent, Heard},
-    Editor, Message,
+    Editor, Message, Placed,
 };
 use neo::testing::Harness;
 use neo::App as _;
@@ -231,6 +231,51 @@ fn the_app_is_worked_by_clicking_on_it() {
     });
     window.frame(TICK, 1.0);
 
+    // A cube is put in the scene from the Place panel's message, in the middle of the
+    // picture, with a shape to be seen by; taken away again, the scene is as it was.
+    let entities = window.app().game().world.entity_count();
+    window.app_mut().update(Message::Place(Placed::Cube));
+    window.frame(TICK, 1.0);
+    let cube = window.app().chosen().expect("the new cube is chosen");
+    assert!(window.app().game().world.get::<Mesh3d>(cube).is_some());
+    assert_eq!(window.app().game().world.entity_count(), entities + 1);
+    if let Ok(path) = std::env::var("MIRA_EDITOR_SHOT") {
+        window.frame(TICK, 1.0);
+        window
+            .save_png(format!("{path}.placed.png"), 1.0)
+            .expect("the picture saved");
+    }
+    window.app_mut().update(Message::Delete);
+    window.frame(TICK, 1.0);
+    assert_eq!(window.app().game().world.entity_count(), entities);
+
+    // The scene through the app's own camera: turned with the right button held, it shows
+    // the same scene from another side, and the game's own view comes back after.
+    window.app_mut().update(Message::SceneView(true));
+    window.frame(TICK, 1.0);
+    let middle = Point::new(380.0, 300.0);
+    window.event(Event::PointerMoved { pos: middle });
+    window.event(Event::PointerPressed {
+        pos: middle,
+        button: PointerButton::Secondary,
+    });
+    window.event(Event::PointerMoved {
+        pos: Point::new(middle.x + 60.0, middle.y - 90.0),
+    });
+    window.event(Event::PointerReleased {
+        pos: Point::new(middle.x + 60.0, middle.y - 90.0),
+        button: PointerButton::Secondary,
+    });
+    window.frame(TICK, 1.0);
+    window.frame(TICK, 1.0);
+    if let Ok(path) = std::env::var("MIRA_EDITOR_SHOT") {
+        window
+            .save_png(format!("{path}.scene.png"), 1.0)
+            .expect("the picture saved");
+    }
+    window.app_mut().update(Message::SceneView(false));
+    window.frame(TICK, 1.0);
+
     // Every other panel opens from the Window menu and draws what it has to show.
     for panel in [
         "Log",
@@ -244,8 +289,9 @@ fn the_app_is_worked_by_clicking_on_it() {
         "Plugins",
         "Statistics",
         "Signal graph",
+        "Place",
     ] {
-        if matches!(panel, "Log" | "Console" | "World") {
+        if matches!(panel, "Log" | "Console" | "World" | "Place") {
             // Open already, behind another: brought to the front by being shut and opened.
             window.app_mut().update(Message::Panel(panel.to_owned()));
         }
