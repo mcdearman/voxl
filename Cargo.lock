@@ -1502,7 +1502,7 @@ dependencies = [
 [[package]]
 name = "neo"
 version = "0.1.0"
-source = "git+https://github.com/mcdearman/neo?rev=a0db82404e8e48410a7c99478da6f7f70a27923f#a0db82404e8e48410a7c99478da6f7f70a27923f"
+source = "git+https://github.com/mcdearman/neo?rev=1b62dc227f9b9f455c1a5b653be26cb66170db4d#1b62dc227f9b9f455c1a5b653be26cb66170db4d"
 dependencies = [
  "armature",
  "armature-render",
@@ -1512,7 +1512,7 @@ dependencies = [
 [[package]]
 name = "neo-desktop"
 version = "0.1.0"
-source = "git+https://github.com/mcdearman/neo?rev=a0db82404e8e48410a7c99478da6f7f70a27923f#a0db82404e8e48410a7c99478da6f7f70a27923f"
+source = "git+https://github.com/mcdearman/neo?rev=1b62dc227f9b9f455c1a5b653be26cb66170db4d#1b62dc227f9b9f455c1a5b653be26cb66170db4d"
 dependencies = [
  "chrono",
  "neo",
@@ -1522,7 +1522,7 @@ dependencies = [
 [[package]]
 name = "neo-theme"
 version = "0.1.0"
-source = "git+https://github.com/mcdearman/neo?rev=a0db82404e8e48410a7c99478da6f7f70a27923f#a0db82404e8e48410a7c99478da6f7f70a27923f"
+source = "git+https://github.com/mcdearman/neo?rev=1b62dc227f9b9f455c1a5b653be26cb66170db4d#1b62dc227f9b9f455c1a5b653be26cb66170db4d"
 dependencies = [
  "armature-render",
 ]

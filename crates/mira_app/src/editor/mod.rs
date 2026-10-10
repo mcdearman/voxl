@@ -120,6 +120,8 @@ pub enum Message {
     /// it is made beside it.
     Delete,
     Duplicate,
+    /// A drawer is opened over the bottom strip, or shut if it is the one open.
+    Drawer(&'static str),
     /// A panel is opened, or shut if it is open.
     Panel(String),
     /// What is typed in the console, and the console's command being run.
@@ -270,20 +272,24 @@ const PANELS: [&str; 22] = [
 /// Where the arrangement of the panels is kept, in the folder the app is run from.
 const LAYOUT_FILE: &str = ".mira/editor.layout";
 
-/// The arrangement to start from: the game over the conversation with the agent, and down
-/// their right side the entities (with the
-/// signals behind them) over what the chosen one is made of.
+/// The panels that are drawers: shut down to a button on the strip along the bottom of the
+/// window, and opened from there over the strip, one at a time.
+const DRAWERS: [&str; 4] = [ASSETS, AGENT, LOG, CONSOLE];
+
+/// How tall an open drawer is, in points.
+const DRAWER_HEIGHT: f32 = 270.0;
+
+/// The arrangement to start from, after the engine editors people know: the game in the
+/// middle with the tool bar over it; down the right side the entities (with the things to
+/// place and the signals behind them) over what the chosen one is made of (with the world's
+/// settings behind it); and along the bottom the drawers, shut.
 fn first_layout() -> Dock {
     Dock::beside(
-        Dock::above(
-            Dock::tabs([GAME]),
-            0.66,
-            Dock::tabs([AGENT, ASSETS, LOG, CONSOLE]),
-        ),
+        Dock::tabs([GAME]),
         0.7,
         Dock::above(
             Dock::tabs([ENTITIES, PLACE, SIGNALS]),
-            0.5,
+            0.46,
             Dock::tabs([INSPECTOR, WORLD]),
         ),
     )
@@ -294,7 +300,17 @@ fn first_layout() -> Dock {
 fn kept_layout(kept: &str) -> Option<Dock> {
     let layout = Dock::parse(kept.trim())?;
     let known = layout.panels().iter().all(|panel| PANELS.contains(panel));
-    (known && layout.contains(GAME)).then_some(layout)
+    if !known || !layout.contains(GAME) {
+        return None;
+    }
+    // What is a drawer now is not also a panel of the dock, whatever was kept before.
+    DRAWERS.iter().try_fold(layout, |layout, drawer| {
+        if layout.contains(drawer) {
+            layout.without(drawer)
+        } else {
+            Some(layout)
+        }
+    })
 }
 
 /// What the lists show of the game, read from it now and then.
@@ -391,6 +407,8 @@ pub struct Editor {
     /// What the bar says of the game, as last looked at.
     status: Status,
     layout: Dock,
+    /// The drawer that is open over the strip along the bottom, if one is.
+    drawer: Option<&'static str>,
     /// Whether the arrangement is kept in its file as it is changed.
     keeps_layout: bool,
     lists: Lists,
@@ -463,6 +481,7 @@ impl Editor {
                 .ok()
                 .and_then(|kept| kept_layout(&kept))
                 .unwrap_or_else(first_layout),
+            drawer: None,
             keeps_layout: true,
             lists: Lists::default(),
             chosen: None,
@@ -2060,7 +2079,7 @@ impl App for Editor {
         let window = PANELS.iter().filter(|panel| **panel != GAME).fold(
             Menu::new("Window"),
             |menu, panel| {
-                let open = self.layout.contains(panel);
+                let open = self.layout.contains(panel) || self.drawer == Some(*panel);
                 let label = format!("{} {panel}", if open { "Hide" } else { "Show" });
                 menu.push(MenuEntry::new(label, Message::Panel((*panel).to_owned())))
             },
@@ -2297,6 +2316,9 @@ impl App for Editor {
                 let made = self.whole(copy);
                 self.remember(copy, None, Some(made));
             }
+            Message::Drawer(drawer) => {
+                self.drawer = (self.drawer != Some(drawer)).then_some(drawer);
+            }
             Message::Panel(panel) => self.toggle_panel(&panel),
             Message::Command(typed) => self.command = typed,
             Message::Run => self.run_command(),
@@ -2478,16 +2500,6 @@ impl App for Editor {
                     .selected(self.view.is_some()),
             )
             .push(Space::fill_x())
-            .push(
-                text(if paused {
-                    format!("paused  ·  {said}")
-                } else {
-                    said
-                })
-                .size(12.0)
-                .tone(Tone::Muted),
-            )
-            .push(gap())
             .push(tool(
                 icons::SETTINGS,
                 Some(Message::Desktop(DesktopMsg::OpenSettings)),
@@ -2499,17 +2511,59 @@ impl App for Editor {
             .width(Length::Fill)
             .push(container(bar).padding([10.0, 3.0]).width(Length::Fill))
             .push(Divider::horizontal());
+        // Tabs as plain rectangles parted by lines, not raised pills: there are many panels,
+        // and lines take less room than gaps.
         let panels = dock(
             &self.layout,
             |panel| panel.to_owned(),
             |panel| self.panel(panel),
             Message::Arranged,
+        )
+        .tabs(TabStyle::Flat);
+        // Along the bottom, a strip: a plain label for each drawer, lines between them and
+        // one line over the strip, and at its other end what the app has to say. A drawer
+        // opens over the strip, between it and the panels.
+        let mut strip = row().align(Align::Center);
+        for drawer in DRAWERS {
+            let open = self.drawer == Some(drawer);
+            let label = text(drawer)
+                .size(12.5)
+                .weight(if open {
+                    Weight::SEMIBOLD
+                } else {
+                    Weight::MEDIUM
+                })
+                .tone(if open { Tone::Accent } else { Tone::Muted });
+            strip = strip
+                .push(
+                    mouse_area(container(label).padding([14.0, 5.0]))
+                        .on_press(move || Message::Drawer(drawer)),
+                )
+                .push(container(Divider::vertical()).height(16.0));
+        }
+        strip = strip.push(Space::fill_x()).push(
+            container(
+                text(if paused {
+                    format!("paused  ·  {said}")
+                } else {
+                    said
+                })
+                .size(12.0)
+                .tone(Tone::Muted),
+            )
+            .padding([12.0, 0.0]),
         );
-        let whole = column()
+        let mut whole = column()
             .width(Length::Fill)
             .height(Length::Fill)
             .push(bar)
-            .push(panels);
+            .push(container(panels).height(Length::Fill));
+        if let Some(drawer) = self.drawer {
+            whole = whole
+                .push(Divider::horizontal())
+                .push(container(self.panel(drawer)).height(DRAWER_HEIGHT));
+        }
+        let whole = whole.push(Divider::horizontal()).push(strip);
         // The settings panel, over everything while it is open.
         self.desktop
             .with_settings(whole, "mira Settings", Message::Desktop, vec![])
@@ -2601,7 +2655,8 @@ mod tests {
     #[test]
     fn the_arrangement_is_kept_only_while_it_fits_the_panels_there_are() {
         let first = first_layout();
-        assert_eq!(first.shown(), [GAME, AGENT, ENTITIES, INSPECTOR]);
+        assert_eq!(first.shown(), [GAME, ENTITIES, INSPECTOR]);
+        assert!(DRAWERS.iter().all(|drawer| !first.contains(drawer)));
         // Written and read back, it is the same; rearranged, it is still taken.
         assert_eq!(kept_layout(&first.encode()), Some(first.clone()));
         let stacked = first.with(SIGNALS, ENTITIES, Side::Middle);
@@ -2618,7 +2673,7 @@ mod tests {
             kept_layout(&Dock::tabs([GAME, "Blueprints"]).encode()),
             None
         );
-        assert_eq!(kept_layout(&Dock::tabs([LOG]).encode()), None);
+        assert_eq!(kept_layout(&Dock::tabs([PROFILER]).encode()), None);
         assert_eq!(kept_layout("not a layout"), None);
         assert!(PANELS
             .iter()
@@ -2629,13 +2684,12 @@ mod tests {
     fn panels_are_opened_and_shut_from_the_window_menu() {
         let mut editor = Editor::new(mira::app::App::new());
         editor.layout = first_layout();
-        assert!(!editor.layout.contains(PROFILER) && editor.layout.contains(LOG));
+        assert!(!editor.layout.contains(PROFILER) && editor.drawer.is_none());
         // Every panel but the game has an entry, saying what choosing it will do.
         let window = &editor.menus()[0];
         assert_eq!(window.entries.len(), PANELS.len() - 1);
-        // Opened, a panel joins the agent's group, in front.
-        editor.layout = first_layout();
-        let open = first_layout().with(PROFILER, AGENT, Side::Middle);
+        // Opened, a panel joins the inspector's group, in front.
+        let open = first_layout().with(PROFILER, INSPECTOR, Side::Middle);
         assert!(open.shown().contains(&PROFILER));
         // (Arranging writes the layout to a file; the model is what is checked here.)
         let shut = open.clone().without(PROFILER).expect("other panels remain");
@@ -2643,6 +2697,19 @@ mod tests {
         // The game's panel is never shut.
         editor.toggle_panel(GAME);
         assert!(editor.layout.contains(GAME));
+        // A drawer opens over the strip along the bottom, one at a time, and is shut by
+        // being asked for again; it is never a panel of the dock.
+        editor.toggle_panel(LOG);
+        assert_eq!(editor.drawer, Some(LOG));
+        editor.update(Message::Drawer(CONSOLE));
+        assert_eq!(editor.drawer, Some(CONSOLE));
+        editor.update(Message::Drawer(CONSOLE));
+        assert!(editor.drawer.is_none() && !editor.layout.contains(LOG));
+        // An arrangement kept from when they were panels has them taken out.
+        let old = first_layout()
+            .with(LOG, GAME, Side::Bottom)
+            .with(AGENT, LOG, Side::Middle);
+        assert_eq!(kept_layout(&old.encode()), Some(first_layout()));
     }
 
     #[test]

@@ -50,10 +50,18 @@ settings gear at the right, and one line under the bar to part it from the panel
 
 ### The panels
 
-The app starts with the game, the agent (with the Log and the Console behind it), the
-entities (with the signals behind them) and the inspector (with the world's settings
-behind it). The **Window** menu opens and shuts every panel; one that is opened joins the
-agent's group, and can be dragged anywhere from there.
+The app opens arranged like the engine editors people know. The game is in the middle,
+under the tool bar. Down the right side are the entities (with Place and Signals behind
+them as tabs) over the inspector (with the world's settings behind it). Along the bottom is
+a strip with a label for each **drawer**: Assets, Agent, Log and Console. A drawer is shut
+until its label is clicked; it then opens across the window over the strip, one at a time,
+and the same click shuts it. The strip's other end says what frame the game is on and what
+the app last did.
+
+Every other panel is opened and shut from the **Window** menu; one that is opened joins
+the inspector's group, and can be dragged anywhere in the dock from there. Tabs are plain
+rectangles parted by lines, the one in front marked by a line of the accent colour along
+its top; panels meet each other at single lines, which can be dragged to resize.
 
 | Panel | What it shows |
 |---|---|
