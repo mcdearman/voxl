@@ -37,7 +37,9 @@ pub use mesh::{Mesh, Mesh3d, Vertex};
 pub use post::PostProcess;
 pub use shaders::{Install, Rebuild, Shader, ShaderReload};
 pub use raytrace::{GeometryId, HitMaterial, RayTracing, RayTracingSettings};
-pub use animation::{AnimationClip, Animator, Palette, SkinWeights, Skeleton, Skinned};
+pub use animation::{AnimationClip, Animator, Palette, Playing, SkinWeights, Skeleton, Skinned};
+#[cfg(test)]
+pub(crate) use animation::follow_playing;
 pub use gait::{Gait, Leg, Pattern};
 pub use reach::{Limb, Reach};
 pub use probes::ProbeGrid;
@@ -1118,6 +1120,7 @@ impl Plugin for RenderPlugin {
             .register_type::<DirectionalLight>()
             .register_type::<Mesh3d>()
             .register_type::<crate::asset_server::Model>()
+            .register_type::<Playing>()
             .register_type::<Material>()
             .register_type::<Lods>()
             .register_type::<NotShadowCaster>()
@@ -1149,7 +1152,7 @@ impl Plugin for RenderPlugin {
             .init_resource::<VolumetricLight>()
             .add_systems(Stage::PreStartup, init_gpu)
             .add_systems(Stage::PreUpdate, resize)
-            .add_systems(Stage::PostUpdate, (animate, gait::walk, reach::reach))
+            .add_systems(Stage::PostUpdate, (animation::follow_playing, animate, gait::walk, reach::reach))
             .add_systems(Stage::Last, follow_sun)
             .add_systems(Stage::Extract, (extract, extract_skins))
             .add_systems(Stage::Prepare, prepare)

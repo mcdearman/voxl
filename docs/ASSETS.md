@@ -55,7 +55,19 @@ commands.spawn((Transform::from_xyz(4.0, 0.0, 0.0), Model::new("models/house.glb
 ```
 
 A `Model` is saved in a scene as the file's name, and its parts are not saved: loading the
-scene reads the file again. `server.request_gltf(name)` starts the reading without an entity,
+scene reads the file again.
+
+A model file with a skeleton comes with an `Animator` on its entity, playing the file's
+clips, and its skinned parts follow it. Put a `Playing` beside the `Model` to say which
+clip, as data a scene can hold:
+
+```rust
+commands.spawn((at, Model::new("models/citizen.glb"), Playing::new("Walk").with_speed(1.2)));
+```
+
+Change `playing.clip` and the animator cross-fades to it over `playing.fade` seconds.
+`playing.time` follows the animator, so a scene saved while a figure walks comes back with
+the figure in the same stride. `server.request_gltf(name)` starts the reading without an entity,
 and `server.model(name)` is the model once it has arrived.
 
 Image files and model files are watched and reloaded when they change. A model file that is

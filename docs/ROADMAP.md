@@ -201,7 +201,9 @@ The layer Unreal's editor, saves, networking and Blueprints all stand on.
 - [x] Scenes capture registered resources (a level's fog and ambient light)
 - [x] Saving edited voxel chunks: an edited chunk keeps its blocks when it streams out, and
       the edited chunks of a world save to one file and load back. [VOXELS.md](VOXELS.md)
-- [ ] Saving skeletal animation state
+- [x] Saving skeletal animation state: `Playing` holds the clip, the moment and the speed as
+      data beside a `Model`, and the animator takes them up when the model arrives. What
+      inverse kinematics and procedural walking remember is not saved
 - [x] Hierarchy as a real feature: `Children` kept from `Parent`, recursive despawn, and
       propagation that walks down from the roots (one multiply per entity at any depth)
 - [x] Asset server: assets by name (files, parts of model files, shapes), images decoded on
@@ -215,7 +217,8 @@ The layer Unreal's editor, saves, networking and Blueprints all stand on.
       a prefab and what it uses), with load states, `is_ready`, and unloading that follows it
 - [ ] Asset processing: textures to BC7/ASTC with mips, meshes to a binary format, cached by
       content hash
-- [ ] Load skins and animations from glTF
+- [x] Skins and animations from glTF, in code (`GltfScene::spawn_animated`) and as data (a
+      `Model` whose file has a skeleton gets an `Animator` and skinned parts)
 
 **Exit test:** save the Paris scene to a file and load it back identical; edit a texture on disk
 and see it change in the running scene.

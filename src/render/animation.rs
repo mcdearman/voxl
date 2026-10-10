@@ -242,6 +242,11 @@ impl Animator {
         self.fade_length = fade.max(1e-3);
     }
 
+    /// How far into the playing clip the animator is, in seconds.
+    pub fn time(&self) -> f32 {
+        self.time
+    }
+
     /// Jumps the playing clip to `time` seconds, as when an animation must keep in step with
     /// something else.
     pub fn seek(&mut self, time: f32) {
@@ -394,6 +399,84 @@ impl Animator {
             previous = Some(at);
         }
         (count > 0).then(|| total / count as f32)
+    }
+}
+
+/// Which clip an animated model plays, as plain data: what a scene file, an editor or an
+/// agent can read and set, where an [`Animator`] holds the skeleton and clips themselves.
+/// Put it beside a [`Model`](crate::asset_server::Model); the model's animator follows it.
+///
+/// Change `clip` and the animator cross-fades to it over `fade` seconds. `time` is kept up
+/// with how far into the clip the animator is, so a saved scene comes back mid-stride.
+#[derive(Clone, Debug, PartialEq, crate::reflect::Reflect)]
+#[reflect(name = "mira.Playing", default)]
+pub struct Playing {
+    /// The clip's name, as in the model file; empty for whichever the file has first.
+    pub clip: String,
+    /// Seconds into the clip.
+    pub time: f32,
+    /// How fast it plays: 1 as authored, 0 to hold a pose.
+    pub speed: f32,
+    /// Seconds a change of clip is blended over.
+    pub fade: f32,
+    /// Whether the animator has taken up `clip` and `time` since this was made or loaded.
+    #[reflect(skip)]
+    started: bool,
+}
+
+impl Component for Playing {}
+
+impl Default for Playing {
+    fn default() -> Self {
+        Self { clip: String::new(), time: 0.0, speed: 1.0, fade: 0.25, started: false }
+    }
+}
+
+impl Playing {
+    pub fn new(clip: impl Into<String>) -> Self {
+        Self { clip: clip.into(), ..Default::default() }
+    }
+
+    /// Starting this many seconds into the clip.
+    pub fn at(mut self, time: f32) -> Self {
+        self.time = time;
+        self
+    }
+
+    /// Playing this fast: 1 as authored.
+    pub fn with_speed(mut self, speed: f32) -> Self {
+        self.speed = speed;
+        self
+    }
+}
+
+/// Has each animator play what its entity's [`Playing`] says, and keeps the time there.
+pub(crate) fn follow_playing(mut animated: crate::ecs::Query<(&mut Playing, &mut Animator)>) {
+    for (mut playing, mut animator) in &mut animated {
+        if animator.clips.is_empty() {
+            continue;
+        }
+        animator.speed = playing.speed;
+        let named = !playing.clip.is_empty();
+        if !playing.started {
+            // Fresh from a file, or the model has only now arrived: straight to the moment.
+            if named {
+                animator.play(&playing.clip, 0.0, playing.time);
+            }
+            animator.seek(playing.time);
+            playing.started = true;
+        } else if named && animator.clip(&playing.clip).is_some_and(|clip| clip != animator.current) {
+            let fade = playing.fade;
+            animator.play(&playing.clip, fade, 0.0);
+        }
+        playing.time = animator.time();
+    }
+}
+
+impl Playing {
+    /// Has the animator take up the clip and time again: for when its model was replaced.
+    pub(crate) fn restart(&mut self) {
+        self.started = false;
     }
 }
 

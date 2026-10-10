@@ -28,7 +28,7 @@ use crate::{
     assets::{Assets, Handle},
     ecs::{ResMut, World},
     reflect::{TypeRegistry, Value},
-    render::{GltfScene, Image, Mesh, Skinned},
+    render::{Animator, GltfScene, Image, Mesh, Playing, Skinned},
     tasks::{Mailbox, TaskPool},
 };
 
@@ -933,9 +933,52 @@ pub(crate) fn show_models(world: &mut World) {
             .map(|(part, _, _)| part)
             .collect();
         for part in old {
+            // A part a skeleton bends draws with a mesh of its own, which goes with it.
+            if let (Some(_), Some(mesh)) = (world.get::<Skinned>(part), world.get::<Mesh3d>(part).copied()) {
+                if let Some(meshes) = world.get_resource_mut::<Assets<Mesh>>() {
+                    meshes.remove(mesh.0);
+                }
+            }
             world.despawn(part);
         }
+        // A model with a skeleton gets an animator, which its skinned parts follow.
+        let palette = scene.skeleton.as_ref().map(|skeleton| {
+            let animator = Animator::new(skeleton.clone(), scene.clips.clone());
+            let palette = animator.palette.clone();
+            world.insert(entity, (animator,));
+            if let Some(playing) = world.get_mut::<Playing>(entity) {
+                playing.restart();
+            }
+            palette
+        });
+        if palette.is_none() {
+            world.remove::<Animator>(entity);
+        }
         for part in &scene.parts {
+            if let (Some(weights), Some(palette)) = (&part.skin, &palette) {
+                let Some(meshes) = world.get_resource_mut::<Assets<Mesh>>() else {
+                    continue;
+                };
+                let Some(copy) = meshes.get(part.mesh).cloned() else {
+                    continue;
+                };
+                let mesh = meshes.add(copy);
+                let skinned = Skinned {
+                    source: part.mesh,
+                    weights: weights.clone(),
+                    palette: palette.clone(),
+                };
+                world.spawn((
+                    Transform::IDENTITY,
+                    Mesh3d(mesh),
+                    part.material,
+                    skinned,
+                    Parent(entity),
+                    ModelPart,
+                    NotSaved,
+                ));
+                continue;
+            }
             let (scale, rotation, translation) = part.transform.to_scale_rotation_translation();
             world.spawn((
                 Transform {
@@ -1203,6 +1246,101 @@ mod tests {
         assert!(server
             .load_gltf("res/nothing.glb", &mut meshes, &mut images)
             .is_err());
+    }
+
+    #[test]
+    fn an_animated_model_plays_its_clip_and_is_saved_mid_stride() {
+        use crate::{
+            app::{App, Stage},
+            ecs::Entity,
+            render::{Animator, Playing},
+            transform::{Parent, TransformPlugin},
+        };
+        // The first model in the demo that has both a skeleton and clips to play.
+        let models = Path::new(env!("CARGO_MANIFEST_DIR")).join("res/paris/models");
+        let mut found = None;
+        for name in ["citizen.glb", "gentleman.glb", "grenadier.glb", "boy1.glb"] {
+            let scene = GltfScene::import(models.join(name))
+                .and_then(|imported| {
+                    GltfScene::build(imported, &mut Assets::default(), &mut Assets::default())
+                })
+                .unwrap();
+            if scene.skeleton.is_some() && !scene.clips.is_empty() {
+                found = Some((name, scene.clips.last().unwrap().name.clone()));
+                break;
+            }
+        }
+        let (file, clip) = found.expect("a model with a skeleton and clips");
+
+        let build = || {
+            let mut app = App::new();
+            app.add_plugins(TransformPlugin)
+                .insert_resource(AssetServer::new(&models))
+                .init_resource::<Assets<Mesh>>()
+                .init_resource::<Assets<Image>>()
+                .register_type::<Model>()
+                .register_type::<Playing>()
+                .add_systems(Stage::PreUpdate, (update_asset_server, show_models))
+                .add_systems(Stage::PostUpdate, crate::render::follow_playing);
+            app
+        };
+        let arrive = |app: &mut App, figure: Entity| {
+            for _ in 0..5000 {
+                app.update();
+                if app.world.get::<Animator>(figure).is_some() {
+                    // Once more, for the animator to take up what is playing.
+                    app.update();
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            panic!("the model did not arrive");
+        };
+
+        let mut app = build();
+        let playing = Playing::new(clip.clone()).at(0.4);
+        let figure = app.world.spawn((Transform::IDENTITY, Model::new(file), playing));
+        arrive(&mut app, figure);
+        // Its skinned parts are under it, each with a mesh of its own to be posed.
+        let skinned = app
+            .world
+            .query::<(&Parent, &Skinned, &Mesh3d)>()
+            .iter()
+            .filter(|(parent, skinned, mesh)| parent.0 == figure && mesh.0 != skinned.source)
+            .count();
+        assert!(skinned > 0);
+        let animator = app.world.get::<Animator>(figure).unwrap();
+        assert_eq!(animator.clip(&clip), animator.clip(animator.playing()));
+        assert!((animator.time() - 0.4).abs() < 1e-4);
+
+        // The game moves it on; what is saved is the clip and the moment, not the skeleton.
+        app.world.get_mut::<Animator>(figure).unwrap().seek(0.9);
+        app.update();
+        assert!((app.world.get::<Playing>(figure).unwrap().time - 0.9).abs() < 1e-4);
+        let scene = app.world.resource_scope(|world, registry: &mut TypeRegistry| {
+            Scene::capture(world, registry)
+        });
+        assert_eq!(scene.entities.len(), 1, "the parts are not saved");
+
+        // In another run the figure comes back at that moment of that clip.
+        let mut again = build();
+        let spawned = again.world.resource_scope(|world, registry: &mut TypeRegistry| {
+            scene.spawn(world, registry).entities
+        });
+        let figure = spawned[0];
+        arrive(&mut again, figure);
+        let animator = again.world.get::<Animator>(figure).unwrap();
+        assert_eq!(animator.clip(&clip), animator.clip(animator.playing()));
+        assert!((animator.time() - 0.9).abs() < 1e-4);
+
+        // Asked for another clip, the animator turns to it.
+        let other = animator.clips[0].name.clone();
+        if animator.clip(&other) != animator.clip(&clip) {
+            again.world.get_mut::<Playing>(figure).unwrap().clip = other.clone();
+            again.update();
+            let animator = again.world.get::<Animator>(figure).unwrap();
+            assert_eq!(animator.clip(&other), animator.clip(animator.playing()));
+        }
     }
 
     #[test]
