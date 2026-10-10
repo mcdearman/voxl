@@ -4,6 +4,7 @@
 #     scripts/check.sh           build, test, lint, and build every example plugin
 #     scripts/check.sh --miri    also run the ECS tests under Miri (needs nightly + miri)
 #     scripts/check.sh --miri-only
+#     scripts/check.sh --tsan-only   the ECS tests under ThreadSanitizer (nightly + rust-src)
 #
 # The Haskell plugin tests skip themselves when GHC isn't installed. Set MIRA_REQUIRE_GHC=1
 # (as CI does) to make a missing GHC a failure instead.
