@@ -37,6 +37,8 @@ struct Entry {
     current: Option<Stamp>,
     /// A newer version of the file seen on the last check, to see whether it is still changing.
     settling: Option<Stamp>,
+    /// The version whose needs the asset server has been told of; 0 before any.
+    noted: u32,
 }
 
 /// Every prefab by name. A resource.
@@ -73,6 +75,7 @@ impl Prefabs {
                 version,
                 current: None,
                 settling: None,
+                noted: 0,
             },
         );
     }
@@ -97,6 +100,7 @@ impl Prefabs {
             path: Some(path),
             version: 1,
             settling: None,
+            noted: 0,
         };
         self.entries.insert(name.to_owned(), entry);
     }
@@ -269,6 +273,32 @@ fn inside_itself(world: &World, instance: Entity, prefab: &str) -> bool {
     false
 }
 
+/// The assets a scene's entities use by name, the model files they show, and the prefabs
+/// inside it: what has to be loaded for it to be whole.
+pub fn needs_of(scene: &Scene) -> Vec<String> {
+    let mut needs = Vec::new();
+    for entity in &scene.entities {
+        for (component, value) in &entity.components {
+            let named = match component.as_str() {
+                "mira.PrefabInstance" => value.field("prefab"),
+                "mira.Model" => value.field("name"),
+                _ => None,
+            };
+            if let Some(Value::Text(name)) = named {
+                needs.push(name.clone());
+            }
+            value.clone().for_each_asset(&mut |asset| {
+                if let Value::Asset { name, .. } = asset {
+                    needs.push(name.clone());
+                }
+            });
+        }
+    }
+    needs.sort_unstable();
+    needs.dedup();
+    needs
+}
+
 /// Spawns the contents of new instances, and rebuilds instances whose prefab has changed.
 pub fn update_prefabs(world: &mut World) {
     if !world.contains_resource::<Prefabs>() || !world.contains_resource::<TypeRegistry>() {
@@ -306,6 +336,16 @@ pub fn update_prefabs(world: &mut World) {
                 }
             }
         });
+        // What each prefab needs, told to the asset server when the prefab is new or changed.
+        if let Some(server) = world.get_resource_mut::<AssetServer>() {
+            for (name, entry) in &mut prefabs.entries {
+                if entry.noted != entry.version {
+                    entry.noted = entry.version;
+                    let needs = entry.scene.as_deref().map_or(Vec::new(), needs_of);
+                    server.set_dependencies(name, needs);
+                }
+            }
+        }
     });
 }
 
@@ -611,6 +651,38 @@ mod tests {
             update_prefabs(&mut world);
         }
         assert_eq!(world.entity_count(), 2, "one inner instance, left empty");
+    }
+
+    #[test]
+    fn a_prefab_tells_the_asset_server_what_it_needs() {
+        let mut world = world();
+        world.insert_resource(AssetServer::new("."));
+        let asset = |name: &str| Value::Asset { kind: "mesh".to_owned(), name: name.to_owned() };
+        let entity = |id, components: Vec<(&str, Value)>| crate::reflect::SceneEntity {
+            id,
+            components: components.into_iter().map(|(name, value)| (name.to_owned(), value)).collect(),
+        };
+        let named = |field: &str, name: &str| Value::Map(vec![(field.to_owned(), Value::Text(name.to_owned()))]);
+        let street = Scene {
+            entities: vec![
+                entity(0, vec![("mira.Mesh3d", asset("shape:cube:1"))]),
+                entity(1, vec![("mira.PrefabInstance", named("prefab", "lamp"))]),
+                entity(2, vec![("mira.Model", named("name", "models/cart.glb"))]),
+            ],
+            resources: Vec::new(),
+        };
+        assert_eq!(needs_of(&street), ["lamp", "models/cart.glb", "shape:cube:1"]);
+        world.resource_mut::<Prefabs>().insert("street", street);
+        world.resource_mut::<Prefabs>().insert("lamp", lamp(3.0));
+        update_prefabs(&mut world);
+        let server = world.resource::<AssetServer>();
+        assert_eq!(server.dependencies("street"), ["lamp", "models/cart.glb", "shape:cube:1"]);
+        assert_eq!(server.dependents("lamp"), ["street"]);
+
+        // A prefab that changes is asked again what it needs.
+        world.resource_mut::<Prefabs>().insert("street", lamp(1.0));
+        update_prefabs(&mut world);
+        assert!(world.resource::<AssetServer>().dependencies("street").is_empty());
     }
 
     #[test]

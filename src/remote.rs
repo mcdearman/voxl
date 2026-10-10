@@ -810,6 +810,27 @@ fn handle(app: &mut App, request: &Value) -> Answer {
                 .collect();
             Ok(Value::Map(stages))
         }
+        "assets" => {
+            let server = app
+                .world
+                .get_resource::<crate::asset_server::AssetServer>()
+                .ok_or("this game has no asset server")?;
+            let assets = server.known().into_iter().map(|name| {
+                let state = format!("{:?}", server.state(&name)).to_lowercase();
+                let needs = texts(server.dependencies(&name).into_iter().map(str::to_owned));
+                let ready = Value::Bool(server.is_ready(&name));
+                map([
+                    ("name", Value::Text(name)),
+                    ("state", Value::Text(state)),
+                    ("ready", ready),
+                    ("needs", needs),
+                ])
+            });
+            Ok(map([
+                ("loading", Value::Int(server.loading() as i64)),
+                ("assets", Value::List(assets.collect())),
+            ]))
+        }
         "types" => {
             let registry = app.world.resource::<TypeRegistry>();
             Ok(map([

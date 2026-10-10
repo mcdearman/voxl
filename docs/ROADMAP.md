@@ -211,7 +211,8 @@ The layer Unreal's editor, saves, networking and Blueprints all stand on.
       plain ids): `AssetServer::unload_unused`
 - [x] Model files read on a worker and watched: a `Model` component names the file, its
       parts appear under the entity when read and again when the file is saved
-- [ ] Dependencies between assets
+- [x] Dependencies between assets: what each needs is kept by name (a model and its parts,
+      a prefab and what it uses), with load states, `is_ready`, and unloading that follows it
 - [ ] Asset processing: textures to BC7/ASTC with mips, meshes to a binary format, cached by
       content hash
 - [ ] Load skins and animations from glTF

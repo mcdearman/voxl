@@ -16,7 +16,7 @@
 use std::{
     any::TypeId,
     cell::RefCell,
-    collections::{HashMap, HashSet},
+    collections::{BTreeSet, HashMap, HashSet},
     path::{Path, PathBuf},
     sync::Arc,
     time::{Duration, Instant, SystemTime},
@@ -76,6 +76,18 @@ struct DecodedImage {
     image: anyhow::Result<Image>,
 }
 
+/// How far along an asset is, by name. See [`AssetServer::state`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AssetState {
+    /// Nothing has asked for an asset by this name.
+    Unknown,
+    /// Asked for, and being read or decoded on a worker.
+    Loading,
+    Loaded,
+    /// Asked for, and its file could not be read. It is tried again when the file changes.
+    Failed,
+}
+
 /// Knows every loaded asset by name. A resource.
 pub struct AssetServer {
     root: PathBuf,
@@ -96,6 +108,11 @@ pub struct AssetServer {
     models_failed: HashSet<String>,
     watched_models: Vec<WatchedModel>,
     arrived: Vec<String>,
+    /// The images being decoded, and those whose files could not be.
+    images_loading: HashSet<u32>,
+    images_failed: HashSet<u32>,
+    /// What each asset needs, by name: see [`AssetServer::depends_on`].
+    needs: HashMap<String, BTreeSet<String>>,
     last_check: Option<Instant>,
     /// How often image files are checked for changes.
     pub check_interval: Duration,
@@ -160,6 +177,9 @@ impl AssetServer {
             models_failed: HashSet::new(),
             watched_models: Vec::new(),
             arrived: Vec::new(),
+            images_loading: HashSet::new(),
+            images_failed: HashSet::new(),
+            needs: HashMap::new(),
             last_check: None,
             check_interval: Duration::from_millis(250),
             hot_reload: cfg!(debug_assertions),
@@ -226,6 +246,123 @@ impl AssetServer {
         })
     }
 
+    // --- what needs what ---
+
+    /// Records that the asset called `name` needs the one called `on`: a model its meshes
+    /// and textures, a prefab the models and pictures its entities use and the prefabs
+    /// inside it. The server records these for what it loads itself; a game that loads a
+    /// kind of its own says so here. Needing something keeps it from being unloaded while
+    /// what needs it is in use.
+    pub fn depends_on(&mut self, name: &str, on: &str) {
+        if name != on {
+            self.needs.entry(name.to_owned()).or_default().insert(on.to_owned());
+        }
+    }
+
+    /// Says everything `name` needs at once, in place of what it was said to need before:
+    /// for an asset that has been loaded again and may have changed.
+    pub fn set_dependencies(&mut self, name: &str, on: impl IntoIterator<Item = String>) {
+        let on: BTreeSet<String> = on.into_iter().filter(|other| other != name).collect();
+        if on.is_empty() {
+            self.needs.remove(name);
+        } else {
+            self.needs.insert(name.to_owned(), on);
+        }
+    }
+
+    /// What `name` needs directly, in order of name.
+    pub fn dependencies(&self, name: &str) -> Vec<&str> {
+        self.needs
+            .get(name)
+            .map_or(Vec::new(), |on| on.iter().map(String::as_str).collect())
+    }
+
+    /// Everything `name` needs, and what those need, and so on; in order of name, and
+    /// without `name` itself. Assets may need each other in a ring.
+    pub fn all_dependencies(&self, name: &str) -> Vec<String> {
+        let mut found = self.reach([name.to_owned()]);
+        found.remove(name);
+        found.into_iter().collect()
+    }
+
+    /// What needs `name` directly, in order of name.
+    pub fn dependents(&self, name: &str) -> Vec<&str> {
+        let mut found: Vec<&str> = self
+            .needs
+            .iter()
+            .filter(|(_, on)| on.contains(name))
+            .map(|(other, _)| other.as_str())
+            .collect();
+        found.sort_unstable();
+        found
+    }
+
+    /// The names given, and everything they need, however far down.
+    fn reach(&self, from: impl IntoIterator<Item = String>) -> BTreeSet<String> {
+        let mut found = BTreeSet::new();
+        let mut next: Vec<String> = from.into_iter().collect();
+        while let Some(name) = next.pop() {
+            if let Some(on) = self.needs.get(&name) {
+                next.extend(on.iter().filter(|other| !found.contains(*other)).cloned());
+            }
+            found.insert(name);
+        }
+        found
+    }
+
+    /// How far along the asset called `name` is, not counting what it needs.
+    pub fn state(&self, name: &str) -> AssetState {
+        if self.models_loading.contains(name) {
+            return AssetState::Loading;
+        }
+        if self.models_failed.contains(name) {
+            return AssetState::Failed;
+        }
+        if self.gltf.contains_key(name) {
+            return AssetState::Loaded;
+        }
+        let ids: Vec<(TypeId, u32)> = self
+            .ids
+            .iter()
+            .filter(|((_, known), _)| known == name)
+            .map(|((kind, _), id)| (*kind, *id))
+            .collect();
+        if ids.is_empty() {
+            // Known only as something another asset needs, or as a name others are told of.
+            return if self.needs.contains_key(name) { AssetState::Loaded } else { AssetState::Unknown };
+        }
+        let image = TypeId::of::<Image>();
+        if ids.iter().any(|(kind, id)| *kind == image && self.images_loading.contains(id)) {
+            AssetState::Loading
+        } else if ids.iter().any(|(kind, id)| *kind == image && self.images_failed.contains(id)) {
+            AssetState::Failed
+        } else {
+            AssetState::Loaded
+        }
+    }
+
+    /// Whether `name` and everything it needs is loaded: the moment a level can be shown
+    /// with nothing still to pop in.
+    pub fn is_ready(&self, name: &str) -> bool {
+        self.reach([name.to_owned()])
+            .iter()
+            .all(|needed| self.state(needed) == AssetState::Loaded)
+    }
+
+    /// Every name the server knows, in order: assets loaded or loading, and whatever they
+    /// are said to need.
+    pub fn known(&self) -> Vec<String> {
+        let mut names: BTreeSet<String> = self.names.values().map(|(_, name)| name.clone()).collect();
+        names.extend(self.gltf.keys().cloned());
+        names.extend(self.models_loading.iter().cloned());
+        names.extend(self.models_failed.iter().cloned());
+        for (name, on) in &self.needs {
+            names.insert(name.clone());
+            names.extend(on.iter().cloned());
+        }
+        names.into_iter().collect()
+    }
+
     // --- unloading ---
 
     /// Protects an asset from [`AssetServer::unload_unused`]. For handles held where the
@@ -274,23 +411,28 @@ impl AssetServer {
                     }
                 }
             });
-            let in_use = |key: &(TypeId, u32), kind: &str, name: &str| {
-                used.contains(key) || named.contains(&(kind.to_owned(), name.to_owned()))
-            };
-            // A model file stays or goes whole: its parts refer to each other.
-            let files: HashSet<String> = server
-                .names
-                .iter()
-                .filter(|(key, (kind, name))| name.contains('#') && in_use(key, kind, name))
-                .map(|(_, (_, name))| file_part(name).to_owned())
-                .collect();
+            // What is used by name: what components refer to, the model files and prefabs
+            // entities are made from, what is kept; and everything those need.
+            let mut roots: Vec<String> = named.iter().map(|(_, name)| name.clone()).collect();
+            roots.extend(
+                server
+                    .names
+                    .iter()
+                    .filter(|(key, _)| used.contains(key))
+                    .map(|(_, (_, name))| name.clone()),
+            );
+            roots.extend(world.query::<&Model>().iter().map(|model| model.name.clone()));
+            roots.extend(
+                world
+                    .query::<&crate::prefab::PrefabInstance>()
+                    .iter()
+                    .map(|instance| instance.prefab.clone()),
+            );
+            let needed = server.reach(roots);
             let unused: Vec<(TypeId, u32, String)> = server
                 .names
                 .iter()
-                .filter(|(key, (kind, name))| {
-                    !in_use(key, kind, name)
-                        && !(name.contains('#') && files.contains(file_part(name)))
-                })
+                .filter(|(key, (_, name))| !used.contains(key) && !needed.contains(name))
                 .map(|(&(asset_type, id), (_, name))| (asset_type, id, name.clone()))
                 .collect();
 
@@ -310,10 +452,21 @@ impl AssetServer {
                     continue;
                 }
                 server.names.remove(&(asset_type, id));
+                server.needs.remove(&name);
                 server.ids.remove(&(asset_type, name));
                 unloaded += 1;
             }
-            server.gltf.retain(|file, _| files.contains(file));
+            // A model file that went needs nothing any more.
+            let dropped: Vec<String> = server
+                .gltf
+                .keys()
+                .filter(|file| !needed.contains(*file))
+                .cloned()
+                .collect();
+            for file in dropped {
+                server.gltf.remove(&file);
+                server.needs.remove(&file);
+            }
             if unloaded > 0 {
                 log::info!("unloaded {unloaded} unused assets");
             }
@@ -347,6 +500,8 @@ impl AssetServer {
 
     fn decode(&mut self, id: u32, path: PathBuf, srgb: bool) {
         self.loading += 1;
+        self.images_loading.insert(id);
+        self.images_failed.remove(&id);
         let pool = self.pool.get_or_insert_with(|| TaskPool::new(2));
         pool.spawn(&self.decoded.sender, move || {
             let image = std::fs::read(&path)
@@ -366,6 +521,7 @@ impl AssetServer {
 
     fn accept(&mut self, images: &mut Assets<Image>, decoded: DecodedImage) {
         self.loading -= 1;
+        self.images_loading.remove(&decoded.id);
         // Unloaded while it was being decoded: nothing wants it any more.
         if !self
             .names
@@ -382,7 +538,12 @@ impl AssetServer {
                 }
             }
             // The handle stays empty (or keeps the old image), which draws as plain white.
-            Err(err) => log::error!("{err:#}"),
+            Err(err) => {
+                log::error!("{err:#}");
+                if !images.contains_id(decoded.id) {
+                    self.images_failed.insert(decoded.id);
+                }
+            }
         }
     }
 
@@ -562,20 +723,22 @@ impl AssetServer {
         let (first_mesh, first_image) = (meshes.next_id(), images.next_id());
         let scene = Arc::new(GltfScene::build(imported, meshes, images)?);
         // Whatever the loader added is this file's, in an order that depends only on the file.
+        let mut parts = Vec::new();
         for id in first_mesh..meshes.next_id() {
-            self.name(
-                "mesh",
-                Handle::<Mesh>::from_id(id),
-                format!("{name}#mesh{}", id - first_mesh),
-            );
+            let part = format!("{name}#mesh{}", id - first_mesh);
+            self.name("mesh", Handle::<Mesh>::from_id(id), part.clone());
+            parts.push(part);
         }
         for id in first_image..images.next_id() {
-            self.name(
-                "image",
-                Handle::<Image>::from_id(id),
-                format!("{name}#image{}", id - first_image),
-            );
+            let part = format!("{name}#image{}", id - first_image);
+            self.name("image", Handle::<Image>::from_id(id), part.clone());
+            parts.push(part);
         }
+        // The file needs its parts and each part the file: a model stays or goes whole.
+        for part in &parts {
+            self.depends_on(part, name);
+        }
+        self.set_dependencies(name, parts);
         self.gltf.insert(name.to_owned(), scene.clone());
         if !self
             .watched_models
@@ -1040,6 +1203,59 @@ mod tests {
         assert!(server
             .load_gltf("res/nothing.glb", &mut meshes, &mut images)
             .is_err());
+    }
+
+    #[test]
+    fn assets_say_what_they_need_and_when_all_of_it_is_there() {
+        let dir = TempDir::new("needs");
+        dir.png("wall.png", [9, 9, 9, 255]);
+        let mut server = AssetServer::new(&dir.0);
+        let mut images = Assets::<Image>::default();
+        // A level needs a house, the house a wall and a door, and the door the house.
+        server.set_dependencies("level", ["house".to_owned()]);
+        server.set_dependencies("house", ["wall.png".to_owned(), "door".to_owned()]);
+        server.depends_on("door", "house");
+        server.depends_on("door", "door");
+        assert_eq!(server.dependencies("house"), ["door", "wall.png"]);
+        assert_eq!(server.all_dependencies("level"), ["door", "house", "wall.png"]);
+        assert_eq!(server.all_dependencies("door"), ["house", "wall.png"]);
+        assert_eq!(server.dependents("house"), ["door", "level"]);
+        assert!(server.dependencies("wall.png").is_empty());
+
+        // Nothing has asked for the wall yet; then it is loading; then it is there.
+        assert_eq!(server.state("wall.png"), AssetState::Unknown);
+        assert!(!server.is_ready("level"));
+        server.load_image(&mut images, "wall.png");
+        assert_eq!(server.state("wall.png"), AssetState::Loading);
+        assert!(!server.is_ready("level"));
+        server.wait(&mut images);
+        assert_eq!(server.state("wall.png"), AssetState::Loaded);
+        assert!(server.is_ready("level"));
+
+        // A picture that isn't there fails, and so does not hold up what doesn't need it.
+        server.load_image(&mut images, "missing.png");
+        server.wait(&mut images);
+        assert_eq!(server.state("missing.png"), AssetState::Failed);
+        server.depends_on("level", "missing.png");
+        assert!(!server.is_ready("level") && server.is_ready("house"));
+
+        // Said again, what an asset needs is what was said last.
+        server.set_dependencies("level", Vec::new());
+        assert!(server.dependencies("level").is_empty());
+        assert!(server.known().contains(&"door".to_owned()));
+    }
+
+    #[test]
+    fn a_model_file_and_its_parts_need_each_other() {
+        let mut server = AssetServer::new(env!("CARGO_MANIFEST_DIR"));
+        let (mut meshes, mut images) = (Assets::<Mesh>::default(), Assets::<Image>::default());
+        let name = "res/paris/models/animals/hen_white.glb";
+        assert_eq!(server.state(name), AssetState::Unknown);
+        server.load_gltf(name, &mut meshes, &mut images).unwrap();
+        let part = format!("{name}#mesh0");
+        assert!(server.dependencies(name).contains(&part.as_str()));
+        assert_eq!(server.dependencies(&part), [name]);
+        assert!(server.is_ready(&part) && server.is_ready(name));
     }
 
     fn world(root: &Path) -> (World, TypeRegistry) {

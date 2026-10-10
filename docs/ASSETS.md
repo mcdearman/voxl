@@ -62,6 +62,24 @@ Image files and model files are watched and reloaded when they change. A model f
 saved again is read on a worker again, and every `Model` showing it gets its new parts; see
 [HOT_RELOAD.md](HOT_RELOAD.md).
 
+## What needs what
+
+The server keeps, by name, what each asset needs. A model file needs its meshes and
+textures, and each of those the file; a prefab needs the pictures and shapes its entities
+use, the model files they show, and the prefabs inside it. These are recorded as things are
+loaded. A game with a kind of asset of its own says what it needs with `depends_on`.
+
+```rust
+server.dependencies("prefabs/street.json");      // what it needs itself
+server.all_dependencies("prefabs/street.json");  // and what those need, all the way down
+server.dependents("textures/bricks.png");        // what needs this
+server.state("models/house.glb");                // Unknown, Loading, Loaded or Failed
+server.is_ready("prefabs/street.json");          // it and everything it needs is loaded
+```
+
+`is_ready` is the moment a level can be shown with nothing still to pop in. From outside,
+`mira-debug assets` lists every asset with its state and what it needs.
+
 ## Unloading
 
 Handles are plain ids, not reference counts, so nothing is freed behind your back. Free what
@@ -72,8 +90,8 @@ let unloaded = AssetServer::unload_unused(&mut app.world);
 ```
 
 A named image or mesh is in use if a registered component on some entity refers to it (a
-`Mesh3d`, a `Material`'s textures, a `Lods` level), or if it is part of a model file another
-part of which is in use: a model stays or goes whole. Everything else is removed, from the
+`Mesh3d`, a `Material`'s textures, a `Lods` level), or if something in use needs it: a model
+stays or goes whole, and what a prefab in the scene needs stays with it. Everything else is removed, from the
 GPU too. Unloading loses nothing for good, because asking for the name loads it again, which
 is what spawning a scene or a prefab does.
 
@@ -84,8 +102,9 @@ registered, goes stale when its asset is unloaded. Protect those with `server.ke
 ## What isn't here yet
 
 - Unloading is something the game asks for; nothing unloads on its own under memory pressure.
-- A model's parts come all at once, and a reloaded model is rebuilt whole. Nothing knows yet
-  which assets depend on which.
+- A model's parts come all at once, and a reloaded model is rebuilt whole.
+- Textures a model file refers to in other files are read with it, not as assets of their
+  own with their own names.
 - There is no processing step: textures are not compressed for the GPU, and nothing is cached
   on disk.
 - The Napoleonic and Paris demos still load their assets directly.
