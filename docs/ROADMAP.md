@@ -502,11 +502,12 @@ project grows.
 
 ## Next three steps
 
-1. The rest of Phase 1: dependencies between assets, an asset processing step with a cache,
-   skins and animations loaded from glTF through the asset server, and saving animation
-   state.
-2. The rest of Phase 2: one query's work split across threads, observers, relations with
-   many targets and their cleanup, and one job system under systems, assets and voxels.
-3. Then Phase 3, the GPU-driven renderer. In the app, the first run of the agent against
-   Claude Code is still to be made by hand, and the panels that wait on engine systems
-   (materials, animation, particles, audio, navigation) come as those systems do.
+1. Phase 3, the GPU-driven renderer: the frame as a graph of passes, culling and drawing
+   driven from the GPU, clustered lights, and materials as data.
+2. What Phases 1 and 2 leave: hooks, observers and relations from plugins; meshes in a
+   binary form and ASTC; table storage if a game shows the need. The Paris demo saved to a
+   scene and loaded back is still Phase 1's exit test, and waits on its assets going
+   through the asset server.
+3. In the app: the first run of the agent against Claude Code, made by hand, and the panels
+   that wait on engine systems (materials, animation, particles, audio, navigation) as
+   those systems arrive.
