@@ -378,7 +378,14 @@ impl MeshRenderer {
             self.images.remove(id);
         }
         // Mip chains take a while for big textures; make them on every core at once.
-        let pending: Vec<(u32, &Image)> = modified.iter().filter_map(|id| images.get_by_id(*id).map(|image| (*id, image))).collect();
+        let arrived: Vec<(u32, &Image)> = modified.iter().filter_map(|id| images.get_by_id(*id).map(|image| (*id, image))).collect();
+        // What was processed ahead of time goes up as it is.
+        for (id, image) in &arrived {
+            if let Some(processed) = &image.processed {
+                self.images.insert(*id, processed.upload(&gpu.device, &gpu.queue));
+            }
+        }
+        let pending: Vec<(u32, &Image)> = arrived.into_iter().filter(|(_, image)| image.processed.is_none()).collect();
         let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
         let chains: Vec<Vec<(u32, u32, Vec<u8>)>> = std::thread::scope(|s| {
             let chunk = pending.len().div_ceil(threads).max(1);

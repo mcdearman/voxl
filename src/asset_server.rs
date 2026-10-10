@@ -16,7 +16,7 @@
 use std::{
     any::TypeId,
     cell::RefCell,
-    collections::{HashMap, HashSet},
+    collections::{BTreeSet, HashMap, HashSet},
     path::{Path, PathBuf},
     sync::Arc,
     time::{Duration, Instant, SystemTime},
@@ -28,7 +28,7 @@ use crate::{
     assets::{Assets, Handle},
     ecs::{ResMut, World},
     reflect::{TypeRegistry, Value},
-    render::{GltfScene, Image, Mesh, Skinned},
+    render::{Animator, GltfScene, Image, Mesh, Playing, Skinned},
     tasks::{Mailbox, TaskPool},
 };
 
@@ -70,10 +70,62 @@ struct ImportedModel {
     imported: anyhow::Result<crate::render::Imported>,
 }
 
+/// How a picture file is to be made ready, as a worker needs to know it.
+struct Processing {
+    compress: bool,
+    keep_pixels: bool,
+    cache: Option<PathBuf>,
+    limit: u64,
+}
+
+impl Processing {
+    /// The picture in a file's bytes: straight from the cache if these bytes were processed
+    /// before, else decoded, and compressed and kept if that is wanted.
+    fn image(&self, bytes: &[u8], srgb: bool) -> anyhow::Result<Image> {
+        if !self.compress {
+            return Image::from_bytes(bytes, srgb);
+        }
+        let key = crate::asset_cache::key(bytes, if srgb { "bc7-srgb" } else { "bc7-linear" });
+        let cached = self.cache.as_ref().and_then(|dir| crate::asset_cache::read(dir, &key));
+        if let (Some(processed), false) = (&cached, self.keep_pixels) {
+            return Ok(Image::from_processed(processed.clone()));
+        }
+        let mut image = Image::from_bytes(bytes, srgb)?;
+        let Some(processed) = cached.or_else(|| {
+            let processed = image.process()?;
+            if let Some(dir) = &self.cache {
+                crate::asset_cache::write(dir, &key, &processed);
+                crate::asset_cache::prune(dir, self.limit);
+            }
+            Some(processed)
+        }) else {
+            // A size blocks can't hold: it stays as plain pixels.
+            return Ok(image);
+        };
+        if !self.keep_pixels {
+            image.data = Vec::new();
+        }
+        image.processed = Some(Arc::new(processed));
+        Ok(image)
+    }
+}
+
 struct DecodedImage {
     id: u32,
     path: PathBuf,
     image: anyhow::Result<Image>,
+}
+
+/// How far along an asset is, by name. See [`AssetServer::state`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AssetState {
+    /// Nothing has asked for an asset by this name.
+    Unknown,
+    /// Asked for, and being read or decoded on a worker.
+    Loading,
+    Loaded,
+    /// Asked for, and its file could not be read. It is tried again when the file changes.
+    Failed,
 }
 
 /// Knows every loaded asset by name. A resource.
@@ -96,7 +148,22 @@ pub struct AssetServer {
     models_failed: HashSet<String>,
     watched_models: Vec<WatchedModel>,
     arrived: Vec<String>,
+    /// The images being decoded, and those whose files could not be.
+    images_loading: HashSet<u32>,
+    images_failed: HashSet<u32>,
+    /// What each asset needs, by name: see [`AssetServer::depends_on`].
+    needs: HashMap<String, BTreeSet<String>>,
     last_check: Option<Instant>,
+    /// Whether pictures are compressed into blocks for the graphics card as they are loaded
+    /// (see [`asset_cache`](crate::asset_cache)). The renderer turns this on where the card
+    /// can hold them; it is off where there is no renderer.
+    pub compress: bool,
+    /// Whether a compressed picture also keeps its pixels, for a game that reads them.
+    pub keep_pixels: bool,
+    /// Whether what is processed is kept on disk, in `.mira/cache` under the root.
+    pub cache: bool,
+    /// The most the cache may hold, in bytes, before what was used longest ago goes.
+    pub cache_limit: u64,
     /// How often image files are checked for changes.
     pub check_interval: Duration,
     /// Whether changed image files are reloaded. On in development builds.
@@ -160,7 +227,14 @@ impl AssetServer {
             models_failed: HashSet::new(),
             watched_models: Vec::new(),
             arrived: Vec::new(),
+            images_loading: HashSet::new(),
+            images_failed: HashSet::new(),
+            needs: HashMap::new(),
             last_check: None,
+            compress: false,
+            keep_pixels: false,
+            cache: true,
+            cache_limit: 2 << 30,
             check_interval: Duration::from_millis(250),
             hot_reload: cfg!(debug_assertions),
         }
@@ -226,6 +300,123 @@ impl AssetServer {
         })
     }
 
+    // --- what needs what ---
+
+    /// Records that the asset called `name` needs the one called `on`: a model its meshes
+    /// and textures, a prefab the models and pictures its entities use and the prefabs
+    /// inside it. The server records these for what it loads itself; a game that loads a
+    /// kind of its own says so here. Needing something keeps it from being unloaded while
+    /// what needs it is in use.
+    pub fn depends_on(&mut self, name: &str, on: &str) {
+        if name != on {
+            self.needs.entry(name.to_owned()).or_default().insert(on.to_owned());
+        }
+    }
+
+    /// Says everything `name` needs at once, in place of what it was said to need before:
+    /// for an asset that has been loaded again and may have changed.
+    pub fn set_dependencies(&mut self, name: &str, on: impl IntoIterator<Item = String>) {
+        let on: BTreeSet<String> = on.into_iter().filter(|other| other != name).collect();
+        if on.is_empty() {
+            self.needs.remove(name);
+        } else {
+            self.needs.insert(name.to_owned(), on);
+        }
+    }
+
+    /// What `name` needs directly, in order of name.
+    pub fn dependencies(&self, name: &str) -> Vec<&str> {
+        self.needs
+            .get(name)
+            .map_or(Vec::new(), |on| on.iter().map(String::as_str).collect())
+    }
+
+    /// Everything `name` needs, and what those need, and so on; in order of name, and
+    /// without `name` itself. Assets may need each other in a ring.
+    pub fn all_dependencies(&self, name: &str) -> Vec<String> {
+        let mut found = self.reach([name.to_owned()]);
+        found.remove(name);
+        found.into_iter().collect()
+    }
+
+    /// What needs `name` directly, in order of name.
+    pub fn dependents(&self, name: &str) -> Vec<&str> {
+        let mut found: Vec<&str> = self
+            .needs
+            .iter()
+            .filter(|(_, on)| on.contains(name))
+            .map(|(other, _)| other.as_str())
+            .collect();
+        found.sort_unstable();
+        found
+    }
+
+    /// The names given, and everything they need, however far down.
+    fn reach(&self, from: impl IntoIterator<Item = String>) -> BTreeSet<String> {
+        let mut found = BTreeSet::new();
+        let mut next: Vec<String> = from.into_iter().collect();
+        while let Some(name) = next.pop() {
+            if let Some(on) = self.needs.get(&name) {
+                next.extend(on.iter().filter(|other| !found.contains(*other)).cloned());
+            }
+            found.insert(name);
+        }
+        found
+    }
+
+    /// How far along the asset called `name` is, not counting what it needs.
+    pub fn state(&self, name: &str) -> AssetState {
+        if self.models_loading.contains(name) {
+            return AssetState::Loading;
+        }
+        if self.models_failed.contains(name) {
+            return AssetState::Failed;
+        }
+        if self.gltf.contains_key(name) {
+            return AssetState::Loaded;
+        }
+        let ids: Vec<(TypeId, u32)> = self
+            .ids
+            .iter()
+            .filter(|((_, known), _)| known == name)
+            .map(|((kind, _), id)| (*kind, *id))
+            .collect();
+        if ids.is_empty() {
+            // Known only as something another asset needs, or as a name others are told of.
+            return if self.needs.contains_key(name) { AssetState::Loaded } else { AssetState::Unknown };
+        }
+        let image = TypeId::of::<Image>();
+        if ids.iter().any(|(kind, id)| *kind == image && self.images_loading.contains(id)) {
+            AssetState::Loading
+        } else if ids.iter().any(|(kind, id)| *kind == image && self.images_failed.contains(id)) {
+            AssetState::Failed
+        } else {
+            AssetState::Loaded
+        }
+    }
+
+    /// Whether `name` and everything it needs is loaded: the moment a level can be shown
+    /// with nothing still to pop in.
+    pub fn is_ready(&self, name: &str) -> bool {
+        self.reach([name.to_owned()])
+            .iter()
+            .all(|needed| self.state(needed) == AssetState::Loaded)
+    }
+
+    /// Every name the server knows, in order: assets loaded or loading, and whatever they
+    /// are said to need.
+    pub fn known(&self) -> Vec<String> {
+        let mut names: BTreeSet<String> = self.names.values().map(|(_, name)| name.clone()).collect();
+        names.extend(self.gltf.keys().cloned());
+        names.extend(self.models_loading.iter().cloned());
+        names.extend(self.models_failed.iter().cloned());
+        for (name, on) in &self.needs {
+            names.insert(name.clone());
+            names.extend(on.iter().cloned());
+        }
+        names.into_iter().collect()
+    }
+
     // --- unloading ---
 
     /// Protects an asset from [`AssetServer::unload_unused`]. For handles held where the
@@ -274,23 +465,28 @@ impl AssetServer {
                     }
                 }
             });
-            let in_use = |key: &(TypeId, u32), kind: &str, name: &str| {
-                used.contains(key) || named.contains(&(kind.to_owned(), name.to_owned()))
-            };
-            // A model file stays or goes whole: its parts refer to each other.
-            let files: HashSet<String> = server
-                .names
-                .iter()
-                .filter(|(key, (kind, name))| name.contains('#') && in_use(key, kind, name))
-                .map(|(_, (_, name))| file_part(name).to_owned())
-                .collect();
+            // What is used by name: what components refer to, the model files and prefabs
+            // entities are made from, what is kept; and everything those need.
+            let mut roots: Vec<String> = named.iter().map(|(_, name)| name.clone()).collect();
+            roots.extend(
+                server
+                    .names
+                    .iter()
+                    .filter(|(key, _)| used.contains(key))
+                    .map(|(_, (_, name))| name.clone()),
+            );
+            roots.extend(world.query::<&Model>().iter().map(|model| model.name.clone()));
+            roots.extend(
+                world
+                    .query::<&crate::prefab::PrefabInstance>()
+                    .iter()
+                    .map(|instance| instance.prefab.clone()),
+            );
+            let needed = server.reach(roots);
             let unused: Vec<(TypeId, u32, String)> = server
                 .names
                 .iter()
-                .filter(|(key, (kind, name))| {
-                    !in_use(key, kind, name)
-                        && !(name.contains('#') && files.contains(file_part(name)))
-                })
+                .filter(|(key, (_, name))| !used.contains(key) && !needed.contains(name))
                 .map(|(&(asset_type, id), (_, name))| (asset_type, id, name.clone()))
                 .collect();
 
@@ -310,10 +506,21 @@ impl AssetServer {
                     continue;
                 }
                 server.names.remove(&(asset_type, id));
+                server.needs.remove(&name);
                 server.ids.remove(&(asset_type, name));
                 unloaded += 1;
             }
-            server.gltf.retain(|file, _| files.contains(file));
+            // A model file that went needs nothing any more.
+            let dropped: Vec<String> = server
+                .gltf
+                .keys()
+                .filter(|file| !needed.contains(*file))
+                .cloned()
+                .collect();
+            for file in dropped {
+                server.gltf.remove(&file);
+                server.needs.remove(&file);
+            }
             if unloaded > 0 {
                 log::info!("unloaded {unloaded} unused assets");
             }
@@ -347,16 +554,29 @@ impl AssetServer {
 
     fn decode(&mut self, id: u32, path: PathBuf, srgb: bool) {
         self.loading += 1;
+        self.images_loading.insert(id);
+        self.images_failed.remove(&id);
+        let how = Processing {
+            compress: self.compress,
+            keep_pixels: self.keep_pixels,
+            cache: self.cache.then(|| self.cache_dir()),
+            limit: self.cache_limit,
+        };
         let pool = self.pool.get_or_insert_with(|| TaskPool::new(2));
         pool.spawn(&self.decoded.sender, move || {
             let image = std::fs::read(&path)
                 .with_context(|| format!("can't read {}", path.display()))
                 .and_then(|bytes| {
-                    Image::from_bytes(&bytes, srgb)
+                    how.image(&bytes, srgb)
                         .with_context(|| format!("can't decode {}", path.display()))
                 });
             DecodedImage { id, path, image }
         });
+    }
+
+    /// Where processed assets are kept.
+    pub fn cache_dir(&self) -> PathBuf {
+        self.root.join(".mira").join("cache")
     }
 
     /// How many assets are still being loaded.
@@ -366,6 +586,7 @@ impl AssetServer {
 
     fn accept(&mut self, images: &mut Assets<Image>, decoded: DecodedImage) {
         self.loading -= 1;
+        self.images_loading.remove(&decoded.id);
         // Unloaded while it was being decoded: nothing wants it any more.
         if !self
             .names
@@ -382,7 +603,12 @@ impl AssetServer {
                 }
             }
             // The handle stays empty (or keeps the old image), which draws as plain white.
-            Err(err) => log::error!("{err:#}"),
+            Err(err) => {
+                log::error!("{err:#}");
+                if !images.contains_id(decoded.id) {
+                    self.images_failed.insert(decoded.id);
+                }
+            }
         }
     }
 
@@ -562,20 +788,22 @@ impl AssetServer {
         let (first_mesh, first_image) = (meshes.next_id(), images.next_id());
         let scene = Arc::new(GltfScene::build(imported, meshes, images)?);
         // Whatever the loader added is this file's, in an order that depends only on the file.
+        let mut parts = Vec::new();
         for id in first_mesh..meshes.next_id() {
-            self.name(
-                "mesh",
-                Handle::<Mesh>::from_id(id),
-                format!("{name}#mesh{}", id - first_mesh),
-            );
+            let part = format!("{name}#mesh{}", id - first_mesh);
+            self.name("mesh", Handle::<Mesh>::from_id(id), part.clone());
+            parts.push(part);
         }
         for id in first_image..images.next_id() {
-            self.name(
-                "image",
-                Handle::<Image>::from_id(id),
-                format!("{name}#image{}", id - first_image),
-            );
+            let part = format!("{name}#image{}", id - first_image);
+            self.name("image", Handle::<Image>::from_id(id), part.clone());
+            parts.push(part);
         }
+        // The file needs its parts and each part the file: a model stays or goes whole.
+        for part in &parts {
+            self.depends_on(part, name);
+        }
+        self.set_dependencies(name, parts);
         self.gltf.insert(name.to_owned(), scene.clone());
         if !self
             .watched_models
@@ -770,9 +998,52 @@ pub(crate) fn show_models(world: &mut World) {
             .map(|(part, _, _)| part)
             .collect();
         for part in old {
+            // A part a skeleton bends draws with a mesh of its own, which goes with it.
+            if let (Some(_), Some(mesh)) = (world.get::<Skinned>(part), world.get::<Mesh3d>(part).copied()) {
+                if let Some(meshes) = world.get_resource_mut::<Assets<Mesh>>() {
+                    meshes.remove(mesh.0);
+                }
+            }
             world.despawn(part);
         }
+        // A model with a skeleton gets an animator, which its skinned parts follow.
+        let palette = scene.skeleton.as_ref().map(|skeleton| {
+            let animator = Animator::new(skeleton.clone(), scene.clips.clone());
+            let palette = animator.palette.clone();
+            world.insert(entity, (animator,));
+            if let Some(playing) = world.get_mut::<Playing>(entity) {
+                playing.restart();
+            }
+            palette
+        });
+        if palette.is_none() {
+            world.remove::<Animator>(entity);
+        }
         for part in &scene.parts {
+            if let (Some(weights), Some(palette)) = (&part.skin, &palette) {
+                let Some(meshes) = world.get_resource_mut::<Assets<Mesh>>() else {
+                    continue;
+                };
+                let Some(copy) = meshes.get(part.mesh).cloned() else {
+                    continue;
+                };
+                let mesh = meshes.add(copy);
+                let skinned = Skinned {
+                    source: part.mesh,
+                    weights: weights.clone(),
+                    palette: palette.clone(),
+                };
+                world.spawn((
+                    Transform::IDENTITY,
+                    Mesh3d(mesh),
+                    part.material,
+                    skinned,
+                    Parent(entity),
+                    ModelPart,
+                    NotSaved,
+                ));
+                continue;
+            }
             let (scale, rotation, translation) = part.transform.to_scale_rotation_translation();
             world.spawn((
                 Transform {
@@ -1040,6 +1311,199 @@ mod tests {
         assert!(server
             .load_gltf("res/nothing.glb", &mut meshes, &mut images)
             .is_err());
+    }
+
+    #[test]
+    fn an_animated_model_plays_its_clip_and_is_saved_mid_stride() {
+        use crate::{
+            app::{App, Stage},
+            ecs::Entity,
+            render::{Animator, Playing},
+            transform::{Parent, TransformPlugin},
+        };
+        // The first model in the demo that has both a skeleton and clips to play.
+        let models = Path::new(env!("CARGO_MANIFEST_DIR")).join("res/paris/models");
+        let mut found = None;
+        for name in ["citizen.glb", "gentleman.glb", "grenadier.glb", "boy1.glb"] {
+            let scene = GltfScene::import(models.join(name))
+                .and_then(|imported| {
+                    GltfScene::build(imported, &mut Assets::default(), &mut Assets::default())
+                })
+                .unwrap();
+            if scene.skeleton.is_some() && !scene.clips.is_empty() {
+                found = Some((name, scene.clips.last().unwrap().name.clone()));
+                break;
+            }
+        }
+        let (file, clip) = found.expect("a model with a skeleton and clips");
+
+        let build = || {
+            let mut app = App::new();
+            app.add_plugins(TransformPlugin)
+                .insert_resource(AssetServer::new(&models))
+                .init_resource::<Assets<Mesh>>()
+                .init_resource::<Assets<Image>>()
+                .register_type::<Model>()
+                .register_type::<Playing>()
+                .add_systems(Stage::PreUpdate, (update_asset_server, show_models))
+                .add_systems(Stage::PostUpdate, crate::render::follow_playing);
+            app
+        };
+        let arrive = |app: &mut App, figure: Entity| {
+            for _ in 0..5000 {
+                app.update();
+                if app.world.get::<Animator>(figure).is_some() {
+                    // Once more, for the animator to take up what is playing.
+                    app.update();
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            panic!("the model did not arrive");
+        };
+
+        let mut app = build();
+        let playing = Playing::new(clip.clone()).at(0.4);
+        let figure = app.world.spawn((Transform::IDENTITY, Model::new(file), playing));
+        arrive(&mut app, figure);
+        // Its skinned parts are under it, each with a mesh of its own to be posed.
+        let skinned = app
+            .world
+            .query::<(&Parent, &Skinned, &Mesh3d)>()
+            .iter()
+            .filter(|(parent, skinned, mesh)| parent.0 == figure && mesh.0 != skinned.source)
+            .count();
+        assert!(skinned > 0);
+        let animator = app.world.get::<Animator>(figure).unwrap();
+        assert_eq!(animator.clip(&clip), animator.clip(animator.playing()));
+        assert!((animator.time() - 0.4).abs() < 1e-4);
+
+        // The game moves it on; what is saved is the clip and the moment, not the skeleton.
+        app.world.get_mut::<Animator>(figure).unwrap().seek(0.9);
+        app.update();
+        assert!((app.world.get::<Playing>(figure).unwrap().time - 0.9).abs() < 1e-4);
+        let scene = app.world.resource_scope(|world, registry: &mut TypeRegistry| {
+            Scene::capture(world, registry)
+        });
+        assert_eq!(scene.entities.len(), 1, "the parts are not saved");
+
+        // In another run the figure comes back at that moment of that clip.
+        let mut again = build();
+        let spawned = again.world.resource_scope(|world, registry: &mut TypeRegistry| {
+            scene.spawn(world, registry).entities
+        });
+        let figure = spawned[0];
+        arrive(&mut again, figure);
+        let animator = again.world.get::<Animator>(figure).unwrap();
+        assert_eq!(animator.clip(&clip), animator.clip(animator.playing()));
+        assert!((animator.time() - 0.9).abs() < 1e-4);
+
+        // Asked for another clip, the animator turns to it.
+        let other = animator.clips[0].name.clone();
+        if animator.clip(&other) != animator.clip(&clip) {
+            again.world.get_mut::<Playing>(figure).unwrap().clip = other.clone();
+            again.update();
+            let animator = again.world.get::<Animator>(figure).unwrap();
+            assert_eq!(animator.clip(&other), animator.clip(animator.playing()));
+        }
+    }
+
+    #[test]
+    fn pictures_are_compressed_once_and_read_from_the_cache_after() {
+        let dir = TempDir::new("compress");
+        let save = |name: &str, side: u32, shade: u8| {
+            image::RgbaImage::from_fn(side, side, |x, y| image::Rgba([(x * 30) as u8, (y * 30) as u8, shade, 255]))
+                .save(dir.0.join(name))
+                .unwrap();
+        };
+        save("wall.png", 8, 40);
+        save("odd.png", 6, 40);
+        let load = |keep_pixels: bool, name: &str| {
+            let mut server = AssetServer::new(&dir.0);
+            server.compress = true;
+            server.keep_pixels = keep_pixels;
+            let mut images = Assets::<Image>::default();
+            let handle = server.load_image(&mut images, name);
+            server.wait(&mut images);
+            images.get(handle).cloned().unwrap()
+        };
+        let cached = || std::fs::read_dir(dir.0.join(".mira/cache")).map_or(0, |files| files.count());
+
+        // Compressed, its pixels let go, and kept on disk under its bytes' hash.
+        let wall = load(false, "wall.png");
+        let processed = wall.processed.clone().expect("it was compressed");
+        assert_eq!(processed.format, wgpu::TextureFormat::Bc7RgbaUnormSrgb);
+        assert_eq!((wall.width, wall.height, wall.has_pixels()), (8, 8, false));
+        assert_eq!(cached(), 1);
+        // The same bytes again come from the cache, the same; with the pixels if wanted.
+        let again = load(false, "wall.png");
+        assert_eq!(again.processed.as_deref(), Some(&*processed));
+        let kept = load(true, "wall.png");
+        assert!(kept.has_pixels() && kept.processed.is_some());
+        assert_eq!(cached(), 1);
+        // As data and not colour it is another thing, and so is the file once it changes.
+        let linear = load(false, "wall.png?linear");
+        assert_eq!(linear.processed.unwrap().format, wgpu::TextureFormat::Bc7RgbaUnorm);
+        save("wall.png", 8, 200);
+        assert_ne!(load(false, "wall.png").processed.as_deref(), Some(&*processed));
+        assert_eq!(cached(), 3);
+        // A size that blocks can't hold stays as plain pixels.
+        let odd = load(false, "odd.png");
+        assert!(odd.processed.is_none() && odd.has_pixels());
+        assert_eq!(cached(), 3);
+    }
+
+    #[test]
+    fn assets_say_what_they_need_and_when_all_of_it_is_there() {
+        let dir = TempDir::new("needs");
+        dir.png("wall.png", [9, 9, 9, 255]);
+        let mut server = AssetServer::new(&dir.0);
+        let mut images = Assets::<Image>::default();
+        // A level needs a house, the house a wall and a door, and the door the house.
+        server.set_dependencies("level", ["house".to_owned()]);
+        server.set_dependencies("house", ["wall.png".to_owned(), "door".to_owned()]);
+        server.depends_on("door", "house");
+        server.depends_on("door", "door");
+        assert_eq!(server.dependencies("house"), ["door", "wall.png"]);
+        assert_eq!(server.all_dependencies("level"), ["door", "house", "wall.png"]);
+        assert_eq!(server.all_dependencies("door"), ["house", "wall.png"]);
+        assert_eq!(server.dependents("house"), ["door", "level"]);
+        assert!(server.dependencies("wall.png").is_empty());
+
+        // Nothing has asked for the wall yet; then it is loading; then it is there.
+        assert_eq!(server.state("wall.png"), AssetState::Unknown);
+        assert!(!server.is_ready("level"));
+        server.load_image(&mut images, "wall.png");
+        assert_eq!(server.state("wall.png"), AssetState::Loading);
+        assert!(!server.is_ready("level"));
+        server.wait(&mut images);
+        assert_eq!(server.state("wall.png"), AssetState::Loaded);
+        assert!(server.is_ready("level"));
+
+        // A picture that isn't there fails, and so does not hold up what doesn't need it.
+        server.load_image(&mut images, "missing.png");
+        server.wait(&mut images);
+        assert_eq!(server.state("missing.png"), AssetState::Failed);
+        server.depends_on("level", "missing.png");
+        assert!(!server.is_ready("level") && server.is_ready("house"));
+
+        // Said again, what an asset needs is what was said last.
+        server.set_dependencies("level", Vec::new());
+        assert!(server.dependencies("level").is_empty());
+        assert!(server.known().contains(&"door".to_owned()));
+    }
+
+    #[test]
+    fn a_model_file_and_its_parts_need_each_other() {
+        let mut server = AssetServer::new(env!("CARGO_MANIFEST_DIR"));
+        let (mut meshes, mut images) = (Assets::<Mesh>::default(), Assets::<Image>::default());
+        let name = "res/paris/models/animals/hen_white.glb";
+        assert_eq!(server.state(name), AssetState::Unknown);
+        server.load_gltf(name, &mut meshes, &mut images).unwrap();
+        let part = format!("{name}#mesh0");
+        assert!(server.dependencies(name).contains(&part.as_str()));
+        assert_eq!(server.dependencies(&part), [name]);
+        assert!(server.is_ready(&part) && server.is_ready(name));
     }
 
     fn world(root: &Path) -> (World, TypeRegistry) {

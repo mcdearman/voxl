@@ -2222,9 +2222,10 @@ impl App for Editor {
         vec![window, view]
     }
 
-    /// Lines for polygons, where the graphics card has them: the wireframe view's.
+    /// Lines for polygons, where the graphics card has them, for the wireframe view; and
+    /// block compression, for pictures processed ahead of time.
     fn wanted_features(&self, available: wgpu::Features) -> wgpu::Features {
-        available & wgpu::Features::POLYGON_MODE_LINE
+        available & (wgpu::Features::POLYGON_MODE_LINE | wgpu::Features::TEXTURE_COMPRESSION_BC)
     }
 
     fn app_menu(&self) -> Vec<MenuEntry<Message>> {

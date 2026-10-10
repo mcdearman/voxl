@@ -145,13 +145,14 @@ answered at the start of a frame, whether or not the game is paused.
 | `failures` | | every caught failure, with its stack |
 | `watch` | `on` (true) | from then on, events are sent to this connection as they happen |
 | `systems` | `stage` (all) | each stage's systems in order, with constraints and timings |
+| `assets` | | every asset known by name: loading, loaded or failed, what it needs, and whether it and all it needs are ready |
 | `types` | | the names of registered components and resources |
 | `schema` | `name` | the shape of a registered type |
 | `unregistered` | | components and resources the world holds that are not registered, and so can't be reached by name |
 | `describe` | `limit` (40) | the scene in words: the camera, then each placed entity with where it is and where on screen it shows |
 | `entities` | `with` (a component), `limit` (200) | entities and what each has |
 | `get` | `entity`, `component` (all) | the component's value, or every component's |
-| `set` | `entity`, `component`, `value`, `path` (the whole component) | |
+| `set` | `entity`, `component`, `value`, `path` (the whole component) | an asset is given by name (`{"$asset": "image", "name": "textures/bricks.png"}`) and loaded |
 | `remove` | `entity`, `component` | |
 | `spawn` | `components`: a map of values by name | the new entity |
 | `despawn` | `entity` | how many went: it and everything below it |

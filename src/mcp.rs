@@ -112,6 +112,11 @@ const TOOLS: &[Tool] = &[
         arguments: &["name: string: the resource's name", "value?: any: a new value for it"],
     },
     Tool {
+        command: "assets",
+        about: "Every asset the game knows by name (pictures, model files and their parts, shapes, prefabs): whether each is loading, loaded or failed, what it needs, and whether it and all it needs are ready. Also how many are still loading.",
+        arguments: &[],
+    },
+    Tool {
         command: "types",
         about: "The names of every component and resource that can be read and written by name.",
         arguments: &[],

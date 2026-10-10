@@ -2,6 +2,7 @@
 extern crate self as mira;
 
 pub mod app;
+pub mod asset_cache;
 pub mod asset_server;
 pub mod assets;
 /// The entity component system, which is a crate of its own: `mira_ecs`.
@@ -45,7 +46,7 @@ pub mod prelude {
         render::{
             AmbientLight, Animator, Camera, Color, DebugLines, DirectionalLight, Environment, Fog, Gait,
             GltfScene, Image, Leg, Limb, LodLevel, Lods, Material, Mesh, Mesh3d, NotShadowCaster,
-            Pattern, PostProcess, RayTracingSettings, Reach, ShadowSettings, ViewMode, ViewTarget, VolumetricLight,
+            Pattern, Playing, PostProcess, RayTracingSettings, Reach, ShadowSettings, ViewMode, ViewTarget, VolumetricLight,
         },
         relation::{Related, Relation},
         signal::{

@@ -32,12 +32,14 @@ pub use gpu::{
     main_depth_state, main_multisample, Gpu, Targets, DEPTH_CLEAR, DEPTH_COMPARE, DEPTH_FORMAT,
     HDR_FORMAT, MSAA_SAMPLES,
 };
-pub use image::Image;
+pub use image::{Image, Processed};
 pub use mesh::{Mesh, Mesh3d, Vertex};
 pub use post::PostProcess;
 pub use shaders::{Install, Rebuild, Shader, ShaderReload};
 pub use raytrace::{GeometryId, HitMaterial, RayTracing, RayTracingSettings};
-pub use animation::{AnimationClip, Animator, Palette, SkinWeights, Skeleton, Skinned};
+pub use animation::{AnimationClip, Animator, Palette, Playing, SkinWeights, Skeleton, Skinned};
+#[cfg(test)]
+pub(crate) use animation::follow_playing;
 pub use gait::{Gait, Leg, Pattern};
 pub use reach::{Limb, Reach};
 pub use probes::ProbeGrid;
@@ -492,6 +494,12 @@ fn init_gpu(world: &mut World) {
         let white = Image::solid([255, 255, 255, 255], true).upload(&gpu.device, &gpu.queue);
         RayTracing::new(&gpu, rt_settings, white)
     });
+    // Pictures loaded by name are compressed for the card, where it can hold them so.
+    // `MIRA_COMPRESS=0` leaves them as plain pixels.
+    let compress = Processed::supported(&gpu.device) && std::env::var("MIRA_COMPRESS").map_or(true, |v| v != "0");
+    if let Some(server) = world.get_resource_mut::<AssetServer>() {
+        server.compress = compress;
+    }
     if !world.contains_resource::<Environment>() {
         world.insert_resource(Environment::gradient(Vec3::new(-0.5, 0.6, 0.4)));
     }
@@ -1118,6 +1126,7 @@ impl Plugin for RenderPlugin {
             .register_type::<DirectionalLight>()
             .register_type::<Mesh3d>()
             .register_type::<crate::asset_server::Model>()
+            .register_type::<Playing>()
             .register_type::<Material>()
             .register_type::<Lods>()
             .register_type::<NotShadowCaster>()
@@ -1149,7 +1158,7 @@ impl Plugin for RenderPlugin {
             .init_resource::<VolumetricLight>()
             .add_systems(Stage::PreStartup, init_gpu)
             .add_systems(Stage::PreUpdate, resize)
-            .add_systems(Stage::PostUpdate, (animate, gait::walk, reach::reach))
+            .add_systems(Stage::PostUpdate, (animation::follow_playing, animate, gait::walk, reach::reach))
             .add_systems(Stage::Last, follow_sun)
             .add_systems(Stage::Extract, (extract, extract_skins))
             .add_systems(Stage::Prepare, prepare)
