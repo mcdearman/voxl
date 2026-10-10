@@ -6,8 +6,9 @@ project and what exists on each side.
 
 ## What there is
 
-`cargo run` opens it. It is the engine's own program (`src/main.rs`, on `mira::editor`,
-which is `src/editor`): a Neo window with the game in a viewport, under a bar to pause, resume
+`cargo run` opens it. It is a package of its own on top of the engine, `crates/mira_app` (the program is its
+`src/main.rs`, the app itself `mira_app::editor`), and the one the workspace runs by default:
+a Neo window with the game in a viewport, under a bar to pause, resume
 and step it. Beside it: the game's entities as a tree (children under their `Parent`; drag
 one onto another to make it its child, or beside one to share its parent), an inspector
 in which the chosen entity's parts are fields to change (numbers and vectors drag or take a
@@ -22,7 +23,7 @@ between two to resize. The arrangement is kept in `.mira/editor.layout` in the f
 is run from. The game is any mira `App`, built as it would be to run alone:
 
 ```rust
-mira::editor::run(my_game::build()?)?;
+mira_app::editor::run(my_game::build()?)?;
 ```
 
 ```sh
@@ -59,6 +60,7 @@ agent's group, and can be dragged anywhere from there.
 | Log | What the engine and the game have logged, newest at the bottom, by level; a box to show only lines with some text in them |
 | Console | A line to type anything the debug connection understands (`pause`, `entities with=mira.Camera`, `signal_set name=open value=true`), with the answers |
 | Profiler | The last frames as a graph, the usual and the worst frame, the time each stage took, and the slowest systems |
+| Signal graph | The game's rules as a circuit, the one `mira_ui` draws inside a game: wires lit while true, rewired by dragging, lamps clicked to force a signal, lines clicked to type over them |
 | Systems | Every system by stage, in the order and the batch it runs in, with how much it reads and writes; one that has failed is red |
 | World | The world's settings (ambient light, fog, post-processing, shadows, voxels: every registered resource), each field a control like the inspector's, with undo |
 | History | Every change made from the app, to click back and forward through |
@@ -114,7 +116,7 @@ Each use of a tool is a row of its own that opens to show what the tool was give
 came back, with the picture if it was a screenshot. Stop stops it.
 
 The agent is a program of its own that the window runs, behind a small interface
-(`mira::editor::agent::Agent`: ask, stop), so another can be put there with
+(`mira_app::editor::agent::Agent`: ask, stop), so another can be put there with
 `Editor::with_agent`. The one the app starts with is Claude Code (`agent::ClaudeCode`), run
 once for each thing asked and resuming the same conversation. It is found at `MIRA_AGENT`,
 else `~/.local/bin/claude`, else `claude` on the path. It is given mira's own tools
@@ -132,13 +134,13 @@ The reading of Claude Code's output was written from its documentation and teste
 a stand-in program that prints the same lines; it has not yet been run against Claude Code
 itself.
 
-The app is tested as a person works it: `tests/editor.rs` opens it in
+The app is tested as a person works it: `crates/mira_app/tests/editor.rs` opens it in
 Neo's test window, which is drawn but never shown, and clicks its buttons and tree rows.
 It needs a graphics card, so it runs when asked:
 
 ```sh
-MIRA_FRAME_TESTS=1 cargo test --test editor
-MIRA_FRAME_TESTS=1 MIRA_EDITOR_SHOT=window.png cargo test --test editor   # and a picture
+MIRA_FRAME_TESTS=1 cargo test -p mira_app --test editor
+MIRA_FRAME_TESTS=1 MIRA_EDITOR_SHOT=window.png cargo test -p mira_app --test editor   # and a picture
 ```
 
 ## The game inside another program
@@ -171,7 +173,7 @@ app.host_resized(width, height);
 What other engines' editors have (Unreal, Unity, Godot), sorted by how near mira is to
 having each. "Ready" means the engine already holds the data and only the panel is missing.
 
-**Ready: the engine has the data** (all built but the signal graph: see "The panels" above)
+**Ready: the engine has the data** (all built: see "The panels" above)
 
 | Panel | In other engines | What it would show here |
 |---|---|---|

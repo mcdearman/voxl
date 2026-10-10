@@ -359,7 +359,8 @@ editor needs from it.
 - [x] The first app: a Neo window with the game in a viewport, and a bar to pause, resume
       and step it
 - [x] The app is the engine's own program: bare `cargo run` opens it, on a starter scene or
-      on the plugins named; the editor is `mira::editor`, on by default; the voxel world
+      on the plugins named; the app is a package of its own, `crates/mira_app`, which the
+      workspace runs by default, and the engine does not depend on Neo; the voxel world
       that used to be `cargo run` is `--example voxel_world`
 - [x] Panels in a dock, arranged by dragging and kept between runs; the game's entities and
       signals listed live beside it
@@ -383,7 +384,9 @@ editor needs from it.
 - [x] Panels for what the engine already knows: Log (the engine's log is now kept as well as
       printed), Console, Profiler, Systems, World settings, History, Time, Failures,
       Plugins, Statistics; a Window menu to open and shut them
-- [ ] The signal graph as a panel; a render-graph viewer
+- [x] The signal graph as a panel (the circuit from `mira_ui`, which now draws from its own
+      corner so that it sits in a panel as well as over a whole game)
+- [ ] A render-graph viewer
 - [x] The agent window's first form: a conversation panel under the game, with Claude Code
       run behind it and given the game's own tools (see [EDITOR.md](EDITOR.md#the-agent))
 - [ ] The agent window in full: a panel of the engine app in which to talk to an AI agent that is

@@ -44,7 +44,7 @@ fn main() -> anyhow::Result<()> {
         };
         game.load_native_plugin(&path)?;
     }
-    mira::editor::app(game)
+    mira_app::editor::app(game)
         .with_scene(scene)
         .run()
         .map_err(|err| anyhow::anyhow!("{err}"))

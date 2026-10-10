@@ -6,8 +6,6 @@ pub mod asset_server;
 pub mod assets;
 /// The entity component system, which is a crate of its own: `mira_ecs`.
 pub use mira_ecs as ecs;
-#[cfg(feature = "editor")]
-pub mod editor;
 pub mod input;
 pub mod live;
 pub mod logging;

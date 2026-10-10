@@ -6,7 +6,7 @@
 
 use glam::{Mat4, Vec2, Vec3};
 
-use crate::render::Camera;
+use mira::render::Camera;
 
 /// A line from the eye through a place in the picture.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -142,7 +142,7 @@ pub fn covers(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::transform::Transform;
+    use mira::transform::Transform;
 
     fn close(a: Vec3, b: Vec3) -> bool {
         (a - b).length() < 1e-3

@@ -1,0 +1,20 @@
+[package]
+name = "mira_app"
+version = "0.1.0"
+edition = "2021"
+description = "mira, the engine app: a game shown, looked into and changed in a Neo window"
+default-run = "mira"
+
+[[bin]]
+name = "mira"
+path = "src/main.rs"
+
+[dependencies]
+mira = { path = "../.." }
+mira_ui = { path = "../mira_ui" }
+neo = { git = "https://github.com/mcdearman/neo", rev = "a0db82404e8e48410a7c99478da6f7f70a27923f" }
+neo-desktop = { git = "https://github.com/mcdearman/neo", rev = "a0db82404e8e48410a7c99478da6f7f70a27923f" }
+anyhow = "1"
+glam = "0.30"
+image = { version = "0.25", default-features = false, features = ["png"] }
+log = "0.4"
