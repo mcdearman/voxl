@@ -32,7 +32,7 @@ use crate::{
     input::{ButtonInput, KeyCode, Mouse, MouseButton},
     live::Live,
     prelude::Vec2,
-    reflect::{TypeRegistry, Value},
+    reflect::{Scene, TypeRegistry, Value},
     render::frame_texture,
     signal::{Signal, Signals},
     time::Time,
@@ -40,6 +40,7 @@ use crate::{
 };
 use neo::prelude::*;
 use neo::{wgpu, Color, Graphics, Image, Key, KeyEvent, Point, PointerButton, Rect};
+use neo_desktop::{AppPrefs, Desktop, DesktopMsg};
 
 /// What happens in the window.
 #[derive(Clone, Debug)]
@@ -73,6 +74,30 @@ pub enum Message {
     Stop,
     /// A use of a tool in the conversation was opened, or shut.
     Unfolded(String, bool),
+    /// A drag on a field began, or ended: what is changed in between is one change.
+    Scrub(bool),
+    /// The last change is taken back; or the last one taken back is made again.
+    Undo,
+    Redo,
+    /// The scene is written to its file.
+    Save,
+    /// An entity's name is being typed over in the tree.
+    Naming(TreeEdit<Entity>),
+    /// The settings every Neo app has: the panel opened or shut, the window's glass turned
+    /// on or off, the desktop's appearance looked at again.
+    Desktop(DesktopMsg),
+}
+
+/// One thing changed in the game from the app: a component of an entity as it was and as
+/// it became. Either may be nothing, for a component that was added or taken away.
+#[derive(Clone, Debug, PartialEq)]
+struct Change {
+    entity: Entity,
+    component: String,
+    /// The way to the field that was changed, to tell one drag's changes from another's.
+    path: Vec<String>,
+    before: Option<Value>,
+    after: Option<Value>,
 }
 
 /// The panels, by the names the layout knows them by.
@@ -114,6 +139,8 @@ struct Lists {
     /// Every entity with a component the game has registered, those components, and the
     /// entity it is a child of.
     entities: Vec<(Entity, Vec<String>, Option<Entity>)>,
+    /// What the named ones are called.
+    names: Vec<(Entity, String)>,
     /// The components of the chosen entity, by their full names, as plain data.
     chosen: Vec<(String, Value)>,
     /// Every signal and its value.
@@ -158,6 +185,18 @@ impl Lists {
                 })
                 .collect(),
             chosen: made_of,
+            names: world
+                .get_resource::<TypeRegistry>()
+                .and_then(|registry| registry.get("mira.Name"))
+                .map_or(Vec::new(), |kind| {
+                    (kind.entities)(world)
+                        .into_iter()
+                        .filter_map(|entity| match (kind.get)(world, entity) {
+                            Some(Value::Text(name)) => Some((entity, name)),
+                            _ => None,
+                        })
+                        .collect()
+                }),
             signals,
         }
     }
@@ -184,6 +223,22 @@ pub struct Editor {
     shut: Vec<Entity>,
     /// The agent, what has been said with it, what is being written to it, and whether it
     /// is at work on something.
+    /// What has been changed from the app, newest last, and what has been taken back.
+    done: Vec<Change>,
+    undone: Vec<Change>,
+    /// Whether a drag on a field is under way, and whether the next change belongs with
+    /// the last one (the same drag, or the same run of typing).
+    scrubbing: bool,
+    joins: bool,
+    changed_at: Option<Instant>,
+    /// Where the scene is kept, and what the bar last had to say about it.
+    scene: std::path::PathBuf,
+    told: String,
+    /// The entity whose name is being typed in the tree, and what has been typed.
+    naming: Option<(Entity, String)>,
+    /// How the app looks: Neo's appearance as the person has set it for their desktop, and
+    /// this app's own say in whether its window is glass.
+    desktop: Desktop,
     agent: Box<dyn Agent>,
     said: Vec<Entry<String, Message>>,
     writing: Document,
@@ -215,12 +270,98 @@ impl Editor {
             lists: Lists::default(),
             chosen: None,
             shut: Vec::new(),
+            done: Vec::new(),
+            undone: Vec::new(),
+            scrubbing: false,
+            joins: false,
+            changed_at: None,
+            scene: "scene.json".into(),
+            told: String::new(),
+            naming: None,
+            // By the app's name, not the program's, so that an example of it is the same app.
+            desktop: Desktop::with_prefs_file(AppPrefs::path_for("mira")),
             agent: Box::new(NoAgent),
             said: Vec::new(),
             writing: Document::new(""),
             working: false,
             heard: channel(),
         }
+    }
+
+    /// Says where the scene is kept: what Save writes.
+    pub fn with_scene(mut self, scene: impl Into<std::path::PathBuf>) -> Self {
+        self.scene = scene.into();
+        self
+    }
+
+    /// A component of an entity as plain data, if it has it.
+    fn component(&self, entity: Entity, component: &str) -> Option<Value> {
+        let world = &self.game.world;
+        let registry = world.get_resource::<TypeRegistry>()?;
+        (registry.get(component)?.get)(world, entity)
+    }
+
+    /// Makes a component of an entity what `to` says (nothing takes it away), without
+    /// remembering that it was done. Says whether the game took it.
+    fn put_component(&mut self, entity: Entity, component: &str, to: Option<&Value>) -> bool {
+        let taken = self
+            .game
+            .world
+            .resource_scope(|world, registry: &mut TypeRegistry| {
+                let Some(kind) = registry.get(component) else {
+                    return false;
+                };
+                match to {
+                    Some(value) => (kind.insert)(world, entity, value).is_ok(),
+                    None => {
+                        (kind.remove)(world, entity);
+                        true
+                    }
+                }
+            });
+        self.lists = Lists::of(&self.game, self.chosen);
+        taken
+    }
+
+    /// Changes a component of an entity, and remembers it so that it can be taken back.
+    /// What is changed in one drag, or typed in one run, is remembered as one change.
+    fn change(&mut self, entity: Entity, component: &str, path: Vec<String>, to: Option<Value>) {
+        let before = self.component(entity, component);
+        if before == to || !self.put_component(entity, component, to.as_ref()) {
+            return;
+        }
+        let now = Instant::now();
+        let soon = self
+            .changed_at
+            .is_some_and(|last| now.duration_since(last) < Duration::from_millis(800));
+        self.changed_at = Some(now);
+        let same = self.done.last().is_some_and(|last| {
+            (last.entity, last.component.as_str(), &last.path) == (entity, component, &path)
+        });
+        // A drag joins up to its end; typing joins while it keeps coming.
+        if same && (self.joins || !self.scrubbing && soon && !path.is_empty()) {
+            self.done.last_mut().expect("there is a last").after = to;
+        } else {
+            self.done.push(Change {
+                entity,
+                component: component.to_owned(),
+                path,
+                before,
+                after: to,
+            });
+        }
+        self.joins = self.scrubbing;
+        self.undone.clear();
+    }
+
+    /// Whether the settings panel is showing.
+    pub fn settings_open(&self) -> bool {
+        self.desktop.settings_open
+    }
+
+    /// Whether there is a change to take back, and one to make again.
+    pub fn can_undo(&self) -> (bool, bool) {
+        (!self.done.is_empty(), !self.undone.is_empty())
     }
 
     /// Gives the app the agent its conversation panel talks to.
@@ -406,6 +547,11 @@ impl Editor {
                         .on_select(Message::Chosen)
                         .on_toggle(Message::Opened)
                         .on_move(Message::Moved)
+                        .on_edit(Message::Naming)
+                        .editing(
+                            self.naming.as_ref().map(|(entity, _)| entity),
+                            self.naming.as_ref().map_or("", |(_, typed)| typed),
+                        )
                         // A row can also be carried out of the tree, to a field that names
                         // an entity.
                         .draggable(true),
@@ -426,22 +572,65 @@ impl Editor {
                 column()
                     .width(Length::Fill)
                     .height(Length::Fill)
-                    .push(
-                        container(conversation(&self.said, Message::Unfolded)).height(Length::Fill),
-                    )
+                    .push(if self.said.is_empty() {
+                        // Before anything is said: what this is for.
+                        container(
+                            column()
+                                .spacing(6.0)
+                                .align(Align::Center)
+                                .push(icon(icons::BOT).size(26.0).tone(Tone::Faint))
+                                .push(
+                                    text("An agent that can see this game, read everything in it, and change it.")
+                                        .tone(Tone::Muted),
+                                )
+                                .push(
+                                    text("Ask why something is happening, or for a change to be made.")
+                                        .size(12.0)
+                                        .tone(Tone::Faint),
+                                ),
+                        )
+                        .width(Length::Fill)
+                        .height(Length::Fill)
+                        .align_x(Align::Center)
+                        .align_y(Align::Center)
+                    } else {
+                        container(conversation(&self.said, Message::Unfolded)).height(Length::Fill)
+                    })
                     .push(
                         container(row().spacing(8.0).align(Align::End).push(asking).push(stop))
                             .padding(8.0),
                     )
                     .into()
             }
-            SIGNALS => lines(self.lists.signals.iter().map(|(name, value)| {
-                let shown = match value {
-                    Signal::Bool(value) => value.to_string(),
-                    Signal::Number(value) => format!("{value:.2}"),
-                };
-                (name.clone(), shown, value.is_true())
-            })),
+            SIGNALS => {
+                // A lamp for each, lit while it is true; its value at the right.
+                let mut rows = column().spacing(2.0).width(Length::Fill);
+                for (name, value) in &self.lists.signals {
+                    let shown = match value {
+                        Signal::Bool(value) => value.to_string(),
+                        Signal::Number(value) => format!("{value:.2}"),
+                    };
+                    let lit = value.is_true();
+                    let lamp = if lit { Tone::Good } else { Tone::Faint };
+                    let name = text(name.clone()).mono().size(12.5).no_wrap();
+                    rows = rows.push(
+                        container(
+                            row()
+                                .spacing(8.0)
+                                .align(Align::Center)
+                                .push(icon(icons::CIRCLE_DOT).size(11.0).tone(lamp))
+                                .push(if lit { name } else { name.tone(Tone::Muted) })
+                                .push(Space::fill_x())
+                                .push(text(shown).mono().size(12.5).tone(Tone::Muted)),
+                        )
+                        .padding([3.0, 4.0]),
+                    );
+                }
+                if self.lists.signals.is_empty() {
+                    rows = rows.push(text("This game has no signals.").tone(Tone::Muted));
+                }
+                scrollable(container(rows).padding(8.0)).into()
+            }
             _ => text("").into(),
         }
     }
@@ -449,23 +638,49 @@ impl Editor {
     /// What the chosen entity is made of, each field in a control that changes it.
     fn inspector(&self) -> Element<Message> {
         let Some(entity) = self.chosen else {
-            return lines(
-                [(
-                    "Choose an entity in the tree.".to_owned(),
-                    String::new(),
-                    false,
-                )]
-                .into_iter(),
-            );
+            return container(
+                column()
+                    .spacing(6.0)
+                    .align(Align::Center)
+                    .push(icon(icons::SLIDERS_HORIZONTAL).size(24.0).tone(Tone::Faint))
+                    .push(
+                        text("Choose an entity in the tree to see what it is made of.")
+                            .tone(Tone::Muted),
+                    ),
+            )
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .align_x(Align::Center)
+            .align_y(Align::Center)
+            .into();
         };
         let mut rows = column().spacing(6.0).width(Length::Fill);
+        // What it is called, large, and which entity it is, small.
+        let named = self.lists.names.iter().find(|(named, _)| *named == entity);
         rows = rows.push(
-            text(format!("entity {}", entity.index()))
-                .mono()
-                .tone(Tone::Muted),
+            row()
+                .spacing(8.0)
+                .align(Align::Center)
+                .push(
+                    text(named.map_or("Unnamed", |(_, name)| name.as_str()))
+                        .size(16.0)
+                        .weight(Weight::SEMIBOLD),
+                )
+                .push(
+                    text(format!("entity {}", entity.index()))
+                        .size(12.0)
+                        .tone(Tone::Faint),
+                ),
         );
         for (component, value) in &self.lists.chosen {
-            rows = rows.push(text(short(component)).weight(Weight::SEMIBOLD));
+            // Each component under a rule and its name.
+            rows = rows.push(container(Divider::horizontal()).padding([6.0, 0.0, 2.0, 0.0]));
+            rows = rows.push(
+                text(short(component))
+                    .size(12.0)
+                    .weight(Weight::SEMIBOLD)
+                    .tone(Tone::Accent),
+            );
             rows = fields(rows, component, &mut Vec::new(), value);
         }
         scrollable(container(rows).padding(10.0)).into()
@@ -483,15 +698,30 @@ impl Editor {
                 let what: Vec<&str> = components
                     .iter()
                     .map(String::as_str)
-                    .filter(|name| *name != "Transform" && *name != "Parent")
+                    .filter(|name| !matches!(*name, "Transform" | "Parent" | "Name"))
                     .collect();
-                let label = if what.is_empty() {
-                    format!("{}", entity.index())
-                } else {
-                    format!("{}  {}", entity.index(), what.join(", "))
+                let named = self.lists.names.iter().find(|(named, _)| named == entity);
+                let label = match named {
+                    // By its name if it has one; else by what it is made of.
+                    Some((_, name)) => name.clone(),
+                    None if what.is_empty() => format!("{}", entity.index()),
+                    None => format!("{}  {}", entity.index(), what.join(", ")),
                 };
                 // A shut entity's children are still built, so it shows that it has some.
-                TreeNode::new(*entity, label).with(open, self.entity_tree(Some(*entity)))
+                // A picture of what it mostly is.
+                let has = |name: &str| components.iter().any(|component| component == name);
+                let glyph = if has("Camera") {
+                    icons::VIDEO
+                } else if has("DirectionalLight") {
+                    icons::SUN
+                } else if has("Mesh3d") {
+                    icons::BOX
+                } else {
+                    icons::CIRCLE_DOT
+                };
+                TreeNode::new(*entity, label)
+                    .icon(glyph)
+                    .with(open, self.entity_tree(Some(*entity)))
             })
             .collect()
     }
@@ -616,6 +846,7 @@ fn fields(
     let control: Element<Message> = match value {
         Value::Bool(on) => toggle(*on, move |on| edited(Value::Bool(on))).into(),
         Value::Float(number) => number_field(*number)
+            .on_scrub(Message::Scrub)
             .on_change(move |number| edited(Value::Float(number)))
             .width(Length::Fill)
             .into(),
@@ -627,11 +858,16 @@ fn fields(
         Value::List(items) if numbers(items).is_some() => {
             let parts = numbers(items).expect("checked just above");
             let whole = parts.clone();
-            vector_field(&parts, 0.1, move |part, number| {
-                let mut whole = whole.clone();
-                whole[part] = number;
-                edited(Value::List(whole.into_iter().map(Value::Float).collect()))
-            })
+            vector_field_scrubbed(
+                &parts,
+                0.1,
+                move |part, number| {
+                    let mut whole = whole.clone();
+                    whole[part] = number;
+                    edited(Value::List(whole.into_iter().map(Value::Float).collect()))
+                },
+                Message::Scrub,
+            )
         }
         // A colour is picked as one; how see-through it is stays a number beside it.
         Value::Map(parts) if colour(parts).is_some() => {
@@ -650,14 +886,16 @@ fn fields(
             };
             let shown = Color::rgb(encoded(r) as f32, encoded(g) as f32, encoded(b) as f32);
             let picked = edited.clone();
-            let picker = color_field(shown).on_change(move |to: Color| {
-                picked(whole([
-                    linear(to.r as f64),
-                    linear(to.g as f64),
-                    linear(to.b as f64),
-                    a,
-                ]))
-            });
+            let picker = color_field(shown)
+                .on_scrub(Message::Scrub)
+                .on_change(move |to: Color| {
+                    picked(whole([
+                        linear(to.r as f64),
+                        linear(to.g as f64),
+                        linear(to.b as f64),
+                        a,
+                    ]))
+                });
             if !has_alpha {
                 picker.into()
             } else {
@@ -701,7 +939,10 @@ fn fields(
         }
         // Shown, and not yet changed here.
         Value::Null => said("none".to_owned()),
-        Value::Text(written) => said(written.clone()),
+        Value::Text(written) => text_input("", written.clone())
+            .on_input(move |written| edited(Value::Text(written)))
+            .width(Length::Fill)
+            .into(),
         // An entity is named by dropping one on the field from the tree; a click on the
         // field goes to the entity it names.
         Value::Entity(bits) => {
@@ -716,23 +957,6 @@ fn fields(
         Value::Asset { kind, name } => said(format!("{kind} {name}")),
     };
     rows.push(field_row(&name, depth.saturating_sub(1), control))
-}
-
-/// A list of rows, each a name and what there is to say of it, scrolling when it is long.
-/// A row that is `lit` has its name in full strength; the rest are quieter.
-fn lines(rows: impl Iterator<Item = (String, String, bool)>) -> Element<Message> {
-    let mut list = column().spacing(4.0).width(Length::Fill);
-    for (name, said, lit) in rows {
-        let name = text(name).mono().no_wrap();
-        let name = if lit { name } else { name.tone(Tone::Muted) };
-        list = list.push(
-            row()
-                .spacing(10.0)
-                .push(name)
-                .push(text(said).mono().tone(Tone::Muted)),
-        );
-    }
-    scrollable(container(list).padding(10.0)).into()
 }
 
 /// The key the game knows a window's key by: where it is on the keyboard, as near as the
@@ -771,6 +995,50 @@ pub fn key_code(key: &KeyEvent) -> Option<KeyCode> {
 
 impl App for Editor {
     type Message = Message;
+
+    /// Neo's look, as the person has set it for their desktop (light or dark, accent,
+    /// corners, how see-through and how blurred), with the window glass unless it was
+    /// turned off for this app in its settings. Glass is the app's default whatever the
+    /// desktop's own windows are.
+    fn theme(&self, system: Scheme) -> Theme {
+        let mut theme = self.desktop.theme(system);
+        theme.glass.enabled = self.desktop.prefs.glass;
+        theme
+    }
+
+    fn app_menu(&self) -> Vec<MenuEntry<Message>> {
+        self.desktop.app_menu(Message::Desktop)
+    }
+
+    fn subscriptions(&self) -> Vec<Subscription<Message>> {
+        // Follows the desktop's appearance when it is changed elsewhere.
+        vec![Desktop::subscription(Message::Desktop(DesktopMsg::Poll))]
+    }
+
+    fn on_key(&self, key: &KeyEvent) -> Option<Message> {
+        // Command on a Mac, Control elsewhere; with Shift, Z goes the other way.
+        let held = key.modifiers.logo || key.modifiers.ctrl;
+        let Key::Character(letter) = &key.key else {
+            return None;
+        };
+        match (key.pressed && held, letter.to_lowercase().as_str()) {
+            (true, "z") if key.modifiers.shift => Some(Message::Redo),
+            (true, "z") => Some(Message::Undo),
+            (true, "y") => Some(Message::Redo),
+            (true, "s") => Some(Message::Save),
+            _ => None,
+        }
+    }
+
+    /// Room for a game and the panels round it.
+    fn window(&self) -> WindowSettings {
+        WindowSettings {
+            size: neo::Size::new(1440.0, 900.0),
+            min_size: Some(neo::Size::new(960.0, 600.0)),
+            app_id: Some("dev.mira.Editor".to_owned()),
+            ..WindowSettings::default()
+        }
+    }
 
     fn title(&self) -> String {
         "mira".to_owned()
@@ -877,35 +1145,77 @@ impl App for Editor {
                         self.game.world.get::<Parent>(onto).map(|parent| parent.0)
                     }
                 };
-                match parent {
-                    Some(parent) => {
-                        self.game.world.insert(dragged, Parent(parent));
-                    }
-                    None => {
-                        self.game.world.remove::<Parent>(dragged);
-                    }
-                }
-                self.lists = Lists::of(&self.game, self.chosen);
+                let parent = parent.map(|parent| Value::Entity(parent.to_bits()));
+                self.joins = false;
+                self.change(dragged, "mira.Parent", Vec::new(), parent);
             }
             Message::Edited(component, path, value) => {
                 let Some(entity) = self.chosen else { return };
-                let world = &mut self.game.world;
                 // The component as it is now, with the one field changed, put back whole.
-                world.resource_scope(|world, registry: &mut TypeRegistry| {
-                    let Some(kind) = registry.get(&component) else {
-                        return;
-                    };
-                    let Some(mut whole) = (kind.get)(world, entity) else {
-                        return;
-                    };
-                    if put(&mut whole, &path, value) {
-                        if let Err(why) = (kind.insert)(world, entity, &whole) {
-                            eprintln!("{component} would not take that: {why}");
-                        }
-                    }
-                });
-                self.lists = Lists::of(&self.game, self.chosen);
+                let Some(mut whole) = self.component(entity, &component) else {
+                    return;
+                };
+                if put(&mut whole, &path, value) {
+                    self.change(entity, &component, path, Some(whole));
+                }
             }
+            Message::Desktop(message) => {
+                self.desktop.update(message);
+            }
+            Message::Scrub(began) => {
+                self.scrubbing = began;
+                self.joins = false;
+            }
+            Message::Undo => {
+                if let Some(change) = self.done.pop() {
+                    self.put_component(change.entity, &change.component, change.before.as_ref());
+                    self.undone.push(change);
+                    self.joins = false;
+                }
+            }
+            Message::Redo => {
+                if let Some(change) = self.undone.pop() {
+                    self.put_component(change.entity, &change.component, change.after.as_ref());
+                    self.done.push(change);
+                    self.joins = false;
+                }
+            }
+            Message::Save => {
+                let world = &self.game.world;
+                let saved = match world.get_resource::<TypeRegistry>() {
+                    Some(registry) => Scene::capture(world, registry).save(&self.scene),
+                    None => Err(anyhow::anyhow!("the game has nothing registered to save")),
+                };
+                self.told = match saved {
+                    Ok(()) => format!("saved {}", self.scene.display()),
+                    Err(why) => format!("not saved: {why}"),
+                };
+            }
+            Message::Naming(edit) => match edit {
+                TreeEdit::Begin(entity) => {
+                    let named = self.component(entity, "mira.Name");
+                    let now = match named {
+                        Some(Value::Text(name)) => name,
+                        _ => String::new(),
+                    };
+                    self.naming = Some((entity, now));
+                }
+                TreeEdit::Typed(typed) => {
+                    if let Some((_, name)) = &mut self.naming {
+                        *name = typed;
+                    }
+                }
+                TreeEdit::Done => {
+                    if let Some((entity, name)) = self.naming.take() {
+                        let name = name.trim();
+                        // No name is no component, not an empty one.
+                        let to = (!name.is_empty()).then(|| Value::Text(name.to_owned()));
+                        self.joins = false;
+                        self.change(entity, "mira.Name", Vec::new(), to);
+                    }
+                }
+                TreeEdit::Dropped => self.naming = None,
+            },
             Message::Writing(action) => {
                 self.writing.apply(action);
             }
@@ -941,35 +1251,74 @@ impl App for Editor {
 
     fn view(&self) -> Element<Message> {
         let Status { paused, frame } = self.status;
+        // The tool bar is mira's own, not a row of Neo's buttons: small flat icons side by
+        // side with nothing between them, a thin line between one group and the next, and
+        // the one filled button the one that runs the game.
+        let tool = |glyph, press: Option<Message>| {
+            icon_button(glyph, 30.0)
+                .kind(ButtonKind::Ghost)
+                .on_press_maybe(press)
+        };
+        let gap = || {
+            container(Divider::vertical())
+                .height(18.0)
+                .padding([0.0, 4.0])
+        };
+        let (undo, redo) = self.can_undo();
+        let said = if self.told.is_empty() {
+            format!("frame {frame}")
+        } else {
+            format!("{}  ·  frame {frame}", self.told)
+        };
         let bar = row()
-            .spacing(8.0)
             .align(Align::Center)
-            .push(button(if paused { "Resume" } else { "Pause" }).on_press(Message::Pause))
-            .push(button("Step").on_press_maybe(paused.then_some(Message::Step)))
             .push(
-                button(if self.mouselook {
-                    "Mouselook: on"
-                } else {
-                    "Mouselook: off"
-                })
-                .on_press(Message::Mouselook),
+                icon_button(if paused { icons::PLAY } else { icons::PAUSE }, 30.0)
+                    .kind(ButtonKind::Accent)
+                    .on_press(Message::Pause),
             )
-            .push(text(format!(
-                "frame {frame}{}",
-                if paused { ", paused" } else { "" }
-            )));
+            .push(tool(icons::STEP_FORWARD, paused.then_some(Message::Step)))
+            .push(gap())
+            .push(tool(icons::UNDO_2, undo.then_some(Message::Undo)))
+            .push(tool(icons::REDO_2, redo.then_some(Message::Redo)))
+            .push(tool(icons::SAVE, Some(Message::Save)))
+            .push(gap())
+            .push(tool(icons::MOUSE_POINTER_2, Some(Message::Mouselook)).selected(self.mouselook))
+            .push(Space::fill_x())
+            .push(
+                text(if paused {
+                    format!("paused  ·  {said}")
+                } else {
+                    said
+                })
+                .size(12.0)
+                .tone(Tone::Muted),
+            )
+            .push(gap())
+            .push(tool(
+                icons::SETTINGS,
+                Some(Message::Desktop(DesktopMsg::OpenSettings)),
+            ));
+        // No strip of its own and no room round it: the buttons sit against the window's
+        // edge, and one line marks where the bar ends and the panels begin.
+        let bar = column()
+            .width(Length::Fill)
+            .push(container(bar).padding([2.0, 6.0]).width(Length::Fill))
+            .push(Divider::horizontal());
         let panels = dock(
             &self.layout,
             |panel| panel.to_owned(),
             |panel| self.panel(panel),
             Message::Arranged,
         );
-        column()
+        let whole = column()
             .width(Length::Fill)
             .height(Length::Fill)
-            .push(container(bar).padding(8.0))
-            .push(panels)
-            .into()
+            .push(bar)
+            .push(panels);
+        // The settings panel, over everything while it is open.
+        self.desktop
+            .with_settings(whole, "mira Settings", Message::Desktop, vec![])
     }
 }
 
@@ -992,21 +1341,33 @@ fn tools_program() -> std::path::PathBuf {
 ///
 /// The app's agent is Claude Code, given the game's tools: the game is made to listen for
 /// them on a port of its own if it is not listening already. See [`agent::ClaudeCode`].
-pub fn run(mut game: crate::app::App) -> Result<(), Box<dyn std::error::Error>> {
+pub fn run(game: crate::app::App) -> Result<(), Box<dyn std::error::Error>> {
+    app(game).run()
+}
+
+/// The engine app on a game, with its agent, not yet opened: for saying more about it
+/// first (`with_scene`, `with_agent`) and then [`Editor::run`].
+pub fn app(mut game: crate::app::App) -> Editor {
     let listening = match game.debugger_address() {
         Some(address) => Some(address),
         None => game.listen_for_debugger("127.0.0.1:0").ok(),
     };
     let editor = Editor::new(game);
-    let editor = match listening {
+    match listening {
         Some(address) => {
             editor.with_agent(agent::ClaudeCode::new(tools_program(), address.to_string()))
         }
         // An agent with no way to the game would only guess: better none.
         None => editor,
-    };
-    neo::run(editor)?;
-    Ok(())
+    }
+}
+
+impl Editor {
+    /// Opens the app's window, and returns when it is closed.
+    pub fn run(self) -> Result<(), Box<dyn std::error::Error>> {
+        neo::run(self)?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -1320,6 +1681,186 @@ mod tests {
         alone.listen();
         assert!(alone.said()[1].text.contains("There is no agent"));
         assert!(!alone.working);
+    }
+
+    #[test]
+    fn what_is_changed_can_be_taken_back_and_made_again() {
+        use crate::prelude::*;
+        let mut game = crate::app::App::new();
+        game.add_plugins(crate::transform::TransformPlugin);
+        let entity = game.world.spawn(Transform::from_xyz(1.0, 0.0, 0.0));
+        let other = game.world.spawn(Transform::IDENTITY);
+        let mut editor = Editor::new(game);
+        editor.update(Message::Chosen(entity));
+        let x = |editor: &Editor| {
+            editor
+                .game()
+                .world
+                .get::<Transform>(entity)
+                .unwrap()
+                .translation
+                .x
+        };
+        let slide = |editor: &mut Editor, to: f64| {
+            let whole = Value::List(vec![Value::Float(to), Value::Float(0.0), Value::Float(0.0)]);
+            editor.update(Message::Edited(
+                "mira.Transform".into(),
+                vec!["translation".into()],
+                whole,
+            ));
+        };
+        assert_eq!(editor.can_undo(), (false, false));
+
+        // A drag is many changes and one thing to take back.
+        editor.update(Message::Scrub(true));
+        for to in [2.0, 3.0, 4.0] {
+            slide(&mut editor, to);
+        }
+        editor.update(Message::Scrub(false));
+        // A second drag of the same field is a second thing.
+        editor.update(Message::Scrub(true));
+        slide(&mut editor, 9.0);
+        editor.update(Message::Scrub(false));
+        assert_eq!((x(&editor), editor.done.len()), (9.0, 2));
+        editor.update(Message::Undo);
+        assert_eq!(x(&editor), 4.0);
+        editor.update(Message::Undo);
+        assert_eq!((x(&editor), editor.can_undo()), (1.0, (false, true)));
+        editor.update(Message::Undo);
+        assert_eq!(x(&editor), 1.0, "nothing more to take back");
+        editor.update(Message::Redo);
+        editor.update(Message::Redo);
+        assert_eq!((x(&editor), editor.can_undo()), (9.0, (true, false)));
+        // A new change after taking one back leaves nothing to make again.
+        editor.update(Message::Undo);
+        slide(&mut editor, 5.0);
+        assert_eq!(editor.can_undo(), (true, false));
+        // Changing a thing to what it is already is no change.
+        let before = editor.done.len();
+        slide(&mut editor, 5.0);
+        assert_eq!(editor.done.len(), before);
+
+        // A parent given and a name given are taken back as what they were: nothing.
+        editor.update(Message::Moved(entity, other, Place::Into));
+        assert_eq!(
+            editor.game().world.get::<Parent>(entity),
+            Some(&Parent(other))
+        );
+        editor.update(Message::Naming(TreeEdit::Begin(entity)));
+        editor.update(Message::Naming(TreeEdit::Typed(" Tank ".into())));
+        editor.update(Message::Naming(TreeEdit::Done));
+        assert_eq!(
+            editor.game().world.get::<Name>(entity),
+            Some(&Name::new("Tank"))
+        );
+        assert_eq!(editor.entity_tree(Some(other))[0].label, "Tank");
+        editor.update(Message::Undo);
+        assert_eq!(editor.game().world.get::<Name>(entity), None);
+        editor.update(Message::Undo);
+        assert_eq!(editor.game().world.get::<Parent>(entity), None);
+        editor.update(Message::Redo);
+        assert_eq!(
+            editor.game().world.get::<Parent>(entity),
+            Some(&Parent(other))
+        );
+        // A name being typed and dropped changes nothing; an empty one takes the name away.
+        editor.update(Message::Naming(TreeEdit::Begin(entity)));
+        editor.update(Message::Naming(TreeEdit::Typed("Lorry".into())));
+        editor.update(Message::Naming(TreeEdit::Dropped));
+        assert_eq!(editor.game().world.get::<Name>(entity), None);
+
+        // The keys for these.
+        let key = |letter: &str, shift: bool| KeyEvent {
+            key: Key::Character(letter.into()),
+            pressed: true,
+            repeat: false,
+            modifiers: neo::Modifiers {
+                logo: true,
+                shift,
+                ..Default::default()
+            },
+            text: None,
+        };
+        assert!(matches!(
+            editor.on_key(&key("z", false)),
+            Some(Message::Undo)
+        ));
+        assert!(matches!(
+            editor.on_key(&key("Z", true)),
+            Some(Message::Redo)
+        ));
+        assert!(matches!(
+            editor.on_key(&key("s", false)),
+            Some(Message::Save)
+        ));
+        assert!(editor.on_key(&key("q", false)).is_none());
+    }
+
+    #[test]
+    fn the_scene_is_saved_and_can_be_spawned_again() {
+        use crate::prelude::*;
+        let build = || {
+            let mut game = crate::app::App::new();
+            game.add_plugins(crate::transform::TransformPlugin);
+            game
+        };
+        let mut game = build();
+        let tank = game
+            .world
+            .spawn((Transform::from_xyz(3.0, 0.0, 0.0), Name::new("Tank")));
+        game.world
+            .spawn((Transform::IDENTITY, Name::new("Turret"), Parent(tank)));
+        let file = std::env::temp_dir().join(format!("mira-scene-{}.json", std::process::id()));
+        let mut editor = Editor::new(game).with_scene(&file);
+        editor.update(Message::Save);
+        assert!(editor.told.starts_with("saved "), "{}", editor.told);
+
+        let mut again = build();
+        let scene = Scene::load(&file).expect("the saved scene reads");
+        again
+            .world
+            .resource_scope(|world, registry: &mut TypeRegistry| {
+                scene.spawn(world, registry);
+            });
+        let lists = Lists::of(&again, None);
+        let mut names: Vec<&str> = lists.names.iter().map(|(_, name)| name.as_str()).collect();
+        names.sort_unstable();
+        assert_eq!(names, ["Tank", "Turret"]);
+        // The turret is still the tank's, whatever their ids are now.
+        let parents: Vec<Option<Entity>> = lists
+            .entities
+            .iter()
+            .map(|(_, _, parent)| *parent)
+            .collect();
+        assert_eq!(parents.iter().filter(|parent| parent.is_some()).count(), 1);
+        let _ = std::fs::remove_file(&file);
+
+        // Somewhere that can't be written says so.
+        let mut nowhere = Editor::new(build()).with_scene("/no/such/folder/scene.json");
+        nowhere.update(Message::Save);
+        assert!(nowhere.told.starts_with("not saved"), "{}", nowhere.told);
+    }
+
+    #[test]
+    fn the_window_is_glass_unless_turned_off_for_the_app() {
+        let mut editor = Editor::new(crate::app::App::new());
+        // Whatever the desktop's own windows are, and whatever was last chosen here.
+        editor.desktop.appearance.glass.enabled = false;
+        editor.desktop.prefs.glass = true;
+        let theme = editor.theme(Scheme::Dark);
+        assert!(theme.glass.enabled, "glass by default");
+        assert_eq!(
+            theme.scheme,
+            editor.desktop.appearance.theme(Scheme::Dark).scheme
+        );
+        editor.desktop.prefs.glass = false;
+        assert!(!editor.theme(Scheme::Dark).glass.enabled);
+        // The settings panel opens from the bar and from the app's menu, and shuts.
+        assert!(!editor.settings_open() && editor.app_menu().len() == 1);
+        editor.update(Message::Desktop(DesktopMsg::OpenSettings));
+        assert!(editor.settings_open());
+        editor.update(Message::Desktop(DesktopMsg::CloseSettings));
+        assert!(!editor.settings_open());
     }
 
     #[test]

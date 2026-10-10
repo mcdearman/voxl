@@ -371,7 +371,12 @@ editor needs from it.
 - [ ] In the inspector still: text and asset references, and
       one undo step per edit; renaming (mira has no name component yet); transform gizmos
 - [ ] Asset browser, drag to place, prefab editing
-- [ ] Undo and redo as a command log; play in editor
+- [x] Neo's look: the desktop's appearance, a glass window by default with a switch in
+      Settings, and a tool bar of mira's own
+- [x] Undo and redo of what is changed from the app; saving the scene and opening one;
+      names for entities (`Name`), given in the tree
+- [ ] Play in editor: the scene as edited kept apart from the game as it runs, so that
+      stopping puts it back
 - [ ] Material editor; voxel sculpting and painting tools
 - [ ] Profiler and render-graph viewers
 - [x] The agent window's first form: a conversation panel under the game, with Claude Code

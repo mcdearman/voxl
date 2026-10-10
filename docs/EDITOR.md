@@ -13,7 +13,7 @@ one onto another to make it its child, or beside one to share its parent), an in
 in which the chosen entity's parts are fields to change (numbers and vectors drag or take a
 typed value, true-or-false is a switch, a colour opens a picker, and a field that names an
 entity takes one dragged onto it from the tree (a click on it goes to the entity it names);
-text and asset references are shown but not
+text is typed; asset references are shown but not
 yet changed there), each change written straight to the running game,
 and the game's signals with their values. All are read from the game a few times a second.
 They are panels of a dock:
@@ -35,6 +35,32 @@ What is done in the viewport is the game's: pointer, wheel and keys, in the game
 terms. "Mouselook" holds and hides the pointer for games that turn with the mouse (Escape
 lets go). The bar follows the game, so a game paused from outside, by an agent say, shows as
 paused. Everything else on this page is still to come.
+
+### How it looks
+
+The app is a Neo app and looks like one: it follows the appearance set for the Neo desktop
+(light or dark, the accent, corners), and its window is glass, translucent with what is
+behind it blurred. Glass is the app's default; **Settings** (the gear at the right of the
+tool bar, or Cmd/Ctrl+comma) has the switch to make the window solid, and the choice is
+kept. The tool bar is the one part that is mira's own and not Neo's standard buttons: flat
+icons set edge to edge with no room between or around them, a thin line between one group
+and the next (run or pause, step; undo, redo, save; mouselook), the frame count and the
+settings gear at the right, and one line under the bar to part it from the panels. The window opens at 1440 by 900.
+
+### Changing things, and keeping them
+
+- Every change made from the app (a field, a parent, a name) can be taken back and made
+  again: the Undo and Redo buttons, or Cmd/Ctrl+Z and Shift+Cmd/Ctrl+Z. One drag on a
+  field is one change, however far it went, and so is one run of typing.
+- **Save** (or Cmd/Ctrl+S) writes the scene: every entity with its registered components,
+  and the registered settings. It goes to the file the app was opened on, or `scene.json`.
+  `cargo run -- level.json` opens the app on a saved scene; if the file isn't there yet, it
+  is where Save will write.
+- Double-click a row of the tree (or Enter, or F2) to name the entity. A name is a
+  component, `Name`, like any other; an empty one takes it away.
+
+What is not taken back by Undo: what the game itself did meanwhile, and what an agent
+changed through its own tools.
 
 ### The agent
 
