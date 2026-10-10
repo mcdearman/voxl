@@ -171,6 +171,18 @@ pub(super) fn move_characters(fixed: Res<FixedTime>, world: Res<PhysicsWorld>, m
         c.vertical_velocity += world.gravity.y * dt;
         let horizontal = Vec3::new(c.desired_velocity.x, 0.0, c.desired_velocity.z) * dt;
         let iso = Iso::new(transform.translation, Quat::IDENTITY);
+        // On the way up it is not looking for ground to stand on: it goes where its speed
+        // takes it, and stops rising if something is overhead.
+        if c.vertical_velocity > 0.0 {
+            let rise = c.vertical_velocity * dt;
+            let (free, _) = world.slide(&shape, iso, horizontal + Vec3::Y * rise, Some(entity), |_| false);
+            if free.y - iso.position.y < rise * 0.5 {
+                c.vertical_velocity = 0.0;
+            }
+            transform.translation = free;
+            c.grounded = false;
+            continue;
+        }
         // Lift by the step height, move across, then settle back down: steps are climbed.
         let lifted = Iso::new(iso.position + Vec3::Y * c.step_height, Quat::IDENTITY);
         let (across, _) = world.slide(&shape, lifted, horizontal, Some(entity), |_| false);

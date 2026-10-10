@@ -412,3 +412,43 @@ fn a_saved_scene_simulates_the_same_after_loading() {
         sim.at(walker)
     );
 }
+
+#[test]
+fn a_character_jumps_and_comes_down_again() {
+    let mut sim = Sim::new();
+    sim.ground();
+    let walker = sim.world.spawn((
+        Transform::from_xyz(0.0, 0.9, 0.0),
+        GlobalTransform::default(),
+        CharacterController::new(1.8, 0.35),
+    ));
+    sim.run(0.3);
+    let height = |sim: &Sim| sim.world.get::<Transform>(walker).unwrap().translation.y;
+    let standing = height(&sim);
+    assert!(sim.world.get::<CharacterController>(walker).unwrap().grounded);
+
+    sim.world.get_mut::<CharacterController>(walker).unwrap().jump = true;
+    // At 4.5 m/s it is at the top, about a metre up, after some 0.46 s.
+    sim.run(0.45);
+    let top = height(&sim);
+    assert!(top > standing + 0.8 && top < standing + 1.3, "the top of the jump was {top}");
+    assert!(!sim.world.get::<CharacterController>(walker).unwrap().grounded);
+    sim.run(1.0);
+    assert!((height(&sim) - standing).abs() < 0.02);
+    assert!(sim.world.get::<CharacterController>(walker).unwrap().grounded);
+
+    // Under a low roof it rises only as far as the roof.
+    sim.world.spawn((
+        Transform::from_xyz(0.0, 2.4, 0.0),
+        GlobalTransform(glam::Mat4::from_translation(Vec3::new(0.0, 2.4, 0.0))),
+        Collider::cuboid(Vec3::new(2.0, 0.2, 2.0)),
+    ));
+    sim.run(0.1);
+    sim.world.get_mut::<CharacterController>(walker).unwrap().jump = true;
+    let mut highest = standing;
+    for _ in 0..40 {
+        sim.run(1.0 / 60.0);
+        highest = highest.max(height(&sim));
+    }
+    assert!(highest < standing + 0.45, "it went through the roof, to {highest}");
+}

@@ -3,3 +3,4 @@
 //! and so that the app can be tested.
 
 pub mod editor;
+pub mod starter;
