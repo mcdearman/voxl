@@ -389,6 +389,7 @@ editor needs from it.
 - [x] A Place panel: shapes, a sun, a camera and an empty entity put in the scene; delete and
       duplicate with everything under the entity; all in the undo history, which now
       covers entities made and taken away as well as components changed
+- [x] A scene camera of the app's own, apart from the game's: turn, fly, move in and out
 - [ ] A render-graph viewer
 - [x] The agent window's first form: a conversation panel under the game, with Claude Code
       run behind it and given the game's own tools (see [EDITOR.md](EDITOR.md#the-agent))

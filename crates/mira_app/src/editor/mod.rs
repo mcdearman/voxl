@@ -38,7 +38,7 @@ use mira::{
     input::{ButtonInput, KeyCode, Mouse, MouseButton},
     live::Live,
     prelude::Vec2,
-    reflect::{Scene, TypeRegistry, Value},
+    reflect::{NotSaved, Scene, TypeRegistry, Value},
     render::frame_texture,
     render::{Camera, DirectionalLight, Material, Mesh, Mesh3d},
     signal::{Signal, Signals},
@@ -96,6 +96,9 @@ pub enum Message {
     Setting(String, Vec<String>, Value),
     /// Something done in the signal graph: a wire pulled, a lamp clicked, a box moved.
     Graph(mira_ui::signal_graph::Message),
+    /// The scene is looked at through the app's own camera, to fly about with, or through
+    /// the game's again.
+    SceneView(bool),
     /// Something new is put in the scene.
     Place(Placed),
     /// The chosen entity, and everything under it, is taken out of the scene; or a copy of
@@ -136,6 +139,22 @@ pub enum Placed {
     Camera,
     /// An entity with a place and a name and nothing else: something to hang others on.
     Empty,
+}
+
+/// The app's own camera on the scene, while it is the one being looked through.
+#[derive(Clone, Debug)]
+struct SceneView {
+    /// The camera's entity: in the game's world, kept out of saved scenes and off the tree.
+    entity: Entity,
+    /// Which way it looks: round to the left, and up, in radians.
+    turn: f32,
+    tilt: f32,
+    /// The game's cameras that were being looked through, to give the view back to.
+    games: Vec<Entity>,
+    /// Where the pointer was, while it is turning the camera.
+    turning: Option<Point>,
+    /// The keys held to fly: forward, back, left, right, up, down.
+    flying: [bool; 6],
 }
 
 /// The name a change goes by when it is to a whole entity and not one component of it:
@@ -296,6 +315,8 @@ impl Lists {
         Self {
             entities: entities
                 .into_iter()
+                // What is never saved is the app's own, not part of the scene.
+                .filter(|(entity, _)| world.get::<NotSaved>(*entity).is_none())
                 .map(|(entity, components)| {
                     // A parent that is gone is no parent: the entity stands at the top.
                     let parent = world
@@ -340,6 +361,9 @@ pub struct Editor {
     held: Option<Held>,
     outline: Option<[f32; 4]>,
     handles: Option<Handles>,
+    /// The app's own camera, while the scene is looked at through it.
+    view: Option<SceneView>,
+    stepped: Option<Instant>,
     /// What the bar says of the game, as last looked at.
     status: Status,
     layout: Dock,
@@ -400,6 +424,8 @@ impl Editor {
             held: None,
             outline: None,
             handles: None,
+            view: None,
+            stepped: None,
             status: Status::default(),
             layout: std::fs::read_to_string(LAYOUT_FILE)
                 .ok()
@@ -881,7 +907,14 @@ impl Editor {
         placed
             .into_iter()
             // The eye is not something seen.
-            .filter(|(entity, _)| self.game.world.get::<Camera>(*entity).is_none())
+            // The eye is not something seen; nor is anything else that is the app's own.
+            .filter(|(entity, _)| {
+                let world = &self.game.world;
+                world.get::<NotSaved>(*entity).is_none()
+                    && world
+                        .get::<Camera>(*entity)
+                        .is_none_or(|camera| !camera.active)
+            })
             .filter_map(|(entity, placed)| {
                 let (least, most) = self.extent(entity);
                 Some((entity, scene::enters(ray, placed, least, most)?))
@@ -890,10 +923,134 @@ impl Editor {
             .map(|(entity, along)| (entity, ray.from + ray.along * along))
     }
 
+    /// Looks at the scene through the app's own camera (made where the game's is, the first
+    /// time), or gives the view back to the game's.
+    fn look_through(&mut self, own: bool) {
+        let world = &mut self.game.world;
+        match (own, self.view.take()) {
+            (true, None) => {
+                let Some((camera, eye)) = self.eye() else {
+                    return;
+                };
+                let world = &mut self.game.world;
+                let games: Vec<Entity> = world
+                    .query::<(Entity, &Camera)>()
+                    .iter()
+                    .filter(|(_, camera)| camera.active)
+                    .map(|(entity, _)| entity)
+                    .collect();
+                for game in &games {
+                    if let Some(camera) = world.get_mut::<Camera>(*game) {
+                        camera.active = false;
+                    }
+                }
+                // Where the game's camera is, looking the same way.
+                let (_, rotation, translation) = eye.to_scale_rotation_translation();
+                let ahead = rotation * Vec3::NEG_Z;
+                let (turn, tilt) = ((-ahead.x).atan2(-ahead.z), ahead.y.clamp(-1.0, 1.0).asin());
+                // A scene is looked over in perspective, whatever the game's own view is.
+                let entity = world.spawn((
+                    Transform::from_translation(translation).with_rotation(rotation),
+                    Camera {
+                        orthographic_height: None,
+                        ..camera
+                    },
+                    NotSaved,
+                ));
+                self.view = Some(SceneView {
+                    entity,
+                    turn,
+                    tilt,
+                    games,
+                    turning: None,
+                    flying: [false; 6],
+                });
+            }
+            (false, Some(view)) => {
+                world.despawn(view.entity);
+                for game in view.games {
+                    if let Some(camera) = world.get_mut::<Camera>(game) {
+                        camera.active = true;
+                    }
+                }
+            }
+            (_, view) => self.view = view,
+        }
+        self.held = None;
+    }
+
+    /// Flies the app's camera with what was done in the picture, if that is what it was:
+    /// the right button held turns it, the wheel moves it in and out, and with the right
+    /// button held W A S D Q E fly it. Says whether the event was for the camera.
+    fn fly(&mut self, event: &ViewportEvent) -> bool {
+        let Some(view) = &mut self.view else {
+            return false;
+        };
+        match event {
+            ViewportEvent::Pressed(at, PointerButton::Secondary) => view.turning = Some(*at),
+            ViewportEvent::Released(_, PointerButton::Secondary) | ViewportEvent::AllReleased => {
+                view.turning = None;
+                view.flying = [false; 6];
+                // Letting go of everything is also the scene's to hear.
+                return !matches!(event, ViewportEvent::AllReleased);
+            }
+            ViewportEvent::Moved(at) if view.turning.is_some() => {
+                let from = view.turning.replace(*at).expect("it is turning");
+                view.turn -= (at.x - from.x) * 0.005;
+                view.tilt = (view.tilt - (at.y - from.y) * 0.005).clamp(-1.54, 1.54);
+            }
+            ViewportEvent::Key(key) if view.turning.is_some() => {
+                let Key::Character(letter) = &key.key else {
+                    return false;
+                };
+                let which = match letter.to_lowercase().as_str() {
+                    "w" => 0,
+                    "s" => 1,
+                    "a" => 2,
+                    "d" => 3,
+                    "e" => 4,
+                    "q" => 5,
+                    _ => return false,
+                };
+                view.flying[which] = key.pressed;
+            }
+            ViewportEvent::Wheel(_, delta) => {
+                let (entity, by) = (view.entity, -delta.y * 0.02);
+                if let Some(place) = self.game.world.get_mut::<Transform>(entity) {
+                    let ahead = place.forward();
+                    place.translation += ahead * by;
+                }
+                return true;
+            }
+            _ => return false,
+        }
+        true
+    }
+
+    /// Moves the app's camera on by a frame: turned as it has been, flown as the keys say.
+    fn fly_on(&mut self, seconds: f32) {
+        let Some(view) = &self.view else { return };
+        let (entity, flying) = (view.entity, view.flying);
+        let rotation =
+            glam::Quat::from_rotation_y(view.turn) * glam::Quat::from_rotation_x(view.tilt);
+        let Some(place) = self.game.world.get_mut::<Transform>(entity) else {
+            return;
+        };
+        place.rotation = rotation;
+        let held = |which: usize| flying[which] as u8 as f32;
+        let way = place.forward() * (held(0) - held(1))
+            + place.right() * (held(3) - held(2))
+            + Vec3::Y * (held(4) - held(5));
+        place.translation += way * 8.0 * seconds;
+    }
+
     /// Does in the scene what was done in the picture of it: a press chooses what is under
     /// the pointer and takes hold of it, a drag slides it over the ground, letting go
     /// leaves it there. The whole drag is one change to take back.
     fn work(&mut self, event: ViewportEvent) {
+        if self.fly(&event) {
+            return;
+        }
         match event {
             ViewportEvent::Pressed(at, PointerButton::Primary) => {
                 let Some((camera, eye)) = self.eye() else {
@@ -1783,6 +1940,13 @@ impl App for Editor {
     }
 
     fn step(&mut self, _now: Instant, _dt: Duration) -> bool {
+        // The app's own camera flies by the clock, whether or not the game is running.
+        let now = Instant::now();
+        let since = self
+            .stepped
+            .replace(now)
+            .map_or(0.0, |last| now.duration_since(last).as_secs_f32().min(0.1));
+        self.fly_on(since);
         let (Some(graphics), (width, height)) = (&self.graphics, self.size) else {
             return false;
         };
@@ -1915,6 +2079,7 @@ impl App for Editor {
                 }
                 self.lists = Lists::of(&self.game, self.chosen);
             }
+            Message::SceneView(own) => self.look_through(own),
             Message::Place(what) => self.put_in(what),
             Message::Delete => {
                 if let Some(entity) = self.chosen {
@@ -2109,6 +2274,12 @@ impl App for Editor {
             .push(
                 tool(icons::MOUSE, Some(Message::Tool(Tool::Look)))
                     .selected(self.tool == Tool::Look),
+            )
+            .push(gap())
+            // The scene through the app's own camera, to fly about with, or the game's.
+            .push(
+                tool(icons::VIDEO, Some(Message::SceneView(self.view.is_none())))
+                    .selected(self.view.is_some()),
             )
             .push(Space::fill_x())
             .push(
@@ -3145,6 +3316,120 @@ mod tests {
         ));
         editor.update(Message::Naming(TreeEdit::Begin(empty)));
         assert!(editor.on_key(&key(Key::Backspace)).is_none());
+    }
+
+    #[test]
+    fn the_scene_is_looked_over_with_the_apps_own_camera() {
+        use mira::prelude::*;
+        let mut game = mira::app::App::new();
+        game.add_plugins(mira::transform::TransformPlugin);
+        let games = game.world.spawn((
+            Transform::from_xyz(0.0, 5.0, 10.0).looking_at(Vec3::ZERO, Vec3::Y),
+            Camera::orthographic(20.0),
+        ));
+        game.update();
+        let mut editor = Editor::new(game);
+        editor.update(Message::Resized(Rect::new(0.0, 0.0, 800.0, 600.0), 1.0));
+        let active = |editor: &Editor, entity: Entity| {
+            editor
+                .game()
+                .world
+                .get::<Camera>(entity)
+                .is_some_and(|camera| camera.active)
+        };
+
+        // Its own camera starts where the game's is, looking the same way, in perspective;
+        // the game's is no longer looked through, and can now be picked like anything else.
+        editor.update(Message::SceneView(true));
+        let own = editor.view.as_ref().expect("the scene view").entity;
+        assert!(active(&editor, own) && !active(&editor, games));
+        let (here, there) = (
+            *editor.game().world.get::<Transform>(own).unwrap(),
+            *editor.game().world.get::<Transform>(games).unwrap(),
+        );
+        assert!((here.translation - there.translation).length() < 1e-4);
+        assert!((here.forward() - there.forward()).length() < 1e-3);
+        assert_eq!(
+            editor
+                .game()
+                .world
+                .get::<Camera>(own)
+                .unwrap()
+                .orthographic_height,
+            None
+        );
+        // It is the app's own: not in the tree, not in a saved scene.
+        editor.game_mut().update();
+        let lists = Lists::of(editor.game(), None);
+        assert_eq!(lists.entities.len(), 1);
+        assert!(editor.game().world.get::<NotSaved>(own).is_some());
+
+        // The right button held and the pointer moved turns it; W flies it forward.
+        let input = |event| Message::Input(event);
+        editor.update(input(ViewportEvent::Pressed(
+            Point::new(400.0, 300.0),
+            PointerButton::Secondary,
+        )));
+        editor.update(input(ViewportEvent::Moved(Point::new(500.0, 300.0))));
+        let w = KeyEvent {
+            key: Key::Character("w".into()),
+            pressed: true,
+            repeat: false,
+            modifiers: Default::default(),
+            text: None,
+        };
+        editor.update(input(ViewportEvent::Key(w)));
+        editor.fly_on(0.5);
+        let after = *editor.game().world.get::<Transform>(own).unwrap();
+        assert!((after.forward() - here.forward()).length() > 0.3, "turned");
+        assert!(
+            ((after.translation - here.translation).length() - 4.0).abs() < 1e-3,
+            "flown"
+        );
+        // Let go, it stays where it is; the wheel moves it along the way it looks.
+        editor.update(input(ViewportEvent::Released(
+            Point::new(500.0, 300.0),
+            PointerButton::Secondary,
+        )));
+        editor.fly_on(0.5);
+        assert_eq!(
+            editor
+                .game()
+                .world
+                .get::<Transform>(own)
+                .unwrap()
+                .translation,
+            after.translation
+        );
+        editor.update(input(ViewportEvent::Wheel(
+            Point::new(0.0, 0.0),
+            Point::new(0.0, -100.0),
+        )));
+        let nearer = editor
+            .game()
+            .world
+            .get::<Transform>(own)
+            .unwrap()
+            .translation;
+        assert!(((nearer - after.translation).dot(after.forward()) - 2.0).abs() < 1e-3);
+        // The game's camera is where it was, through all of it.
+        assert_eq!(
+            editor
+                .game()
+                .world
+                .get::<Transform>(games)
+                .unwrap()
+                .translation,
+            there.translation
+        );
+
+        // Given back, the game's camera is the one looked through and the app's is gone.
+        editor.update(Message::SceneView(false));
+        assert!(editor.view.is_none() && active(&editor, games));
+        assert!(!editor.game().world.contains_entity(own));
+        // Asked for twice, or given back twice, nothing more happens.
+        editor.update(Message::SceneView(false));
+        assert_eq!(editor.game().world.entity_count(), 1);
     }
 
     #[test]

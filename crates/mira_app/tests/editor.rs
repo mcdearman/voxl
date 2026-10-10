@@ -249,6 +249,33 @@ fn the_app_is_worked_by_clicking_on_it() {
     window.frame(TICK, 1.0);
     assert_eq!(window.app().game().world.entity_count(), entities);
 
+    // The scene through the app's own camera: turned with the right button held, it shows
+    // the same scene from another side, and the game's own view comes back after.
+    window.app_mut().update(Message::SceneView(true));
+    window.frame(TICK, 1.0);
+    let middle = Point::new(380.0, 300.0);
+    window.event(Event::PointerMoved { pos: middle });
+    window.event(Event::PointerPressed {
+        pos: middle,
+        button: PointerButton::Secondary,
+    });
+    window.event(Event::PointerMoved {
+        pos: Point::new(middle.x + 60.0, middle.y - 90.0),
+    });
+    window.event(Event::PointerReleased {
+        pos: Point::new(middle.x + 60.0, middle.y - 90.0),
+        button: PointerButton::Secondary,
+    });
+    window.frame(TICK, 1.0);
+    window.frame(TICK, 1.0);
+    if let Ok(path) = std::env::var("MIRA_EDITOR_SHOT") {
+        window
+            .save_png(format!("{path}.scene.png"), 1.0)
+            .expect("the picture saved");
+    }
+    window.app_mut().update(Message::SceneView(false));
+    window.frame(TICK, 1.0);
+
     // Every other panel opens from the Window menu and draws what it has to show.
     for panel in [
         "Log",

@@ -84,6 +84,14 @@ Three buttons in the tool bar say what the pointer does in the picture of the ga
 - **Look** (the mouse): the game's, with the pointer held in the picture and hidden, for
   games that turn with the mouse. Escape lets it go.
 
+**The scene camera.** The camera button at the end of those tools looks at the scene
+through a camera of the app's own instead of the game's: it starts where the game's camera
+is, in perspective whatever the game's view is, and the game's camera is left where it was
+and can now be chosen and moved like anything else. Hold the right button in the picture
+and move the pointer to turn; with it held, W A S D fly and E and Q rise and sink; the wheel
+moves in and out. The button again gives the view back to the game. The app's camera is
+never saved with the scene and is not in the tree.
+
 What is under the pointer is found from each entity's mesh, as a box round it; an entity
 with no mesh (a light) is a small box where it stands. The camera the game is seen through
 can't be picked.
@@ -197,7 +205,7 @@ having each. "Ready" means the engine already holds the data and only the panel 
 | Assets | Content Browser, Project, FileSystem | Thumbnails; a listing of files on disk and not only what is loaded; dragging into the scene |
 | Place (built, but for prefabs and dragging in) | Place Actors, Create menu | Prefabs in the palette; dragging a thing to where it is wanted |
 | Prefab editor | Blueprint/Prefab mode | Opening a prefab by itself, its overrides shown apart |
-| Scene camera | Editor viewport camera, view modes | A camera of the app's own to fly about with, apart from the game's; wireframe, unlit, overdraw views |
+| View modes (the scene camera itself is built) | Editor viewport camera, view modes | Wireframe, unlit and overdraw views |
 | Game view | Unity's Game beside Scene | A second viewport: the game as the player sees it beside the scene as the editor does |
 | Material editor | Material Editor, Shader Graph | A material system with graphs (Phase 3) |
 | Voxel tools | Landscape, Foliage, Modeling modes; Tile Palette | Brushes for sculpting and painting blocks; a block palette |
