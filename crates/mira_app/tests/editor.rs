@@ -89,12 +89,15 @@ fn the_app_is_worked_by_clicking_on_it() {
     // The game is in its panel: the middle of the window is the field's green, not the
     // window's own dark.
     let frame = window.frame(TICK, 1.0);
-    let [r, g, b] = [0, 1, 2].map(|channel| frame[(400 * 1100 + 300) * 4 + channel]);
+    let [r, g, b] = [0, 1, 2].map(|channel| frame[(250 * 1100 + 500) * 4 + channel]);
     assert!(
         g > r && g > b && g > 90,
         "the game's field, drawn: {r} {g} {b}"
     );
 
+    if let Ok(path) = std::env::var("MIRA_EDITOR_SHOT") {
+        window.save_png(format!("{path}.first.png"), 1.0).unwrap();
+    }
     // The bar's first button pauses the game, and then resumes it.
     window.click(Point::new(25.0, 63.0));
     window.frame(TICK, 1.0);
@@ -105,7 +108,7 @@ fn the_app_is_worked_by_clicking_on_it() {
 
     // A row of the tree chooses its entity; the arrow keys move on from it.
     assert_eq!(window.app().chosen(), None);
-    window.click(Point::new(900.0, 133.0));
+    window.click(Point::new(900.0, 127.0));
     window.frame(TICK, 1.0);
     let first = window
         .app()
@@ -128,7 +131,7 @@ fn the_app_is_worked_by_clicking_on_it() {
             .x
     };
     let before = x(&window);
-    let field = Point::new(930.0, 507.0);
+    let field = Point::new(930.0, 471.0);
     window.event(Event::PointerMoved { pos: field });
     window.event(Event::PointerPressed {
         pos: field,
@@ -151,7 +154,10 @@ fn the_app_is_worked_by_clicking_on_it() {
 
     // Something written in the agent's panel and sent with Enter joins the conversation,
     // and what the agent says and does comes after it.
-    window.click(Point::new(350.0, 670.0));
+    // The agent's panel is a drawer: opened from the strip along the bottom.
+    window.click(Point::new(96.0, 686.0));
+    window.frame(TICK, 1.0);
+    window.click(Point::new(350.0, 648.0));
     window.type_text("Why is the clock stopped?");
     window.frame(TICK, 1.0);
     window.key(Key::Enter, Default::default());
@@ -165,6 +171,11 @@ fn the_app_is_worked_by_clicking_on_it() {
         ("Why is the clock stopped?", "mira_screenshot")
     );
     assert!(said[1].starts_with("**Blue**") && said[3].contains("red.clock"));
+    if let Ok(path) = std::env::var("MIRA_EDITOR_SHOT") {
+        window.save_png(format!("{path}.agent.png"), 1.0).unwrap();
+    }
+    window.click(Point::new(96.0, 686.0));
+    window.frame(TICK, 1.0);
 
     // A row of the tree dragged onto another makes it that one's child. The child's parent
     // is then a field in the inspector, and a third row dropped on that field replaces it.
@@ -189,7 +200,7 @@ fn the_app_is_worked_by_clicking_on_it() {
         window.frame(TICK, 1.0);
         window.frame(TICK, 1.0);
     };
-    let row = |index: usize| Point::new(900.0, 133.0 + 26.0 * index as f32);
+    let row = |index: usize| Point::new(900.0, 127.0 + 26.0 * index as f32);
     let parent_of = |window: &Harness<Editor>, child: Entity| {
         let world = &window.app().game().world;
         world.get::<Parent>(child).map(|parent| parent.0.index())
@@ -199,7 +210,7 @@ fn the_app_is_worked_by_clicking_on_it() {
     window.frame(TICK, 1.0);
     let child = window.app().chosen().expect("the row that was moved");
     assert_eq!((child.index(), parent_of(&window, child)), (6, Some(5)));
-    drag(&mut window, row(4), Point::new(950.0, 652.0));
+    drag(&mut window, row(4), Point::new(950.0, 616.0));
     assert_eq!(
         parent_of(&window, child),
         Some(4),
@@ -208,7 +219,7 @@ fn the_app_is_worked_by_clicking_on_it() {
 
     // In the picture of the game, a press chooses what is under the pointer and a drag
     // slides it over the ground: the western site, pulled towards the camera.
-    let site = Point::new(262.0, 310.0);
+    let site = Point::new(196.0, 410.0);
     window.click(site);
     window.frame(TICK, 1.0);
     let chosen = window.app().chosen().expect("the site under the pointer");
@@ -218,7 +229,7 @@ fn the_app_is_worked_by_clicking_on_it() {
         world.get::<Transform>(chosen).expect("a place").translation
     };
     let before = place(&window);
-    drag(&mut window, site, Point::new(262.0, 391.0));
+    drag(&mut window, site, Point::new(196.0, 480.0));
     let after = place(&window);
     assert!(
         after.z > before.z + 2.0 && (after.x - before.x).abs() < 0.2 && after.y == before.y,
@@ -227,7 +238,7 @@ fn the_app_is_worked_by_clicking_on_it() {
 
     // Further down the inspector, for the picture: the entity's colour.
     window.event(Event::Wheel {
-        pos: Point::new(930.0, 600.0),
+        pos: Point::new(950.0, 600.0),
         delta: Point::new(0.0, 170.0),
     });
     window.frame(TICK, 1.0);
@@ -335,7 +346,7 @@ fn the_app_is_worked_by_clicking_on_it() {
         "Tests",
         "Build",
     ] {
-        if matches!(panel, "Log" | "Console" | "World" | "Place") {
+        if matches!(panel, "World" | "Place") {
             // Open already, behind another: brought to the front by being shut and opened.
             window.app_mut().update(Message::Panel(panel.to_owned()));
         }

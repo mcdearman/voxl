@@ -394,6 +394,8 @@ editor needs from it.
 - [x] A scene camera of the app's own, apart from the game's: turn, fly, move in and out
 - [x] Panels that run git and cargo in the project (Changes, Tests, Build) and show what
       they say; a References panel of what the scene uses by name
+- [x] The app arranged after Unreal: game, entities over inspector, and drawers (Assets,
+      Agent, Log, Console) shut down to a strip along the bottom; flat tabs parted by lines
 - [ ] A render-graph viewer
 - [x] The agent window's first form: a conversation panel under the game, with Claude Code
       run behind it and given the game's own tools (see [EDITOR.md](EDITOR.md#the-agent))

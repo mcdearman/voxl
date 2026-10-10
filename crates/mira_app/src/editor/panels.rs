@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use neo::prelude::*;
 
-use super::{fields_of, short, Editor, Message, Placed, AGENT, GAME};
+use super::{fields_of, short, Editor, Message, Placed, GAME};
 use mira::{
     app::Stage,
     live::{FrameStats, History, Live},
@@ -266,11 +266,20 @@ impl Editor {
         if panel == GAME {
             return;
         }
+        // A drawer opens over the strip along the bottom; everything else, in the dock.
+        if let Some(drawer) = super::DRAWERS.iter().find(|drawer| **drawer == panel) {
+            self.update(Message::Drawer(drawer));
+            return;
+        }
         let layout = self.layout.clone();
         let next = if layout.contains(panel) {
             layout.without(panel)
         } else {
-            let beside = if layout.contains(AGENT) { AGENT } else { GAME };
+            let beside = if layout.contains(super::INSPECTOR) {
+                super::INSPECTOR
+            } else {
+                GAME
+            };
             Some(layout.with(panel, beside, Side::Middle))
         };
         if let Some(next) = next {
