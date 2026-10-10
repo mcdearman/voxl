@@ -380,7 +380,10 @@ editor needs from it.
 - [ ] Play in editor: the scene as edited kept apart from the game as it runs, so that
       stopping puts it back
 - [ ] Material editor; voxel sculpting and painting tools
-- [ ] Profiler and render-graph viewers
+- [x] Panels for what the engine already knows: Log (the engine's log is now kept as well as
+      printed), Console, Profiler, Systems, World settings, History, Time, Failures,
+      Plugins, Statistics; a Window menu to open and shut them
+- [ ] The signal graph as a panel; a render-graph viewer
 - [x] The agent window's first form: a conversation panel under the game, with Claude Code
       run behind it and given the game's own tools (see [EDITOR.md](EDITOR.md#the-agent))
 - [ ] The agent window in full: a panel of the engine app in which to talk to an AI agent that is

@@ -19,6 +19,7 @@
 //! `.mira/editor.layout` in the folder the app is run from. See `docs/EDITOR.md`.
 
 pub mod agent;
+mod panels;
 pub mod scene;
 
 use std::{
@@ -89,6 +90,28 @@ pub enum Message {
     Save,
     /// An entity's name is being typed over in the tree.
     Naming(TreeEdit<Entity>),
+    /// A field of one of the world's settings was given a new value: the setting by its
+    /// full name, the way down to the field, and the value.
+    Setting(String, Vec<String>, Value),
+    /// A panel is opened, or shut if it is open.
+    Panel(String),
+    /// What is typed in the console, and the console's command being run.
+    Command(String),
+    Run,
+    /// Only log lines with this in them are shown.
+    LogFilter(String),
+    /// The changes are taken back, or made again, until this many stand.
+    Jump(usize),
+    /// Moments of the game are kept to go back to, or no longer.
+    Record(bool),
+    /// The game goes back this many frames.
+    Rewind(u64),
+    /// Game time runs this fast against the clock.
+    Speed(f32),
+    /// The failed systems are forgotten, and the game goes on.
+    Forgive,
+    /// Plugins whose files have changed are loaded again now.
+    Reload,
     /// The settings every Neo app has: the panel opened or shut, the window's glass turned
     /// on or off, the desktop's appearance looked at again.
     Desktop(DesktopMsg),
@@ -143,7 +166,8 @@ const WAYS: [(Vec3, [f32; 3]); 3] = [
 /// it became. Either may be nothing, for a component that was added or taken away.
 #[derive(Clone, Debug, PartialEq)]
 struct Change {
-    entity: Entity,
+    /// The entity whose component it is; nothing for one of the world's settings.
+    entity: Option<Entity>,
     component: String,
     /// The way to the field that was changed, to tell one drag's changes from another's.
     path: Vec<String>,
@@ -157,6 +181,22 @@ const ENTITIES: &str = "Entities";
 const SIGNALS: &str = "Signals";
 const INSPECTOR: &str = "Inspector";
 const AGENT: &str = "Agent";
+const LOG: &str = "Log";
+const CONSOLE: &str = "Console";
+const PROFILER: &str = "Profiler";
+const SYSTEMS: &str = "Systems";
+const WORLD: &str = "World";
+const HISTORY: &str = "History";
+const TIME: &str = "Time";
+const FAILURES: &str = "Failures";
+const PLUGINS: &str = "Plugins";
+const STATISTICS: &str = "Statistics";
+
+/// Every panel there is, in the order the Window menu lists them.
+const PANELS: [&str; 15] = [
+    GAME, ENTITIES, INSPECTOR, WORLD, SIGNALS, AGENT, LOG, CONSOLE, PROFILER, SYSTEMS, HISTORY,
+    TIME, FAILURES, PLUGINS, STATISTICS,
+];
 
 /// Where the arrangement of the panels is kept, in the folder the app is run from.
 const LAYOUT_FILE: &str = ".mira/editor.layout";
@@ -166,22 +206,22 @@ const LAYOUT_FILE: &str = ".mira/editor.layout";
 /// signals behind them) over what the chosen one is made of.
 fn first_layout() -> Dock {
     Dock::beside(
-        Dock::above(Dock::tabs([GAME]), 0.66, Dock::tabs([AGENT])),
+        Dock::above(Dock::tabs([GAME]), 0.66, Dock::tabs([AGENT, LOG, CONSOLE])),
         0.7,
         Dock::above(
             Dock::tabs([ENTITIES, SIGNALS]),
             0.5,
-            Dock::tabs([INSPECTOR]),
+            Dock::tabs([INSPECTOR, WORLD]),
         ),
     )
 }
 
-/// The arrangement kept from last time, if it still has every panel and no others.
+/// The arrangement kept from last time, if every panel in it is one there still is and the
+/// game is among them. Panels may be missing from it: those are shut.
 fn kept_layout(kept: &str) -> Option<Dock> {
     let layout = Dock::parse(kept.trim())?;
-    let mut panels = layout.panels();
-    panels.sort_unstable();
-    (panels == [AGENT, ENTITIES, GAME, INSPECTOR, SIGNALS]).then_some(layout)
+    let known = layout.panels().iter().all(|panel| PANELS.contains(panel));
+    (known && layout.contains(GAME)).then_some(layout)
 }
 
 /// What the lists show of the game, read from it now and then.
@@ -273,6 +313,8 @@ pub struct Editor {
     /// What the bar says of the game, as last looked at.
     status: Status,
     layout: Dock,
+    /// Whether the arrangement is kept in its file as it is changed.
+    keeps_layout: bool,
     lists: Lists,
     /// The entity chosen in the tree, and the ones whose children are hidden.
     chosen: Option<Entity>,
@@ -292,6 +334,11 @@ pub struct Editor {
     told: String,
     /// The entity whose name is being typed in the tree, and what has been typed.
     naming: Option<(Entity, String)>,
+    /// What is typed in the console, and what was asked there with what came back.
+    command: String,
+    asked: Vec<(String, String)>,
+    /// Only log lines with this in them are shown.
+    log_filter: String,
     /// How the app looks: Neo's appearance as the person has set it for their desktop, and
     /// this app's own say in whether its window is glass.
     desktop: Desktop,
@@ -326,6 +373,7 @@ impl Editor {
                 .ok()
                 .and_then(|kept| kept_layout(&kept))
                 .unwrap_or_else(first_layout),
+            keeps_layout: true,
             lists: Lists::default(),
             chosen: None,
             shut: Vec::new(),
@@ -337,6 +385,9 @@ impl Editor {
             scene: "scene.json".into(),
             told: String::new(),
             naming: None,
+            command: String::new(),
+            asked: Vec::new(),
+            log_filter: String::new(),
             // By the app's name, not the program's, so that an example of it is the same app.
             desktop: Desktop::with_prefs_file(AppPrefs::path_for("mira")),
             agent: Box::new(NoAgent),
@@ -347,6 +398,14 @@ impl Editor {
         }
     }
 
+    /// Starts from the arrangement the app first has, whatever was kept, and keeps nothing:
+    /// for tests, and for showing the app as it comes.
+    pub fn with_first_layout(mut self) -> Self {
+        self.layout = first_layout();
+        self.keeps_layout = false;
+        self
+    }
+
     /// Says where the scene is kept: what Save writes.
     pub fn with_scene(mut self, scene: impl Into<std::path::PathBuf>) -> Self {
         self.scene = scene.into();
@@ -355,38 +414,60 @@ impl Editor {
 
     /// A component of an entity as plain data, if it has it.
     fn component(&self, entity: Entity, component: &str) -> Option<Value> {
-        let world = &self.game.world;
-        let registry = world.get_resource::<TypeRegistry>()?;
-        (registry.get(component)?.get)(world, entity)
+        self.part(Some(entity), component)
     }
 
-    /// Makes a component of an entity what `to` says (nothing takes it away), without
-    /// remembering that it was done. Says whether the game took it.
-    fn put_component(&mut self, entity: Entity, component: &str, to: Option<&Value>) -> bool {
+    /// A component of an entity, or (with no entity) one of the world's settings, as plain
+    /// data.
+    fn part(&self, of: Option<Entity>, name: &str) -> Option<Value> {
+        let world = &self.game.world;
+        let registry = world.get_resource::<TypeRegistry>()?;
+        match of {
+            Some(entity) => (registry.get(name)?.get)(world, entity),
+            None => (registry.resource(name)?.get)(world),
+        }
+    }
+
+    /// Makes a component of an entity, or a setting, what `to` says (nothing takes a
+    /// component away), without remembering that it was done. Says whether the game took it.
+    fn put_part(&mut self, of: Option<Entity>, name: &str, to: Option<&Value>) -> bool {
         let taken = self
             .game
             .world
-            .resource_scope(|world, registry: &mut TypeRegistry| {
-                let Some(kind) = registry.get(component) else {
-                    return false;
-                };
-                match to {
-                    Some(value) => (kind.insert)(world, entity, value).is_ok(),
-                    None => {
-                        (kind.remove)(world, entity);
-                        true
+            .resource_scope(|world, registry: &mut TypeRegistry| match (of, to) {
+                (Some(entity), to) => {
+                    let Some(kind) = registry.get(name) else {
+                        return false;
+                    };
+                    match to {
+                        Some(value) => (kind.insert)(world, entity, value).is_ok(),
+                        None => {
+                            (kind.remove)(world, entity);
+                            true
+                        }
                     }
                 }
+                (None, Some(value)) => registry
+                    .resource(name)
+                    .is_some_and(|kind| (kind.insert)(world, value).is_ok()),
+                // A setting is changed, never taken away.
+                (None, None) => false,
             });
         self.lists = Lists::of(&self.game, self.chosen);
         taken
     }
 
     /// Changes a component of an entity, and remembers it so that it can be taken back.
-    /// What is changed in one drag, or typed in one run, is remembered as one change.
     fn change(&mut self, entity: Entity, component: &str, path: Vec<String>, to: Option<Value>) {
-        let before = self.component(entity, component);
-        if before == to || !self.put_component(entity, component, to.as_ref()) {
+        self.change_of(Some(entity), component, path, to);
+    }
+
+    /// Changes a component of an entity, or a setting, and remembers it so that it can be
+    /// taken back. What is changed in one drag, or typed in one run, is remembered as one
+    /// change.
+    fn change_of(&mut self, of: Option<Entity>, name: &str, path: Vec<String>, to: Option<Value>) {
+        let before = self.part(of, name);
+        if before == to || !self.put_part(of, name, to.as_ref()) {
             return;
         }
         let now = Instant::now();
@@ -395,15 +476,15 @@ impl Editor {
             .is_some_and(|last| now.duration_since(last) < Duration::from_millis(800));
         self.changed_at = Some(now);
         let same = self.done.last().is_some_and(|last| {
-            (last.entity, last.component.as_str(), &last.path) == (entity, component, &path)
+            (last.entity, last.component.as_str(), &last.path) == (of, name, &path)
         });
         // A drag joins up to its end; typing joins while it keeps coming.
         if same && (self.joins || !self.scrubbing && soon && !path.is_empty()) {
             self.done.last_mut().expect("there is a last").after = to;
         } else {
             self.done.push(Change {
-                entity,
-                component: component.to_owned(),
+                entity: of,
+                component: name.to_owned(),
                 path,
                 before,
                 after: to,
@@ -922,6 +1003,16 @@ impl Editor {
                 }
                 scrollable(container(rows).padding(8.0)).into()
             }
+            LOG => self.log_panel(),
+            CONSOLE => self.console_panel(),
+            PROFILER => self.profiler_panel(),
+            SYSTEMS => self.systems_panel(),
+            WORLD => self.world_panel(),
+            HISTORY => self.history_panel(),
+            TIME => self.time_panel(),
+            FAILURES => self.failures_panel(),
+            PLUGINS => self.plugins_panel(),
+            STATISTICS => self.statistics_panel(),
             _ => text("").into(),
         }
     }
@@ -1179,8 +1270,20 @@ fn field_row(name: &str, depth: usize, control: Element<Message>) -> Element<Mes
 /// Adds the controls for a value to the inspector's rows: one for each plain field, and
 /// what is inside a field under its name. Each control sends the field's whole new value.
 fn fields(
+    rows: Column<Message>,
+    component: &str,
+    path: &mut Vec<String>,
+    value: &Value,
+) -> Column<Message> {
+    fields_of(rows, component, false, path, value)
+}
+
+/// As [`fields`], for a component of the chosen entity or (`setting`) one of the world's
+/// settings.
+fn fields_of(
     mut rows: Column<Message>,
     component: &str,
+    setting: bool,
     path: &mut Vec<String>,
     value: &Value,
 ) -> Column<Message> {
@@ -1188,12 +1291,20 @@ fn fields(
     let name = path.last().cloned().unwrap_or_default();
     let edited = {
         let (component, path) = (component.to_owned(), path.clone());
-        move |value: Value| Message::Edited(component.clone(), path.clone(), value)
+        move |value: Value| {
+            if setting {
+                Message::Setting(component.clone(), path.clone(), value)
+            } else {
+                Message::Edited(component.clone(), path.clone(), value)
+            }
+        }
     };
     let said = |shown: String| -> Element<Message> { text(shown).mono().into() };
     let control: Element<Message> = match value {
         Value::Bool(on) => toggle(*on, move |on| edited(Value::Bool(on))).into(),
+        // A hundredth at a step: fine enough to show and set a light's 0.03.
         Value::Float(number) => number_field(*number)
+            .step(0.01)
             .on_scrub(Message::Scrub)
             .on_change(move |number| edited(Value::Float(number)))
             .width(Length::Fill)
@@ -1280,7 +1391,7 @@ fn fields(
             };
             for (step, field) in inside {
                 path.push(step);
-                rows = fields(rows, component, path, field);
+                rows = fields_of(rows, component, setting, path, field);
                 path.pop();
             }
             return rows;
@@ -1352,6 +1463,19 @@ impl App for Editor {
         let mut theme = self.desktop.theme(system);
         theme.glass.enabled = self.desktop.prefs.glass;
         theme
+    }
+
+    /// A Window menu, to open and shut each panel.
+    fn menus(&self) -> Vec<Menu<Message>> {
+        let window = PANELS.iter().filter(|panel| **panel != GAME).fold(
+            Menu::new("Window"),
+            |menu, panel| {
+                let open = self.layout.contains(panel);
+                let label = format!("{} {panel}", if open { "Hide" } else { "Show" });
+                menu.push(MenuEntry::new(label, Message::Panel((*panel).to_owned())))
+            },
+        );
+        vec![window]
     }
 
     fn app_menu(&self) -> Vec<MenuEntry<Message>> {
@@ -1517,20 +1641,64 @@ impl App for Editor {
             Message::Desktop(message) => {
                 self.desktop.update(message);
             }
+            Message::Setting(setting, path, value) => {
+                let Some(mut whole) = self.part(None, &setting) else {
+                    return;
+                };
+                if put(&mut whole, &path, value) {
+                    self.change_of(None, &setting, path, Some(whole));
+                }
+            }
+            Message::Panel(panel) => self.toggle_panel(&panel),
+            Message::Command(typed) => self.command = typed,
+            Message::Run => self.run_command(),
+            Message::LogFilter(filter) => self.log_filter = filter,
+            Message::Jump(standing) => {
+                while self.done.len() > standing && !self.done.is_empty() {
+                    self.update(Message::Undo);
+                }
+                while self.done.len() < standing && !self.undone.is_empty() {
+                    self.update(Message::Redo);
+                }
+            }
+            Message::Record(on) => {
+                if let Some(history) = self.resource::<crate::live::History>() {
+                    history.recording = on;
+                }
+            }
+            Message::Rewind(frames) => {
+                crate::live::History::rewind(&mut self.game.world, frames);
+                self.lists = Lists::of(&self.game, self.chosen);
+            }
+            Message::Speed(speed) => {
+                if let Some(time) = self.resource::<Time>() {
+                    time.set_scale(speed);
+                }
+            }
+            Message::Forgive => {
+                if let Some(live) = self.resource::<Live>() {
+                    live.clear_failures();
+                    live.resume();
+                }
+            }
+            Message::Reload => {
+                let reloaded = self.game.reload_native_plugins();
+                self.told = format!("{reloaded} plugins reloaded");
+            }
             Message::Scrub(began) => {
                 self.scrubbing = began;
                 self.joins = false;
             }
             Message::Undo => {
                 if let Some(change) = self.done.pop() {
-                    self.put_component(change.entity, &change.component, change.before.as_ref());
+                    self.put_part(change.entity, &change.component, change.before.as_ref());
                     self.undone.push(change);
                     self.joins = false;
                 }
             }
             Message::Redo => {
                 if let Some(change) = self.undone.pop() {
-                    self.put_component(change.entity, &change.component, change.after.as_ref());
+                    self.put_part(change.entity, &change.component, change.after.as_ref());
                     self.done.push(change);
                     self.joins = false;
                 }
@@ -1597,8 +1765,10 @@ impl App for Editor {
             }
             Message::Arranged(layout) => {
                 // Kept for next time; an arrangement that can't be written is still used.
-                let _ = std::fs::create_dir_all(".mira")
-                    .and_then(|()| std::fs::write(LAYOUT_FILE, layout.encode()));
+                if self.keeps_layout {
+                    let _ = std::fs::create_dir_all(".mira")
+                        .and_then(|()| std::fs::write(LAYOUT_FILE, layout.encode()));
+                }
                 self.layout = layout;
             }
         }
@@ -1783,10 +1953,221 @@ mod tests {
             kept_layout(&format!("{}\n", stacked.encode())),
             Some(stacked)
         );
-        // One from a version with other panels, or no arrangement at all, is not.
-        assert_eq!(kept_layout(&Dock::tabs([GAME, "Console"]).encode()), None);
-        assert_eq!(kept_layout(&Dock::tabs([GAME]).encode()), None);
+        // Panels may be shut: the game alone is an arrangement.
+        let alone = Dock::tabs([GAME]);
+        assert_eq!(kept_layout(&alone.encode()), Some(alone));
+        // One with a panel there no longer is, or without the game, or no arrangement at
+        // all, is not taken.
+        assert_eq!(
+            kept_layout(&Dock::tabs([GAME, "Blueprints"]).encode()),
+            None
+        );
+        assert_eq!(kept_layout(&Dock::tabs([LOG]).encode()), None);
         assert_eq!(kept_layout("not a layout"), None);
+        assert!(PANELS
+            .iter()
+            .all(|panel| !panel.contains([',', '*', '(', ')'])));
+    }
+
+    #[test]
+    fn panels_are_opened_and_shut_from_the_window_menu() {
+        let mut editor = Editor::new(crate::app::App::new());
+        editor.layout = first_layout();
+        assert!(!editor.layout.contains(PROFILER) && editor.layout.contains(LOG));
+        // Every panel but the game has an entry, saying what choosing it will do.
+        let window = &editor.menus()[0];
+        assert_eq!(window.entries.len(), PANELS.len() - 1);
+        // Opened, a panel joins the agent's group, in front.
+        editor.layout = first_layout();
+        let open = first_layout().with(PROFILER, AGENT, Side::Middle);
+        assert!(open.shown().contains(&PROFILER));
+        // (Arranging writes the layout to a file; the model is what is checked here.)
+        let shut = open.clone().without(PROFILER).expect("other panels remain");
+        assert!(!shut.contains(PROFILER));
+        // The game's panel is never shut.
+        editor.toggle_panel(GAME);
+        assert!(editor.layout.contains(GAME));
+    }
+
+    #[test]
+    fn the_console_runs_what_the_debug_connection_understands() {
+        use panels::request;
+        let asked = request("entities with=mira.Camera limit=5").expect("a command");
+        assert_eq!(asked.field("cmd"), Some(&Value::Text("entities".into())));
+        assert_eq!(
+            asked.field("with"),
+            Some(&Value::Text("mira.Camera".into()))
+        );
+        assert_eq!(asked.field("limit"), Some(&Value::Int(5)));
+        assert_eq!(
+            request("signal_set name=open value=true")
+                .unwrap()
+                .field("value"),
+            Some(&Value::Bool(true))
+        );
+        assert_eq!(
+            panels::short_path("mira::transform::propagate_transforms"),
+            "transform::propagate_transforms"
+        );
+        assert_eq!(
+            panels::short_path("mira_ecs::event::event_update_system<mira::app::AppExit>"),
+            "event::event_update_system<AppExit>"
+        );
+        assert_eq!(panels::short_path("setup"), "setup");
+        assert_eq!(request(""), None);
+        assert_eq!(
+            request("pause now"),
+            None,
+            "what follows the command is name=value"
+        );
+
+        let mut game = crate::app::App::new();
+        game.add_plugins(crate::time::TimePlugin);
+        let mut editor = Editor::new(game);
+        for typed in ["pause", "status", "fly away", "explode"] {
+            editor.update(Message::Command(typed.into()));
+            editor.update(Message::Run);
+        }
+        assert!(editor.command.is_empty());
+        assert!(editor.game().world.resource::<Live>().is_paused());
+        let answers: Vec<&str> = editor
+            .asked
+            .iter()
+            .map(|(_, answer)| answer.as_str())
+            .collect();
+        assert!(answers[1].contains("\"paused\": true"), "{}", answers[1]);
+        assert!(answers[2].starts_with("A command is a word"));
+        assert!(
+            answers[3].starts_with("refused: there is no command"),
+            "{}",
+            answers[3]
+        );
+        // Nothing typed, nothing run.
+        editor.update(Message::Run);
+        assert_eq!(editor.asked.len(), 4);
+    }
+
+    #[test]
+    fn a_setting_of_the_world_is_changed_and_taken_back_like_anything_else() {
+        use crate::prelude::*;
+        #[derive(Clone, Debug, PartialEq, Reflect, Default)]
+        #[reflect(name = "test.Weather", default)]
+        struct Weather {
+            rain: f32,
+            windy: bool,
+        }
+        let mut game = crate::app::App::new();
+        game.add_plugins(crate::transform::TransformPlugin)
+            .insert_resource(Weather {
+                rain: 0.2,
+                windy: false,
+            })
+            .register_resource_type::<Weather>();
+        let entity = game.world.spawn(Transform::IDENTITY);
+        let mut editor = Editor::new(game);
+        let weather = |editor: &Editor| editor.game().world.resource::<Weather>().clone();
+        let set = |editor: &mut Editor, field: &str, value: Value| {
+            editor.update(Message::Setting(
+                "test.Weather".into(),
+                vec![field.into()],
+                value,
+            ));
+        };
+        set(&mut editor, "rain", Value::Float(0.9));
+        set(&mut editor, "windy", Value::Bool(true));
+        assert_eq!(
+            weather(&editor),
+            Weather {
+                rain: 0.9,
+                windy: true
+            }
+        );
+        // A field that isn't there, or a setting there isn't, changes nothing.
+        set(&mut editor, "snow", Value::Float(1.0));
+        editor.update(Message::Setting("test.Tides".into(), vec![], Value::Null));
+        assert_eq!(editor.done.len(), 2);
+        // Settings and entities share the one history, and it can be jumped about in.
+        editor.update(Message::Chosen(entity));
+        editor.update(Message::Naming(TreeEdit::Begin(entity)));
+        editor.update(Message::Naming(TreeEdit::Typed("Cloud".into())));
+        editor.update(Message::Naming(TreeEdit::Done));
+        assert_eq!(editor.done.len(), 3);
+        editor.update(Message::Jump(1));
+        assert_eq!(
+            (
+                weather(&editor).windy,
+                editor.game().world.get::<Name>(entity)
+            ),
+            (false, None)
+        );
+        assert_eq!(weather(&editor).rain, 0.9);
+        editor.update(Message::Jump(0));
+        assert_eq!(weather(&editor).rain, 0.2);
+        editor.update(Message::Jump(3));
+        assert_eq!(
+            editor.game().world.get::<Name>(entity),
+            Some(&Name::new("Cloud"))
+        );
+        assert_eq!(editor.can_undo(), (true, false));
+        // Past the end is the end.
+        editor.update(Message::Jump(99));
+        assert_eq!(editor.done.len(), 3);
+    }
+
+    #[test]
+    fn the_games_time_is_slowed_and_gone_back_in() {
+        use crate::prelude::*;
+        let mut game = crate::app::App::new();
+        game.add_plugins(crate::time::TimePlugin)
+            .add_plugins(crate::transform::TransformPlugin);
+        let entity = game.world.spawn(Transform::IDENTITY);
+        let mut editor = Editor::new(game);
+        editor.update(Message::Speed(0.5));
+        assert_eq!(editor.game().world.resource::<Time>().scale(), 0.5);
+        editor.update(Message::Record(true));
+        assert!(
+            editor
+                .game()
+                .world
+                .resource::<crate::live::History>()
+                .recording
+        );
+        // A moment every frame, for the test's sake.
+        editor
+            .game_mut()
+            .world
+            .resource_mut::<crate::live::History>()
+            .every = 1;
+        for step in 1..=4 {
+            editor
+                .game_mut()
+                .world
+                .get_mut::<Transform>(entity)
+                .unwrap()
+                .translation
+                .x = step as f32;
+            editor.game_mut().update();
+        }
+        let kept = editor
+            .game()
+            .world
+            .resource::<crate::live::History>()
+            .moments()
+            .len();
+        assert!(kept >= 2, "moments are kept while recording: {kept}");
+        editor.update(Message::Rewind(2));
+        let back = editor
+            .game()
+            .world
+            .get::<Transform>(entity)
+            .unwrap()
+            .translation
+            .x;
+        assert!(back < 4.0, "back before the last move: {back}");
+        assert!(editor.game().world.resource::<Live>().is_paused());
+        // Failures forgotten, the game goes on.
+        editor.update(Message::Forgive);
+        assert!(!editor.game().world.resource::<Live>().is_paused());
     }
 
     #[test]

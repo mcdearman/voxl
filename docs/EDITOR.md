@@ -47,6 +47,26 @@ thin line between one group
 and the next (run or pause, step; undo, redo, save; what the pointer does), the frame count and the
 settings gear at the right, and one line under the bar to part it from the panels. The window opens at 1440 by 900.
 
+### The panels
+
+The app starts with the game, the agent (with the Log and the Console behind it), the
+entities (with the signals behind them) and the inspector (with the world's settings
+behind it). The **Window** menu opens and shuts every panel; one that is opened joins the
+agent's group, and can be dragged anywhere from there.
+
+| Panel | What it shows |
+|---|---|
+| Log | What the engine and the game have logged, newest at the bottom, by level; a box to show only lines with some text in them |
+| Console | A line to type anything the debug connection understands (`pause`, `entities with=mira.Camera`, `signal_set name=open value=true`), with the answers |
+| Profiler | The last frames as a graph, the usual and the worst frame, the time each stage took, and the slowest systems |
+| Systems | Every system by stage, in the order and the batch it runs in, with how much it reads and writes; one that has failed is red |
+| World | The world's settings (ambient light, fog, post-processing, shadows, voxels: every registered resource), each field a control like the inspector's, with undo |
+| History | Every change made from the app, to click back and forward through |
+| Time | How fast game time runs; keeping moments to go back to, and going back |
+| Failures | Systems that panicked: what they said, where, the stack; a button to forget them and go on |
+| Plugins | The plugins the game is made of, and a button to reload what has changed |
+| Statistics | How many entities, signals, systems and frames; how many entities have each component |
+
 ### Working in the picture
 
 Three buttons in the tool bar say what the pointer does in the picture of the game:
@@ -151,7 +171,7 @@ app.host_resized(width, height);
 What other engines' editors have (Unreal, Unity, Godot), sorted by how near mira is to
 having each. "Ready" means the engine already holds the data and only the panel is missing.
 
-**Ready: the engine has the data**
+**Ready: the engine has the data** (all built but the signal graph: see "The panels" above)
 
 | Panel | In other engines | What it would show here |
 |---|---|---|

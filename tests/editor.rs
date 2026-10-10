@@ -13,13 +13,14 @@ use std::{sync::mpsc::Sender, time::Duration};
 
 use mira::editor::{
     agent::{Agent, Heard},
-    Editor,
+    Editor, Message,
 };
 use mira::{
     live::Live,
     prelude::{Entity, Parent, Transform},
 };
 use neo::testing::Harness;
+use neo::App as _;
 use neo::{Event, Key, Point, PointerButton, Size};
 
 #[path = "../examples/sacred_sites/game.rs"]
@@ -72,7 +73,7 @@ fn the_app_is_worked_by_clicking_on_it() {
     }
     let game = game::build(false).expect("the game");
     let mut window = Harness::new(
-        Editor::new(game).with_agent(Scripted),
+        Editor::new(game).with_first_layout().with_agent(Scripted),
         Size::new(1100.0, 700.0),
     )
     .expect("a graphics card is needed for this test");
@@ -228,6 +229,35 @@ fn the_app_is_worked_by_clicking_on_it() {
         pos: Point::new(930.0, 600.0),
         delta: Point::new(0.0, 170.0),
     });
+    window.frame(TICK, 1.0);
+
+    // Every other panel opens from the Window menu and draws what it has to show.
+    for panel in [
+        "Log",
+        "Console",
+        "Profiler",
+        "Systems",
+        "World",
+        "History",
+        "Time",
+        "Failures",
+        "Plugins",
+        "Statistics",
+    ] {
+        if matches!(panel, "Log" | "Console" | "World") {
+            // Open already, behind another: brought to the front by being shut and opened.
+            window.app_mut().update(Message::Panel(panel.to_owned()));
+        }
+        window.app_mut().update(Message::Panel(panel.to_owned()));
+        window.frame(TICK, 1.0);
+        let frame = window.frame(TICK, 1.0);
+        assert_eq!(frame.len(), 1100 * 700 * 4, "{panel} drew");
+        if let Ok(path) = std::env::var("MIRA_EDITOR_SHOT") {
+            let path = format!("{path}.{panel}.png");
+            window.save_png(path, 1.0).expect("the picture saved");
+        }
+        window.app_mut().update(Message::Panel(panel.to_owned()));
+    }
     window.frame(TICK, 1.0);
 
     if let Ok(path) = std::env::var("MIRA_EDITOR_SHOT") {
