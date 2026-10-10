@@ -12,8 +12,8 @@ path = "src/main.rs"
 [dependencies]
 mira = { path = "../.." }
 mira_ui = { path = "../mira_ui" }
-neo = { git = "https://github.com/mcdearman/neo", rev = "1b62dc227f9b9f455c1a5b653be26cb66170db4d" }
-neo-desktop = { git = "https://github.com/mcdearman/neo", rev = "1b62dc227f9b9f455c1a5b653be26cb66170db4d" }
+neo = { git = "https://github.com/mcdearman/neo", rev = "8e355245b24e8b490f6145d1b517d7b6738fa58e" }
+neo-desktop = { git = "https://github.com/mcdearman/neo", rev = "8e355245b24e8b490f6145d1b517d7b6738fa58e" }
 anyhow = "1"
 glam = "0.30"
 image = { version = "0.25", default-features = false, features = ["png"] }
