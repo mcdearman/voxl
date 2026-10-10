@@ -36,7 +36,9 @@ impl Scene {
     fn start(example: &str) -> Scene {
         // Examples are built beside the tests' own programs, but not by asking for this
         // test alone: build the one wanted, so that what is drawn is the code as it is now.
-        let beside = Path::new(env!("CARGO_BIN_EXE_mira"));
+        // This test's own program is in `deps`, beside the folder the examples are built into.
+        let here = std::env::current_exe().expect("this program has a path");
+        let beside = here.parent().expect("it is in a folder");
         let mut build = Command::new(env!("CARGO"));
         build
             .args(["build", "--quiet", "--example", example])

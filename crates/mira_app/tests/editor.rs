@@ -4,26 +4,26 @@
 //! Needs a graphics card, so it only runs when asked, like mira's frame tests:
 //!
 //! ```sh
-//! MIRA_FRAME_TESTS=1 cargo test --test editor
+//! MIRA_FRAME_TESTS=1 cargo test -p mira_app --test editor
 //! ```
 //!
 //! `MIRA_EDITOR_SHOT=<path>` also saves a picture of the window at the end.
 
 use std::{sync::mpsc::Sender, time::Duration};
 
-use mira::editor::{
-    agent::{Agent, Heard},
-    Editor, Message,
-};
 use mira::{
     live::Live,
     prelude::{Entity, Parent, Transform},
+};
+use mira_app::editor::{
+    agent::{Agent, Heard},
+    Editor, Message,
 };
 use neo::testing::Harness;
 use neo::App as _;
 use neo::{Event, Key, Point, PointerButton, Size};
 
-#[path = "../examples/sacred_sites/game.rs"]
+#[path = "../../../examples/sacred_sites/game.rs"]
 mod game;
 
 const TICK: Duration = Duration::from_millis(16);
@@ -243,6 +243,7 @@ fn the_app_is_worked_by_clicking_on_it() {
         "Failures",
         "Plugins",
         "Statistics",
+        "Signal graph",
     ] {
         if matches!(panel, "Log" | "Console" | "World") {
             // Open already, behind another: brought to the front by being shut and opened.

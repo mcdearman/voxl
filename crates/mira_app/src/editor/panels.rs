@@ -9,7 +9,7 @@ use std::time::Duration;
 use neo::prelude::*;
 
 use super::{fields_of, short, Editor, Message, AGENT, GAME};
-use crate::{
+use mira::{
     app::Stage,
     live::{FrameStats, History, Live},
     logging,
@@ -108,7 +108,7 @@ impl Editor {
         }
         let answer = match request(typed) {
             Some(request) => {
-                let line = crate::remote::respond(&mut self.game, &json::to_line(&request));
+                let line = mira::remote::respond(&mut self.game, &json::to_line(&request));
                 match json::parse(&line) {
                     Ok(answer) => match (answer.field("ok"), answer.field("error")) {
                         (Some(ok), _) => json::to_string(ok),

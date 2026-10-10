@@ -1350,11 +1350,23 @@ dependencies = [
  "mira_derive",
  "mira_ecs",
  "mira_plugin",
- "neo",
- "neo-desktop",
  "pollster 0.3.0",
  "wgpu",
  "winit",
+]
+
+[[package]]
+name = "mira_app"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "glam",
+ "image",
+ "log",
+ "mira",
+ "mira_ui",
+ "neo",
+ "neo-desktop",
 ]
 
 [[package]]

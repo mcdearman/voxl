@@ -1,34 +1,17 @@
 [package]
 name = "mira"
-default-run = "mira"
 version = "0.1.0"
 edition = "2021"
 
-[features]
-default = ["editor"]
-# The engine app: the game in a Neo window, with its panels. `mira::editor`.
-editor = ["dep:neo", "dep:neo-desktop"]
-
-[[bin]]
-name = "mira"
-path = "src/main.rs"
-required-features = ["editor"]
-
-[[example]]
-name = "sacred_sites_editor"
-required-features = ["editor"]
-
 [workspace]
-members = ["crates/mira_ecs", "crates/mira_plugin", "crates/mira_derive", "crates/mira_ui", "plugins/wave", "plugins/scoreboard"]
+# Bare `cargo run` is the engine app; `cargo run --example <name>` finds the engine's examples.
+default-members = [".", "crates/mira_app"]
+members = ["crates/mira_app", "crates/mira_ecs", "crates/mira_plugin", "crates/mira_derive", "crates/mira_ui", "plugins/wave", "plugins/scoreboard"]
 
 [dependencies]
 mira_plugin = { path = "crates/mira_plugin" }
 mira_derive = { path = "crates/mira_derive" }
 mira_ecs = { path = "crates/mira_ecs" }
-# The engine app is built with Neo. A game that uses mira as a library and wants none of the
-# app turns the `editor` feature off.
-neo = { git = "https://github.com/mcdearman/neo", rev = "a0db82404e8e48410a7c99478da6f7f70a27923f", optional = true }
-neo-desktop = { git = "https://github.com/mcdearman/neo", rev = "a0db82404e8e48410a7c99478da6f7f70a27923f", optional = true }
 libloading = "0.8"
 anyhow = "1"
 bytemuck = { version = "1.13", features = ["derive"] }

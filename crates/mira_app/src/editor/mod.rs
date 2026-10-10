@@ -4,7 +4,7 @@
 //! ```ignore
 //! fn main() -> anyhow::Result<()> {
 //!     let game = my_game::build()?;      // a mira `App`, as it would be run
-//!     mira::editor::run(game)?;
+//!     mira_app::editor::run(game)?;
 //!     Ok(())
 //! }
 //! ```
@@ -31,7 +31,7 @@ use agent::{Agent, Heard, NoAgent};
 
 use glam::{Mat4, Vec3};
 
-use crate::{
+use mira::{
     assets::Assets,
     ecs::Entity,
     input::{ButtonInput, KeyCode, Mouse, MouseButton},
@@ -93,6 +93,8 @@ pub enum Message {
     /// A field of one of the world's settings was given a new value: the setting by its
     /// full name, the way down to the field, and the value.
     Setting(String, Vec<String>, Value),
+    /// Something done in the signal graph: a wire pulled, a lamp clicked, a box moved.
+    Graph(mira_ui::signal_graph::Message),
     /// A panel is opened, or shut if it is open.
     Panel(String),
     /// What is typed in the console, and the console's command being run.
@@ -191,11 +193,12 @@ const TIME: &str = "Time";
 const FAILURES: &str = "Failures";
 const PLUGINS: &str = "Plugins";
 const STATISTICS: &str = "Statistics";
+const GRAPH: &str = "Signal graph";
 
 /// Every panel there is, in the order the Window menu lists them.
-const PANELS: [&str; 15] = [
-    GAME, ENTITIES, INSPECTOR, WORLD, SIGNALS, AGENT, LOG, CONSOLE, PROFILER, SYSTEMS, HISTORY,
-    TIME, FAILURES, PLUGINS, STATISTICS,
+const PANELS: [&str; 16] = [
+    GAME, ENTITIES, INSPECTOR, WORLD, SIGNALS, GRAPH, AGENT, LOG, CONSOLE, PROFILER, SYSTEMS,
+    HISTORY, TIME, FAILURES, PLUGINS, STATISTICS,
 ];
 
 /// Where the arrangement of the panels is kept, in the folder the app is run from.
@@ -239,7 +242,7 @@ struct Lists {
 }
 
 impl Lists {
-    fn of(game: &crate::app::App, chosen: Option<Entity>) -> Self {
+    fn of(game: &mira::app::App, chosen: Option<Entity>) -> Self {
         let world = &game.world;
         let mut made_of = Vec::new();
         let mut entities: std::collections::BTreeMap<Entity, Vec<String>> = Default::default();
@@ -295,7 +298,7 @@ impl Lists {
 
 /// The app: a game, and the window's view of it.
 pub struct Editor {
-    game: crate::app::App,
+    game: mira::app::App,
     graphics: Option<Graphics>,
     hosted: bool,
     /// The viewport's room, in pixels, and how many of them make a point.
@@ -334,6 +337,8 @@ pub struct Editor {
     told: String,
     /// The entity whose name is being typed in the tree, and what has been typed.
     naming: Option<(Entity, String)>,
+    /// The game's rules as a circuit, as `mira_ui` draws them inside a game.
+    graph: mira_ui::signal_graph::SignalGraph,
     /// What is typed in the console, and what was asked there with what came back.
     command: String,
     asked: Vec<(String, String)>,
@@ -356,7 +361,7 @@ struct Status {
 }
 
 impl Editor {
-    pub fn new(game: crate::app::App) -> Self {
+    pub fn new(game: mira::app::App) -> Self {
         Self {
             game,
             graphics: None,
@@ -385,6 +390,7 @@ impl Editor {
             scene: "scene.json".into(),
             told: String::new(),
             naming: None,
+            graph: Default::default(),
             command: String::new(),
             asked: Vec::new(),
             log_filter: String::new(),
@@ -585,11 +591,11 @@ impl Editor {
     }
 
     /// The game being shown.
-    pub fn game(&self) -> &crate::app::App {
+    pub fn game(&self) -> &mira::app::App {
         &self.game
     }
 
-    pub fn game_mut(&mut self) -> &mut crate::app::App {
+    pub fn game_mut(&mut self) -> &mut mira::app::App {
         &mut self.game
     }
 
@@ -1002,6 +1008,10 @@ impl Editor {
                     rows = rows.push(text("This game has no signals.").tone(Tone::Muted));
                 }
                 scrollable(container(rows).padding(8.0)).into()
+            }
+            GRAPH => {
+                use mira_ui::armature::App as _;
+                self.graph.view().map(Message::Graph)
             }
             LOG => self.log_panel(),
             CONSOLE => self.console_panel(),
@@ -1436,15 +1446,15 @@ pub fn key_code(key: &KeyEvent) -> Option<KeyCode> {
         Key::End => KeyCode::End,
         Key::PageUp => KeyCode::PageUp,
         Key::PageDown => KeyCode::PageDown,
-        Key::F(n @ 1..=12) => crate::input::key_named(&format!("F{n}"))?,
+        Key::F(n @ 1..=12) => mira::input::key_named(&format!("F{n}"))?,
         Key::Character(typed) => {
             let mut letters = typed.chars();
             let (letter, None) = (letters.next()?, letters.next()) else {
                 return None;
             };
             match letter.to_ascii_uppercase() {
-                letter @ 'A'..='Z' => crate::input::key_named(&format!("Key{letter}"))?,
-                digit @ '0'..='9' => crate::input::key_named(&format!("Digit{digit}"))?,
+                letter @ 'A'..='Z' => mira::input::key_named(&format!("Key{letter}"))?,
+                digit @ '0'..='9' => mira::input::key_named(&format!("Digit{digit}"))?,
                 _ => return None,
             }
         }
@@ -1557,6 +1567,8 @@ impl App for Editor {
             });
             changed = true;
         }
+        // The circuit of rules follows the game's signals as they are now.
+        mira_ui::signal_graph::sync(&self.game.world, &mut self.graph);
         let handles = self.handled();
         changed |= std::mem::replace(&mut self.handles, handles) != handles;
         let outline = self.outlined();
@@ -1649,6 +1661,16 @@ impl App for Editor {
                     self.change_of(None, &setting, path, Some(whole));
                 }
             }
+            Message::Graph(done) => {
+                use mira_ui::armature::App as _;
+                self.graph.update(done);
+                // What was done in the picture of the rules is done to the rules.
+                let edits = self.graph.take_edits();
+                if let Some(signals) = self.resource::<Signals>() {
+                    mira_ui::signal_graph::apply(edits, signals);
+                }
+                self.lists = Lists::of(&self.game, self.chosen);
+            }
             Message::Panel(panel) => self.toggle_panel(&panel),
             Message::Command(typed) => self.command = typed,
             Message::Run => self.run_command(),
@@ -1662,12 +1684,12 @@ impl App for Editor {
                 }
             }
             Message::Record(on) => {
-                if let Some(history) = self.resource::<crate::live::History>() {
+                if let Some(history) = self.resource::<mira::live::History>() {
                     history.recording = on;
                 }
             }
             Message::Rewind(frames) => {
-                crate::live::History::rewind(&mut self.game.world, frames);
+                mira::live::History::rewind(&mut self.game.world, frames);
                 self.lists = Lists::of(&self.game, self.chosen);
             }
             Message::Speed(speed) => {
@@ -1879,13 +1901,13 @@ fn tools_program() -> std::path::PathBuf {
 ///
 /// The app's agent is Claude Code, given the game's tools: the game is made to listen for
 /// them on a port of its own if it is not listening already. See [`agent::ClaudeCode`].
-pub fn run(game: crate::app::App) -> Result<(), Box<dyn std::error::Error>> {
+pub fn run(game: mira::app::App) -> Result<(), Box<dyn std::error::Error>> {
     app(game).run()
 }
 
 /// The engine app on a game, with its agent, not yet opened: for saying more about it
 /// first (`with_scene`, `with_agent`) and then [`Editor::run`].
-pub fn app(mut game: crate::app::App) -> Editor {
+pub fn app(mut game: mira::app::App) -> Editor {
     let listening = match game.debugger_address() {
         Some(address) => Some(address),
         None => game.listen_for_debugger("127.0.0.1:0").ok(),
@@ -1971,7 +1993,7 @@ mod tests {
 
     #[test]
     fn panels_are_opened_and_shut_from_the_window_menu() {
-        let mut editor = Editor::new(crate::app::App::new());
+        let mut editor = Editor::new(mira::app::App::new());
         editor.layout = first_layout();
         assert!(!editor.layout.contains(PROFILER) && editor.layout.contains(LOG));
         // Every panel but the game has an entry, saying what choosing it will do.
@@ -2021,8 +2043,8 @@ mod tests {
             "what follows the command is name=value"
         );
 
-        let mut game = crate::app::App::new();
-        game.add_plugins(crate::time::TimePlugin);
+        let mut game = mira::app::App::new();
+        game.add_plugins(mira::time::TimePlugin);
         let mut editor = Editor::new(game);
         for typed in ["pause", "status", "fly away", "explode"] {
             editor.update(Message::Command(typed.into()));
@@ -2049,15 +2071,15 @@ mod tests {
 
     #[test]
     fn a_setting_of_the_world_is_changed_and_taken_back_like_anything_else() {
-        use crate::prelude::*;
+        use mira::prelude::*;
         #[derive(Clone, Debug, PartialEq, Reflect, Default)]
         #[reflect(name = "test.Weather", default)]
         struct Weather {
             rain: f32,
             windy: bool,
         }
-        let mut game = crate::app::App::new();
-        game.add_plugins(crate::transform::TransformPlugin)
+        let mut game = mira::app::App::new();
+        game.add_plugins(mira::transform::TransformPlugin)
             .insert_resource(Weather {
                 rain: 0.2,
                 windy: false,
@@ -2116,10 +2138,10 @@ mod tests {
 
     #[test]
     fn the_games_time_is_slowed_and_gone_back_in() {
-        use crate::prelude::*;
-        let mut game = crate::app::App::new();
-        game.add_plugins(crate::time::TimePlugin)
-            .add_plugins(crate::transform::TransformPlugin);
+        use mira::prelude::*;
+        let mut game = mira::app::App::new();
+        game.add_plugins(mira::time::TimePlugin)
+            .add_plugins(mira::transform::TransformPlugin);
         let entity = game.world.spawn(Transform::IDENTITY);
         let mut editor = Editor::new(game);
         editor.update(Message::Speed(0.5));
@@ -2129,14 +2151,14 @@ mod tests {
             editor
                 .game()
                 .world
-                .resource::<crate::live::History>()
+                .resource::<mira::live::History>()
                 .recording
         );
         // A moment every frame, for the test's sake.
         editor
             .game_mut()
             .world
-            .resource_mut::<crate::live::History>()
+            .resource_mut::<mira::live::History>()
             .every = 1;
         for step in 1..=4 {
             editor
@@ -2151,7 +2173,7 @@ mod tests {
         let kept = editor
             .game()
             .world
-            .resource::<crate::live::History>()
+            .resource::<mira::live::History>()
             .moments()
             .len();
         assert!(kept >= 2, "moments are kept while recording: {kept}");
@@ -2172,9 +2194,9 @@ mod tests {
 
     #[test]
     fn the_lists_say_what_is_in_the_game() {
-        use crate::prelude::*;
-        let mut game = crate::app::App::new();
-        game.add_plugins(crate::transform::TransformPlugin)
+        use mira::prelude::*;
+        let mut game = mira::app::App::new();
+        game.add_plugins(mira::transform::TransformPlugin)
             .add_plugins(SignalPlugin);
         let entity = game.world.spawn(Transform::from_xyz(1.0, 2.0, 3.0));
         game.world.resource_mut::<Signals>().set("open", true);
@@ -2194,9 +2216,9 @@ mod tests {
 
     #[test]
     fn a_field_changed_in_the_inspector_is_changed_in_the_game() {
-        use crate::prelude::*;
-        let mut game = crate::app::App::new();
-        game.add_plugins(crate::transform::TransformPlugin);
+        use mira::prelude::*;
+        let mut game = mira::app::App::new();
+        game.add_plugins(mira::transform::TransformPlugin);
         let entity = game.world.spawn(Transform::from_xyz(1.0, 2.0, 3.0));
         let mut editor = Editor::new(game);
         editor.update(Message::Chosen(entity));
@@ -2269,9 +2291,9 @@ mod tests {
 
     #[test]
     fn entities_are_a_tree_that_dragging_rearranges() {
-        use crate::prelude::*;
-        let mut game = crate::app::App::new();
-        game.add_plugins(crate::transform::TransformPlugin);
+        use mira::prelude::*;
+        let mut game = mira::app::App::new();
+        game.add_plugins(mira::transform::TransformPlugin);
         let tank = game.world.spawn(Transform::IDENTITY);
         let turret = game.world.spawn((Transform::IDENTITY, Parent(tank)));
         let barrel = game.world.spawn((Transform::IDENTITY, Parent(turret)));
@@ -2358,7 +2380,7 @@ mod tests {
             Heard::Done,
         ];
         let mut editor =
-            Editor::new(crate::app::App::new()).with_agent(Scripted(script, stops.clone()));
+            Editor::new(mira::app::App::new()).with_agent(Scripted(script, stops.clone()));
         let write = |editor: &mut Editor, text: &str| {
             editor.writing = Document::new(text);
             editor.update(Message::Ask);
@@ -2425,7 +2447,7 @@ mod tests {
         assert_eq!(editor.said().len(), length);
 
         // With no agent, asking says how to have one.
-        let mut alone = Editor::new(crate::app::App::new());
+        let mut alone = Editor::new(mira::app::App::new());
         write(&mut alone, "Hello?");
         alone.listen();
         assert!(alone.said()[1].text.contains("There is no agent"));
@@ -2434,9 +2456,9 @@ mod tests {
 
     #[test]
     fn what_is_changed_can_be_taken_back_and_made_again() {
-        use crate::prelude::*;
-        let mut game = crate::app::App::new();
-        game.add_plugins(crate::transform::TransformPlugin);
+        use mira::prelude::*;
+        let mut game = mira::app::App::new();
+        game.add_plugins(mira::transform::TransformPlugin);
         let entity = game.world.spawn(Transform::from_xyz(1.0, 0.0, 0.0));
         let other = game.world.spawn(Transform::IDENTITY);
         let mut editor = Editor::new(game);
@@ -2547,10 +2569,10 @@ mod tests {
 
     #[test]
     fn the_scene_is_saved_and_can_be_spawned_again() {
-        use crate::prelude::*;
+        use mira::prelude::*;
         let build = || {
-            let mut game = crate::app::App::new();
-            game.add_plugins(crate::transform::TransformPlugin);
+            let mut game = mira::app::App::new();
+            game.add_plugins(mira::transform::TransformPlugin);
             game
         };
         let mut game = build();
@@ -2592,7 +2614,7 @@ mod tests {
 
     #[test]
     fn the_window_is_glass_unless_turned_off_for_the_app() {
-        let mut editor = Editor::new(crate::app::App::new());
+        let mut editor = Editor::new(mira::app::App::new());
         // Whatever the desktop's own windows are, and whatever was last chosen here.
         editor.desktop.appearance.glass.enabled = false;
         editor.desktop.prefs.glass = true;
@@ -2614,9 +2636,9 @@ mod tests {
 
     #[test]
     fn an_entity_is_chosen_and_moved_in_the_picture() {
-        use crate::prelude::*;
-        let mut game = crate::app::App::new();
-        game.add_plugins(crate::transform::TransformPlugin);
+        use mira::prelude::*;
+        let mut game = mira::app::App::new();
+        game.add_plugins(mira::transform::TransformPlugin);
         // Looking straight down from ten metres up, north at the top of the picture.
         let eye = Transform::from_xyz(0.0, 10.0, 0.0).looking_at(Vec3::ZERO, Vec3::NEG_Z);
         game.world.spawn((eye, Camera::default()));
@@ -2727,8 +2749,8 @@ mod tests {
 
     #[test]
     fn what_is_done_in_the_viewport_reaches_the_game() {
-        let mut game = crate::app::App::new();
-        game.add_plugins(crate::input::InputPlugin);
+        let mut game = mira::app::App::new();
+        game.add_plugins(mira::input::InputPlugin);
         let mut editor = Editor::new(game);
         editor.update(Message::Resized(Rect::new(0.0, 40.0, 400.0, 300.0), 2.0));
         // With the tool that makes the picture the game's.

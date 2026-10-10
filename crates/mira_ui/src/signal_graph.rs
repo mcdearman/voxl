@@ -472,6 +472,12 @@ fn apply_edits(world: &mut World) {
     let Some(signals) = world.get_resource_mut::<Signals>() else {
         return;
     };
+    apply(edits, signals);
+}
+
+/// Makes edits taken from a panel ([`SignalGraph::take_edits`]) to a game's signals: for a
+/// program that shows the panel some other way than [`plugin`], such as mira's own app.
+pub fn apply(edits: Vec<Edit>, signals: &mut Signals) {
     for edit in edits {
         match edit {
             Edit::Connect { node, input, to } => {
@@ -674,7 +680,14 @@ impl Widget<Message> for Typed {
     fn event(&mut self, cx: &mut EventCx<Message>, event: &Event) -> Status {
         // A press anywhere else is the end of typing.
         if let Event::PointerPressed { pos, .. } = event {
-            let field = Rect::new(self.at.x, self.at.y, self.size.w, self.size.h);
+            // Where the field is in the window: this widget may not start at its corner.
+            let within = cx.bounds();
+            let field = Rect::new(
+                within.x + self.at.x,
+                within.y + self.at.y,
+                self.size.w,
+                self.size.h,
+            );
             if !field.contains(*pos) {
                 cx.emit(Message::Leave);
             }
@@ -894,6 +907,42 @@ impl Widget<Message> for Circuit {
     }
 
     fn draw(&self, cx: &mut DrawCx) {
+        // Everything is drawn from this widget's own corner, wherever in the window that
+        // is: the whole screen in a game, a panel in an app.
+        let within = cx.bounds();
+        cx.scene.push_clip(within);
+        cx.scene.push_offset(Point::new(within.x, within.y));
+        self.paint(cx);
+        cx.scene.pop_offset();
+        cx.scene.pop_clip();
+    }
+
+    fn event(&mut self, cx: &mut EventCx<Message>, event: &Event) -> Status {
+        // And the pointer is heard from there too.
+        let within = cx.bounds();
+        let near = |pos: &Point| Point::new(pos.x - within.x, pos.y - within.y);
+        let event = match event {
+            Event::PointerMoved { pos } => Event::PointerMoved { pos: near(pos) },
+            Event::PointerPressed { pos, button } => Event::PointerPressed {
+                pos: near(pos),
+                button: *button,
+            },
+            Event::PointerReleased { pos, button } => Event::PointerReleased {
+                pos: near(pos),
+                button: *button,
+            },
+            Event::Wheel { pos, delta } => Event::Wheel {
+                pos: near(pos),
+                delta: *delta,
+            },
+            other => other.clone(),
+        };
+        self.heard(cx, &event)
+    }
+}
+
+impl Circuit {
+    fn paint(&self, cx: &mut DrawCx) {
         let Some(title) = &self.title else {
             return;
         };
@@ -1031,7 +1080,7 @@ impl Widget<Message> for Circuit {
         }
     }
 
-    fn event(&mut self, cx: &mut EventCx<Message>, event: &Event) -> Status {
+    fn heard(&mut self, cx: &mut EventCx<Message>, event: &Event) -> Status {
         match event {
             Event::PointerMoved { pos } => {
                 cx.emit(Message::Pointer(*pos));
