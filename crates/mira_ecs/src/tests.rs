@@ -1086,3 +1086,90 @@ fn systems_running_side_by_side_each_share_out_their_own_query() {
     let after: Vec<(i32, i32)> = world.query::<(&Pos, &Vel)>().iter().map(|(p, v)| (p.0, v.0)).collect();
     assert!(after.iter().enumerate().all(|(i, (p, v))| *p == i as i32 + 3 && *v == i as i32 * 8));
 }
+
+/// An event aimed at an entity is heard at once by what observes it, anywhere or there.
+#[test]
+fn an_event_aimed_at_an_entity_is_heard_by_its_observers() {
+    struct Hit(i32);
+    #[derive(Default)]
+    struct Heard(Vec<(Entity, &'static str, i32)>);
+    let mut world = World::new();
+    world.insert_resource(Heard::default());
+    let (wall, door) = (world.spawn(Pos(10)), world.spawn(Pos(5)));
+    world.observe::<Hit>(|world, entity, hit| {
+        world.resource_mut::<Heard>().0.push((entity, "anywhere", hit.0));
+        // Every hit wears the thing down; one that finishes it takes it away.
+        let left = world.get_mut::<Pos>(entity).map(|pos| {
+            pos.0 -= hit.0;
+            pos.0
+        });
+        if left.is_some_and(|left| left <= 0) {
+            world.despawn(entity);
+        }
+    });
+    world.observe_entity::<Hit>(door, |world, entity, hit| {
+        world.resource_mut::<Heard>().0.push((entity, "the door", hit.0));
+    });
+
+    assert_eq!(world.trigger(wall, Hit(3)), 1);
+    assert_eq!(world.trigger(door, Hit(2)), 2);
+    assert_eq!(world.get::<Pos>(wall), Some(&Pos(7)));
+    // The blow that ends the door is not passed on to what listened on the door itself.
+    assert_eq!(world.trigger(door, Hit(9)), 1);
+    assert!(!world.contains_entity(door));
+    assert_eq!(world.trigger(door, Hit(1)), 0);
+    // Nothing listens for this kind of event.
+    assert_eq!(world.trigger(wall, "a word"), 0);
+    assert_eq!(
+        world.resource::<Heard>().0,
+        [(wall, "anywhere", 3), (door, "anywhere", 2), (door, "the door", 2), (door, "anywhere", 9)]
+    );
+
+    // From a system, through commands: heard when they are applied.
+    fn strike(mut commands: Commands, walls: Query<Entity, With<Pos>>) {
+        for wall in &walls {
+            commands.entity(wall).trigger(Hit(1));
+        }
+    }
+    run(&mut world, strike);
+    assert_eq!(world.get::<Pos>(wall), Some(&Pos(6)));
+}
+
+/// What a stage's systems wrote is told, once for each entity, when the stage has run.
+#[test]
+fn a_component_that_was_written_is_told_of_when_the_stage_has_run() {
+    let mut world = World::new();
+    world.insert_resource(Counter(0));
+    let (a, b) = (world.spawn((Pos(1), Vel(0))), world.spawn((Pos(2), Vel(0))));
+    world.on_change::<Pos>(|world, entity| {
+        world.resource_mut::<Counter>().0 += 1;
+        // Keeps something else in step; writing the watched component here is not told again.
+        let pos = world.get::<Pos>(entity).map_or(0, |pos| pos.0);
+        world.insert(entity, Vel(pos * 10));
+        world.get_mut::<Pos>(entity).unwrap().0 += 0;
+    });
+    // Nothing written since the hook was added.
+    world.tell_of_changes();
+    assert_eq!(world.resource::<Counter>().0, 0);
+
+    fn move_first(mut all: Query<&mut Pos>) {
+        for mut pos in &mut all {
+            if pos.0 == 1 {
+                // Written twice, told once.
+                pos.0 = 5;
+                pos.0 = 7;
+            }
+        }
+    }
+    run(&mut world, move_first);
+    assert_eq!(world.resource::<Counter>().0, 1);
+    assert_eq!((world.get::<Vel>(a), world.get::<Vel>(b)), (Some(&Vel(70)), Some(&Vel(0))));
+    // Run again with nothing to write: nothing is told, the hook's own writing included.
+    run(&mut world, move_first);
+    assert_eq!(world.resource::<Counter>().0, 1);
+    // An arrival counts as a writing.
+    let c = world.spawn(Pos(3));
+    world.tell_of_changes();
+    assert_eq!(world.resource::<Counter>().0, 2);
+    assert_eq!(world.get::<Vel>(c), Some(&Vel(30)));
+}

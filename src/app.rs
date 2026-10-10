@@ -153,6 +153,26 @@ impl App {
         self
     }
 
+    /// Runs `hook` for each entity whose `C` was written, once the stage that wrote it has
+    /// run. See [`World::on_change`].
+    pub fn on_change<C: Component>(
+        &mut self,
+        hook: impl Fn(&mut World, crate::ecs::Entity) + Send + Sync + 'static,
+    ) -> &mut Self {
+        self.world.on_change::<C>(hook);
+        self
+    }
+
+    /// Runs `observer` whenever an `E` is aimed at an entity with `trigger`. See
+    /// [`World::observe`].
+    pub fn observe<E: Send + Sync + 'static>(
+        &mut self,
+        observer: impl Fn(&mut World, crate::ecs::Entity, &E) + Send + Sync + 'static,
+    ) -> &mut Self {
+        self.world.observe::<E>(observer);
+        self
+    }
+
     /// Makes a resource reachable by name, and saved with scenes.
     pub fn register_resource_type<R: Reflect>(&mut self) -> &mut Self {
         self.world.init_resource::<TypeRegistry>();

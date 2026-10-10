@@ -349,6 +349,9 @@ impl Schedule {
             }
             start = end;
         }
+        // What these systems wrote is told to whatever watches for it, before the next
+        // stage runs.
+        world.tell_of_changes();
     }
 
     /// Asks the conditions of the system at `place`, catching a panic if guarded. Returns

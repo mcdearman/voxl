@@ -74,6 +74,8 @@ pub struct World {
     /// Departures whose hooks are running, so that a hook which removes the very thing it
     /// was told about isn't told again, and again.
     departing: Vec<(ComponentKey, Entity)>,
+    /// Code to run when an event is aimed at an entity, by the event's type.
+    observers: HashMap<TypeId, Box<dyn AnyObservers>>,
     change_tick: AtomicU64,
 }
 
@@ -84,6 +86,44 @@ type Hook = std::sync::Arc<dyn Fn(&mut World, Entity) + Send + Sync>;
 struct Hooks {
     on_add: Vec<Hook>,
     on_remove: Vec<Hook>,
+    on_change: Vec<Hook>,
+    /// Finds the entities whose component was written after a tick.
+    written: Option<Written>,
+    /// The tick up to which `on_change` hooks have been told.
+    told: Tick,
+}
+
+type Written = std::sync::Arc<dyn Fn(&World, Tick) -> Vec<Entity> + Send + Sync>;
+
+/// Run with the world, the entity an event was aimed at, and the event.
+type Observer<E> = std::sync::Arc<dyn Fn(&mut World, Entity, &E) + Send + Sync>;
+
+/// Who is to hear of one kind of event: everyone listening for it anywhere, and those
+/// listening for it on one entity.
+struct Observers<E> {
+    anywhere: Vec<Observer<E>>,
+    on: HashMap<Entity, Vec<Observer<E>>>,
+}
+
+/// What the world needs of a kind's observers without knowing the kind.
+trait AnyObservers: Send + Sync {
+    fn forget(&mut self, entity: Entity);
+    fn as_any(&self) -> &dyn std::any::Any;
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any;
+}
+
+impl<E: 'static> AnyObservers for Observers<E> {
+    fn forget(&mut self, entity: Entity) {
+        self.on.remove(&entity);
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
+    }
 }
 
 impl Default for World {
@@ -103,6 +143,7 @@ impl World {
             resources: HashMap::new(),
             main_thread: HashSet::new(),
             hooks: HashMap::new(),
+            observers: HashMap::new(),
             arrived: Vec::new(),
             departing: Vec::new(),
             change_tick: AtomicU64::new(1),
@@ -150,6 +191,122 @@ impl World {
     ) {
         let hooks = self.hooks.entry(ComponentKey::of::<C>()).or_default();
         hooks.on_remove.push(std::sync::Arc::new(hook));
+    }
+
+    /// Runs `hook` for each entity whose `C` has been written (or has arrived) since the
+    /// hooks were last told: when a stage's systems have run, or when
+    /// [`tell_of_changes`](Self::tell_of_changes) is called. Not at the moment of the write,
+    /// which is only a borrow, but before anything of the next stage runs. An entity is told
+    /// of once however often it was written, and what the hooks themselves write to a `C`
+    /// is not told again.
+    pub fn on_change<C: Component>(
+        &mut self,
+        hook: impl Fn(&mut World, Entity) + Send + Sync + 'static,
+    ) {
+        let now = self.change_tick();
+        let hooks = self.hooks.entry(ComponentKey::of::<C>()).or_default();
+        hooks.on_change.push(std::sync::Arc::new(hook));
+        if hooks.written.is_none() {
+            hooks.told = now;
+            hooks.written = Some(std::sync::Arc::new(|world: &World, since: Tick| {
+                let Some(storage) = world.storage::<C>() else {
+                    return Vec::new();
+                };
+                let written = |entity: &&Entity| {
+                    storage.ticks(**entity).is_some_and(|ticks| ticks.is_changed(since))
+                };
+                storage.entities().iter().filter(written).copied().collect()
+            }));
+        }
+    }
+
+    /// Tells the `on_change` hooks of every component written since they were last told.
+    /// A schedule does this when its systems have run.
+    pub fn tell_of_changes(&mut self) {
+        let watched: Vec<(ComponentKey, Written, Tick)> = self
+            .hooks
+            .iter()
+            .filter(|(_, hooks)| !hooks.on_change.is_empty())
+            .filter_map(|(key, hooks)| Some((*key, hooks.written.clone()?, hooks.told)))
+            .collect();
+        for (key, written, told) in watched {
+            let entities = written(self, told);
+            let hooks = self.hooks.get(&key).map_or(Vec::new(), |hooks| hooks.on_change.clone());
+            for entity in entities {
+                for hook in &hooks {
+                    // A hook before this one may have removed it, or the entity.
+                    if self.storages.get(&key).is_some_and(|s| s.contains(entity)) {
+                        hook(self, entity);
+                    }
+                }
+            }
+            // Past whatever the hooks wrote, so they are not told of their own writing.
+            let now = self.increment_change_tick();
+            if let Some(hooks) = self.hooks.get_mut(&key) {
+                hooks.told = now;
+            }
+        }
+    }
+
+    // --- observers ---
+
+    /// Runs `observer` whenever an event of type `E` is aimed at any entity with
+    /// [`trigger`](Self::trigger): with the world, the entity, and the event.
+    pub fn observe<E: Send + Sync + 'static>(
+        &mut self,
+        observer: impl Fn(&mut World, Entity, &E) + Send + Sync + 'static,
+    ) {
+        self.observers_of::<E>().anywhere.push(std::sync::Arc::new(observer));
+    }
+
+    /// Runs `observer` whenever an `E` is aimed at this entity, after those that listen for
+    /// it anywhere. Forgotten when the entity is despawned.
+    pub fn observe_entity<E: Send + Sync + 'static>(
+        &mut self,
+        entity: Entity,
+        observer: impl Fn(&mut World, Entity, &E) + Send + Sync + 'static,
+    ) {
+        if self.contains_entity(entity) {
+            let observers = self.observers_of::<E>().on.entry(entity).or_default();
+            observers.push(std::sync::Arc::new(observer));
+        }
+    }
+
+    fn observers_of<E: Send + Sync + 'static>(&mut self) -> &mut Observers<E> {
+        self.observers
+            .entry(TypeId::of::<E>())
+            .or_insert_with(|| Box::new(Observers::<E> { anywhere: Vec::new(), on: HashMap::new() }))
+            .as_any_mut()
+            .downcast_mut()
+            .expect("observers are kept by their event's type")
+    }
+
+    /// Aims an event at an entity: everything observing that kind of event, anywhere or on
+    /// that entity, runs now, in the order it was added. Returns how many observers ran;
+    /// none for an entity that is gone. An observer may trigger further events.
+    pub fn trigger<E: Send + Sync + 'static>(&mut self, entity: Entity, event: E) -> usize {
+        if !self.contains_entity(entity) {
+            return 0;
+        }
+        let Some(observers) = self
+            .observers
+            .get(&TypeId::of::<E>())
+            .and_then(|observers| observers.as_any().downcast_ref::<Observers<E>>())
+        else {
+            return 0;
+        };
+        let aimed = observers.on.get(&entity).into_iter().flatten();
+        let listening: Vec<Observer<E>> = observers.anywhere.iter().chain(aimed).cloned().collect();
+        let mut ran = 0;
+        for observer in &listening {
+            // One before this may have despawned what the event was aimed at.
+            if !self.contains_entity(entity) {
+                break;
+            }
+            observer(self, entity, &event);
+            ran += 1;
+        }
+        ran
     }
 
     /// Notes that a component has just arrived, if anything wants to know.
@@ -223,6 +380,9 @@ impl World {
         // A hook may have despawned it already.
         if !self.entities_mut().free(entity) {
             return false;
+        }
+        for observers in self.observers.values_mut() {
+            observers.forget(entity);
         }
         for storage in self.storages.values_mut() {
             storage.remove_entity(entity);

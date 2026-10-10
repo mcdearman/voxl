@@ -252,7 +252,9 @@ and see it change in the running scene.
       different orders" (about a third) and little else, for a rewrite of storage, queries
       and everything that reaches components by name; worth doing when a game shows that gap
 - [x] Hooks: run code when a component is added or removed (`on_add`, `on_remove`)
-- [ ] Observers for other events (a component changing, custom events aimed at an entity);
+- [x] Observers: `on_change` for a component that was written, told when the stage has run;
+      events aimed at an entity (`trigger`, `observe`, `observe_entity`), heard at once
+- [ ] The same from plugins;
       hooks from plugins
 - [x] Relations: any component that names another entity, with the way back kept by the
       engine (`Relation`, `Related<R>`); `Parent` and `Children` are one of them. See
