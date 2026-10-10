@@ -195,6 +195,21 @@ they stand: handing them out would cost more than doing them. Systems in one bat
 do this at the same moment; a thread waiting for its own shares does other queued work
 meanwhile.
 
+## One set of threads
+
+Systems, the shares of a query, and work in the background (pictures and model files being
+read, terrain being generated and meshed) all run on the same threads: one fewer than the
+machine has cores, at most seven, or `MIRA_THREADS` minus one. Work of the frame is always
+taken first, and background work is done by all the workers but one, so a level loading
+does not starve the frame of threads. `TaskPool` is the way in for background work of a
+game's own:
+
+```rust
+fn start(pool: Res<TaskPool>, found: Res<Mailbox<Path>>) {
+    pool.spawn(&found.sender, || find_a_way());   // the result arrives in the mailbox
+}
+```
+
 ## What isn't here yet
 
 - Batches are made in the order systems are written, so two systems that could share a

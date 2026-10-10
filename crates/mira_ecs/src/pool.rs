@@ -1,9 +1,16 @@
-//! The threads that systems run on when a batch of them runs at the same moment.
+//! The threads everything shares: the systems of a batch that runs at the same moment, the
+//! shares of a query's work, and work in the background such as reading files and building
+//! terrain.
+//!
+//! There are two queues. Work of the frame (systems, a query's shares) is always taken
+//! first, and a thread waiting for its own jobs helps with it. Background work is taken when
+//! there is none, by all the workers but one, so however much there is to load a worker is
+//! left for the frame.
 
 use std::{
+    collections::VecDeque,
     panic::{catch_unwind, resume_unwind, AssertUnwindSafe},
     sync::{
-        mpsc::{channel, Receiver, Sender},
         Arc, Condvar, Mutex, OnceLock,
     },
     thread,
@@ -33,36 +40,91 @@ impl Latch {
     }
 }
 
+/// What is waiting to be done.
+#[derive(Default)]
+struct Queues {
+    frame: VecDeque<Job>,
+    background: VecDeque<Job>,
+    /// How many background jobs are being done now.
+    background_running: usize,
+}
+
+struct Shared {
+    queues: Mutex<Queues>,
+    /// Told when there is something new to take, or room for more background work.
+    more: Condvar,
+    /// The most background jobs done at once.
+    background_most: usize,
+}
+
+impl Shared {
+    fn lock(&self) -> std::sync::MutexGuard<'_, Queues> {
+        self.queues.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    /// A worker's life: frame work first, then background work while there is room for it.
+    fn work(&self, frame_too: bool) {
+        loop {
+            let (job, background) = {
+                let mut queues = self.lock();
+                loop {
+                    if let Some(job) = frame_too.then(|| queues.frame.pop_front()).flatten() {
+                        break (job, false);
+                    }
+                    if queues.background_running < self.background_most {
+                        if let Some(job) = queues.background.pop_front() {
+                            queues.background_running += 1;
+                            break (job, true);
+                        }
+                    }
+                    queues = self.more.wait(queues).unwrap_or_else(|p| p.into_inner());
+                }
+            };
+            if background {
+                // Nobody waits for a background job, so a panic in one ends the job and not
+                // the thread; what was waiting for its result goes without.
+                if catch_unwind(AssertUnwindSafe(job)).is_err() {
+                    eprintln!("a background job panicked");
+                }
+                self.lock().background_running -= 1;
+                self.more.notify_all();
+            } else {
+                job();
+            }
+        }
+    }
+}
+
 /// Worker threads that live as long as the program.
 pub struct Pool {
-    jobs: Mutex<Sender<Job>>,
-    /// The jobs not yet taken up: by a worker, or by a thread waiting for jobs of its own.
-    queue: Arc<Mutex<Receiver<Job>>>,
+    shared: Arc<Shared>,
     workers: usize,
 }
 
 impl Pool {
     fn new(workers: usize) -> Self {
-        let (jobs, queue) = channel::<Job>();
-        let queue = Arc::new(Mutex::new(queue));
-        for index in 0..workers {
-            let queue = Arc::clone(&queue);
+        let shared = Arc::new(Shared {
+            queues: Mutex::default(),
+            more: Condvar::new(),
+            // One worker is left for the frame, where there is more than one.
+            background_most: workers.saturating_sub(1).max(1),
+        });
+        let start = |name: String, frame_too: bool| {
+            let shared = Arc::clone(&shared);
             thread::Builder::new()
-                .name(format!("mira systems {index}"))
-                .spawn(move || loop {
-                    let job = queue.lock().unwrap_or_else(|p| p.into_inner()).recv();
-                    match job {
-                        Ok(job) => job(),
-                        Err(_) => break,
-                    }
-                })
+                .name(name)
+                .spawn(move || shared.work(frame_too))
                 .expect("can't start a worker thread");
+        };
+        for index in 0..workers {
+            start(format!("mira worker {index}"), true);
         }
-        Self {
-            jobs: Mutex::new(jobs),
-            queue,
-            workers,
+        // With no workers the frame's work is all done by the calling thread, but work in
+        // the background still needs somewhere to be done.
+        if workers == 0 {
+            start("mira background".to_owned(), false);
         }
+        Self { shared, workers }
     }
 
     /// The pool every schedule shares. It has one thread fewer than the machine has cores
@@ -90,14 +152,27 @@ impl Pool {
         self.workers
     }
 
+    /// How many background jobs are done at once.
+    pub fn background_threads(&self) -> usize {
+        self.shared.background_most
+    }
+
+    /// Has `job` done in the background, some time, on one of the workers: for work nobody
+    /// waits for, such as reading a file or building a piece of terrain. It gives way to
+    /// the frame's work, and hands its result back however the caller arranged (a channel).
+    pub fn spawn(&self, job: impl FnOnce() + Send + 'static) {
+        self.shared.lock().background.push_back(Box::new(job));
+        self.shared.more.notify_all();
+    }
+
     /// Waits until the latch's jobs have finished, doing queued jobs meanwhile. A thread that
     /// only slept here could wait for ever: when every worker is itself waiting, as when the
     /// systems of a batch each share their work out, nobody would be left to do the jobs
-    /// they wait for. An idle worker holds the queue while it sleeps on it, and then the job
-    /// is that worker's to take.
+    /// they wait for.
     fn wait_helping(&self, latch: &Latch) {
         while !latch.finished() {
-            let job = self.queue.try_lock().ok().and_then(|queue| queue.try_recv().ok());
+            // The frame's work only: a background job could keep this thread for a long time.
+            let job = self.shared.lock().frame.pop_front();
             match job {
                 Some(job) => job(),
                 None => latch.wait_a_moment(),
@@ -140,12 +215,9 @@ impl Pool {
                     latch.done.notify_all();
                 }
             });
-            self.jobs
-                .lock()
-                .unwrap_or_else(|p| p.into_inner())
-                .send(wrapped)
-                .expect("the worker threads are gone");
+            self.shared.lock().frame.push_back(wrapped);
         }
+        self.shared.more.notify_all();
         mine();
         drop(wait);
         let payload = panic.lock().unwrap_or_else(|p| p.into_inner()).take();
@@ -206,6 +278,43 @@ mod tests {
             pool.run(others, inner);
         }
         assert_eq!(done.load(Ordering::Relaxed), 20 * 3 * 5);
+    }
+
+    #[test]
+    fn background_work_is_done_and_gives_way_to_the_frames() {
+        use std::sync::mpsc::channel;
+        for workers in [0, 1, 3] {
+            let pool = Pool::new(workers);
+            assert_eq!(pool.background_threads(), workers.saturating_sub(1).max(1));
+            let (done, results) = channel();
+            for job in 0..12 {
+                let done = done.clone();
+                pool.spawn(move || {
+                    thread::sleep(std::time::Duration::from_millis(2));
+                    let _ = done.send(job);
+                });
+            }
+            // The frame's work is not kept waiting behind it.
+            let count = AtomicUsize::new(0);
+            let others: Vec<Box<dyn FnOnce() + Send + '_>> = (0..4)
+                .map(|_| {
+                    Box::new(|| {
+                        count.fetch_add(1, Ordering::Relaxed);
+                    }) as Box<dyn FnOnce() + Send + '_>
+                })
+                .collect();
+            pool.run(others, || {});
+            assert_eq!(count.load(Ordering::Relaxed), 4);
+            // A job that panics does not take its thread, or the jobs after it, with it.
+            pool.spawn(|| panic!("a background job fell over"));
+            let done_after = done.clone();
+            pool.spawn(move || {
+                let _ = done_after.send(99);
+            });
+            let mut got: Vec<i32> = (0..13).map(|_| results.recv().unwrap()).collect();
+            got.sort_unstable();
+            assert_eq!(got, (0..12).chain([99]).collect::<Vec<_>>());
+        }
     }
 
     #[test]

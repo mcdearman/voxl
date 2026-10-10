@@ -262,7 +262,8 @@ and see it change in the running scene.
 - [x] Relations with many targets of one kind (`each_target`), and what becomes of a source
       when its target is despawned (`WhenTargetGoes`: keep, unlink or despawn)
 - [ ] Relations from plugins
-- [ ] One job system for systems, asset loading and voxel work
+- [x] One job system for systems, asset loading and voxel work: one pool with a queue for
+      the frame's work, taken first, and one for background work, which leaves a worker free
 
 **Exit test:** the Napoleonic demo's update time drops in proportion to cores used, with Miri
 and a thread sanitizer clean.

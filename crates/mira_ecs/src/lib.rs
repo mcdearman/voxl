@@ -33,6 +33,7 @@ pub use change::Mut;
 pub use commands::{CommandQueue, Commands, EntityCommands};
 pub use condition::{not, resource_exists, BoxedCondition, Condition, IntoCondition};
 pub use entity::Entity;
+pub use pool::Pool;
 pub use event::event_update_system;
 pub use event::{EventReader, EventWriter, Events};
 pub use query::{
