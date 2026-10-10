@@ -32,7 +32,7 @@ pub use gpu::{
     main_depth_state, main_multisample, Gpu, Targets, DEPTH_CLEAR, DEPTH_COMPARE, DEPTH_FORMAT,
     HDR_FORMAT, MSAA_SAMPLES,
 };
-pub use image::Image;
+pub use image::{Image, Processed};
 pub use mesh::{Mesh, Mesh3d, Vertex};
 pub use post::PostProcess;
 pub use shaders::{Install, Rebuild, Shader, ShaderReload};
@@ -494,6 +494,12 @@ fn init_gpu(world: &mut World) {
         let white = Image::solid([255, 255, 255, 255], true).upload(&gpu.device, &gpu.queue);
         RayTracing::new(&gpu, rt_settings, white)
     });
+    // Pictures loaded by name are compressed for the card, where it can hold them so.
+    // `MIRA_COMPRESS=0` leaves them as plain pixels.
+    let compress = Processed::supported(&gpu.device) && std::env::var("MIRA_COMPRESS").map_or(true, |v| v != "0");
+    if let Some(server) = world.get_resource_mut::<AssetServer>() {
+        server.compress = compress;
+    }
     if !world.contains_resource::<Environment>() {
         world.insert_resource(Environment::gradient(Vec3::new(-0.5, 0.6, 0.4)));
     }

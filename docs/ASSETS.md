@@ -74,6 +74,23 @@ Image files and model files are watched and reloaded when they change. A model f
 saved again is read on a worker again, and every `Model` showing it gets its new parts; see
 [HOT_RELOAD.md](HOT_RELOAD.md).
 
+## Processing
+
+A picture file is not what a graphics card wants. As it is loaded, on a worker, a picture is
+decoded, filtered down into its smaller levels, and compressed into BC7 blocks, which the
+card reads directly: a quarter of the memory of plain pixels, and nothing left to do on the
+frame it is first drawn. The result is kept in `.mira/cache` under the asset root, named by
+a hash of the file's bytes and of how it was processed, so the work is done once: a file
+that hasn't changed is read straight from the cache, and one that has is processed again.
+
+- It happens where the graphics card can hold BC textures (desktop cards do), and not in a
+  program with no renderer. `MIRA_COMPRESS=0` turns it off.
+- A picture loaded this way keeps no pixels in memory (`image.has_pixels()` is false). A
+  game that reads the pixels of pictures it loads by name sets `server.keep_pixels = true`.
+- A picture whose sides are not multiples of four is left as plain pixels.
+- The cache is bounded: over `server.cache_limit` bytes (2 GB), what was used longest ago
+  goes. `server.cache = false` keeps nothing on disk. The folder can be deleted at any time.
+
 ## What needs what
 
 The server keeps, by name, what each asset needs. A model file needs its meshes and
@@ -117,6 +134,7 @@ registered, goes stale when its asset is unloaded. Protect those with `server.ke
 - A model's parts come all at once, and a reloaded model is rebuilt whole.
 - Textures a model file refers to in other files are read with it, not as assets of their
   own with their own names.
-- There is no processing step: textures are not compressed for the GPU, and nothing is cached
-  on disk.
+- Only picture files are processed. Textures inside a model file are uploaded as plain
+  pixels, meshes are not yet turned into a binary form, and there is no ASTC for the cards
+  that want it in place of BC.
 - The Napoleonic and Paris demos still load their assets directly.

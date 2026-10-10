@@ -70,6 +70,46 @@ struct ImportedModel {
     imported: anyhow::Result<crate::render::Imported>,
 }
 
+/// How a picture file is to be made ready, as a worker needs to know it.
+struct Processing {
+    compress: bool,
+    keep_pixels: bool,
+    cache: Option<PathBuf>,
+    limit: u64,
+}
+
+impl Processing {
+    /// The picture in a file's bytes: straight from the cache if these bytes were processed
+    /// before, else decoded, and compressed and kept if that is wanted.
+    fn image(&self, bytes: &[u8], srgb: bool) -> anyhow::Result<Image> {
+        if !self.compress {
+            return Image::from_bytes(bytes, srgb);
+        }
+        let key = crate::asset_cache::key(bytes, if srgb { "bc7-srgb" } else { "bc7-linear" });
+        let cached = self.cache.as_ref().and_then(|dir| crate::asset_cache::read(dir, &key));
+        if let (Some(processed), false) = (&cached, self.keep_pixels) {
+            return Ok(Image::from_processed(processed.clone()));
+        }
+        let mut image = Image::from_bytes(bytes, srgb)?;
+        let Some(processed) = cached.or_else(|| {
+            let processed = image.process()?;
+            if let Some(dir) = &self.cache {
+                crate::asset_cache::write(dir, &key, &processed);
+                crate::asset_cache::prune(dir, self.limit);
+            }
+            Some(processed)
+        }) else {
+            // A size blocks can't hold: it stays as plain pixels.
+            return Ok(image);
+        };
+        if !self.keep_pixels {
+            image.data = Vec::new();
+        }
+        image.processed = Some(Arc::new(processed));
+        Ok(image)
+    }
+}
+
 struct DecodedImage {
     id: u32,
     path: PathBuf,
@@ -114,6 +154,16 @@ pub struct AssetServer {
     /// What each asset needs, by name: see [`AssetServer::depends_on`].
     needs: HashMap<String, BTreeSet<String>>,
     last_check: Option<Instant>,
+    /// Whether pictures are compressed into blocks for the graphics card as they are loaded
+    /// (see [`asset_cache`](crate::asset_cache)). The renderer turns this on where the card
+    /// can hold them; it is off where there is no renderer.
+    pub compress: bool,
+    /// Whether a compressed picture also keeps its pixels, for a game that reads them.
+    pub keep_pixels: bool,
+    /// Whether what is processed is kept on disk, in `.mira/cache` under the root.
+    pub cache: bool,
+    /// The most the cache may hold, in bytes, before what was used longest ago goes.
+    pub cache_limit: u64,
     /// How often image files are checked for changes.
     pub check_interval: Duration,
     /// Whether changed image files are reloaded. On in development builds.
@@ -181,6 +231,10 @@ impl AssetServer {
             images_failed: HashSet::new(),
             needs: HashMap::new(),
             last_check: None,
+            compress: false,
+            keep_pixels: false,
+            cache: true,
+            cache_limit: 2 << 30,
             check_interval: Duration::from_millis(250),
             hot_reload: cfg!(debug_assertions),
         }
@@ -502,16 +556,27 @@ impl AssetServer {
         self.loading += 1;
         self.images_loading.insert(id);
         self.images_failed.remove(&id);
+        let how = Processing {
+            compress: self.compress,
+            keep_pixels: self.keep_pixels,
+            cache: self.cache.then(|| self.cache_dir()),
+            limit: self.cache_limit,
+        };
         let pool = self.pool.get_or_insert_with(|| TaskPool::new(2));
         pool.spawn(&self.decoded.sender, move || {
             let image = std::fs::read(&path)
                 .with_context(|| format!("can't read {}", path.display()))
                 .and_then(|bytes| {
-                    Image::from_bytes(&bytes, srgb)
+                    how.image(&bytes, srgb)
                         .with_context(|| format!("can't decode {}", path.display()))
                 });
             DecodedImage { id, path, image }
         });
+    }
+
+    /// Where processed assets are kept.
+    pub fn cache_dir(&self) -> PathBuf {
+        self.root.join(".mira").join("cache")
     }
 
     /// How many assets are still being loaded.
@@ -1341,6 +1406,51 @@ mod tests {
             let animator = again.world.get::<Animator>(figure).unwrap();
             assert_eq!(animator.clip(&other), animator.clip(animator.playing()));
         }
+    }
+
+    #[test]
+    fn pictures_are_compressed_once_and_read_from_the_cache_after() {
+        let dir = TempDir::new("compress");
+        let save = |name: &str, side: u32, shade: u8| {
+            image::RgbaImage::from_fn(side, side, |x, y| image::Rgba([(x * 30) as u8, (y * 30) as u8, shade, 255]))
+                .save(dir.0.join(name))
+                .unwrap();
+        };
+        save("wall.png", 8, 40);
+        save("odd.png", 6, 40);
+        let load = |keep_pixels: bool, name: &str| {
+            let mut server = AssetServer::new(&dir.0);
+            server.compress = true;
+            server.keep_pixels = keep_pixels;
+            let mut images = Assets::<Image>::default();
+            let handle = server.load_image(&mut images, name);
+            server.wait(&mut images);
+            images.get(handle).cloned().unwrap()
+        };
+        let cached = || std::fs::read_dir(dir.0.join(".mira/cache")).map_or(0, |files| files.count());
+
+        // Compressed, its pixels let go, and kept on disk under its bytes' hash.
+        let wall = load(false, "wall.png");
+        let processed = wall.processed.clone().expect("it was compressed");
+        assert_eq!(processed.format, wgpu::TextureFormat::Bc7RgbaUnormSrgb);
+        assert_eq!((wall.width, wall.height, wall.has_pixels()), (8, 8, false));
+        assert_eq!(cached(), 1);
+        // The same bytes again come from the cache, the same; with the pixels if wanted.
+        let again = load(false, "wall.png");
+        assert_eq!(again.processed.as_deref(), Some(&*processed));
+        let kept = load(true, "wall.png");
+        assert!(kept.has_pixels() && kept.processed.is_some());
+        assert_eq!(cached(), 1);
+        // As data and not colour it is another thing, and so is the file once it changes.
+        let linear = load(false, "wall.png?linear");
+        assert_eq!(linear.processed.unwrap().format, wgpu::TextureFormat::Bc7RgbaUnorm);
+        save("wall.png", 8, 200);
+        assert_ne!(load(false, "wall.png").processed.as_deref(), Some(&*processed));
+        assert_eq!(cached(), 3);
+        // A size that blocks can't hold stays as plain pixels.
+        let odd = load(false, "odd.png");
+        assert!(odd.processed.is_none() && odd.has_pixels());
+        assert_eq!(cached(), 3);
     }
 
     #[test]

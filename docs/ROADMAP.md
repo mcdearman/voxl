@@ -215,8 +215,9 @@ The layer Unreal's editor, saves, networking and Blueprints all stand on.
       parts appear under the entity when read and again when the file is saved
 - [x] Dependencies between assets: what each needs is kept by name (a model and its parts,
       a prefab and what it uses), with load states, `is_ready`, and unloading that follows it
-- [ ] Asset processing: textures to BC7/ASTC with mips, meshes to a binary format, cached by
-      content hash
+- [x] Asset processing, first part: picture files to BC7 with their smaller levels, on
+      workers, cached on disk by content hash, with a limit on the cache
+- [ ] The rest of it: the textures inside model files, ASTC, meshes to a binary format
 - [x] Skins and animations from glTF, in code (`GltfScene::spawn_animated`) and as data (a
       `Model` whose file has a skeleton gets an `Animator` and skinned parts)
 

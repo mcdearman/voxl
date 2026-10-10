@@ -2,6 +2,7 @@
 extern crate self as mira;
 
 pub mod app;
+pub mod asset_cache;
 pub mod asset_server;
 pub mod assets;
 /// The entity component system, which is a crate of its own: `mira_ecs`.

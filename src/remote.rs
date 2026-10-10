@@ -250,6 +250,23 @@ fn entity(app: &App, request: &Value) -> Result<Entity, String> {
     }
 }
 
+/// Loads the assets a value names and puts their handles where the names were, as loading
+/// a scene does: so a texture or a mesh can be given by name from outside.
+fn load_assets(world: &mut crate::ecs::World, value: &Value) -> Result<Value, String> {
+    let mut value = value.clone();
+    let mut failed = None;
+    value.for_each_asset(&mut |asset| {
+        let Value::Asset { kind, name } = &*asset else {
+            return;
+        };
+        match crate::asset_server::AssetServer::resolve(world, kind, name) {
+            Ok(id) => *asset = Value::Int(id as i64),
+            Err(err) => failed = Some(format!("the asset `{name}`: {err:#}")),
+        }
+    });
+    failed.map_or(Ok(value), Err)
+}
+
 fn map(fields: impl IntoIterator<Item = (&'static str, Value)>) -> Value {
     Value::Map(
         fields
@@ -1026,12 +1043,13 @@ fn handle(app: &mut App, request: &Value) -> Answer {
                 let component = registry
                     .get(name)
                     .ok_or_else(|| format!("there is no component `{name}`"))?;
+                let new = load_assets(world, new)?;
                 let value = match path {
-                    None | Some("") => new.clone(),
+                    None | Some("") => new,
                     Some(path) => {
                         let mut value = (component.get)(world, entity)
                             .ok_or_else(|| format!("the entity has no `{name}`"))?;
-                        if !value.set_path(path, new.clone()) {
+                        if !value.set_path(path, new) {
                             return Err(format!("`{name}` has no `{path}`"));
                         }
                         value
@@ -1065,7 +1083,9 @@ fn handle(app: &mut App, request: &Value) -> Answer {
                 let entity = world.spawn_empty();
                 for (name, value) in components {
                     let component = registry.get(name).expect("checked above");
-                    if let Err(err) = (component.insert)(world, entity, value) {
+                    let inserted = load_assets(world, value)
+                        .and_then(|value| (component.insert)(world, entity, &value).map_err(|err| err.to_string()));
+                    if let Err(err) = inserted {
                         world.despawn(entity);
                         return Err(format!("`{name}`: {err}"));
                     }

@@ -152,7 +152,7 @@ answered at the start of a frame, whether or not the game is paused.
 | `describe` | `limit` (40) | the scene in words: the camera, then each placed entity with where it is and where on screen it shows |
 | `entities` | `with` (a component), `limit` (200) | entities and what each has |
 | `get` | `entity`, `component` (all) | the component's value, or every component's |
-| `set` | `entity`, `component`, `value`, `path` (the whole component) | |
+| `set` | `entity`, `component`, `value`, `path` (the whole component) | an asset is given by name (`{"$asset": "image", "name": "textures/bricks.png"}`) and loaded |
 | `remove` | `entity`, `component` | |
 | `spawn` | `components`: a map of values by name | the new entity |
 | `despawn` | `entity` | how many went: it and everything below it |
