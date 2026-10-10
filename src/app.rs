@@ -36,6 +36,17 @@ pub enum Stage {
     Render,
 }
 
+impl Stage {
+    /// Every stage of a frame, in the order they run (the fixed three zero or more times).
+    pub fn of_a_frame() -> Vec<Stage> {
+        EARLY_STAGES
+            .into_iter()
+            .chain(FIXED_STAGES)
+            .chain(LATE_STAGES)
+            .collect()
+    }
+}
+
 const EARLY_STAGES: [Stage; 2] = [Stage::First, Stage::PreUpdate];
 const FIXED_STAGES: [Stage; 3] = [Stage::FixedFirst, Stage::FixedUpdate, Stage::FixedLast];
 const LATE_STAGES: [Stage; 6] = [
@@ -330,10 +341,7 @@ pub struct DefaultPlugins;
 
 impl Plugin for DefaultPlugins {
     fn build(&self, app: &mut App) {
-        let _ = env_logger::Builder::from_env(env_logger::Env::default())
-            .filter_level(log::LevelFilter::Info)
-            .parse_default_env()
-            .try_init();
+        crate::logging::start();
         app.add_plugins(TimePlugin)
             .add_plugins(WindowPlugin)
             .add_plugins(InputPlugin)

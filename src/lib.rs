@@ -10,6 +10,7 @@ pub use mira_ecs as ecs;
 pub mod editor;
 pub mod input;
 pub mod live;
+pub mod logging;
 pub mod mcp;
 pub mod physics;
 pub mod plugin;
