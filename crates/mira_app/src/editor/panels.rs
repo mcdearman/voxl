@@ -66,6 +66,88 @@ fn pair(name: impl Into<String>, said: impl Into<String>) -> Element<Message> {
         .into()
 }
 
+/// A file of the project that the engine can use.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct AssetFile {
+    /// Its path from the project's folder, with `/` between the parts: the name the asset
+    /// server knows it by.
+    pub name: String,
+    pub kind: AssetKind,
+    /// How big it is, in bytes.
+    pub size: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) enum AssetKind {
+    Model,
+    Image,
+    Scene,
+}
+
+impl AssetKind {
+    fn of(path: &std::path::Path) -> Option<Self> {
+        let ending = path.extension()?.to_str()?.to_lowercase();
+        Some(match ending.as_str() {
+            "glb" | "gltf" => Self::Model,
+            "png" | "jpg" | "jpeg" | "hdr" => Self::Image,
+            "json" => Self::Scene,
+            _ => return None,
+        })
+    }
+}
+
+/// The files under a folder that the engine can use, by name. Folders that hold what is
+/// built or kept by tools (`target`, anything beginning with a dot) are not looked into,
+/// nor is anything more than eight folders down.
+pub(super) fn project_files(root: &std::path::Path) -> Vec<AssetFile> {
+    fn look(
+        root: &std::path::Path,
+        folder: &std::path::Path,
+        depth: usize,
+        found: &mut Vec<AssetFile>,
+    ) {
+        let Ok(entries) = std::fs::read_dir(folder) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let called = entry.file_name().to_string_lossy().into_owned();
+            if called.starts_with('.') || called == "target" || called == "node_modules" {
+                continue;
+            }
+            if path.is_dir() {
+                if depth < 8 {
+                    look(root, &path, depth + 1, found);
+                }
+                continue;
+            }
+            let (Some(kind), Ok(within)) = (AssetKind::of(&path), path.strip_prefix(root)) else {
+                continue;
+            };
+            let name = within
+                .components()
+                .map(|part| part.as_os_str().to_string_lossy())
+                .collect::<Vec<_>>()
+                .join("/");
+            let size = entry.metadata().map_or(0, |about| about.len());
+            found.push(AssetFile { name, kind, size });
+        }
+    }
+    let mut found = Vec::new();
+    look(root, root, 0, &mut found);
+    found.sort_by(|a, b| a.name.cmp(&b.name));
+    found
+}
+
+/// A size in bytes, as people say it.
+fn size_said(bytes: u64) -> String {
+    match bytes {
+        0..=1023 => format!("{bytes} B"),
+        1024..=1_048_575 => format!("{:.0} KB", bytes as f64 / 1024.0),
+        _ => format!("{:.1} MB", bytes as f64 / 1_048_576.0),
+    }
+}
+
 /// A console command as it is typed, `pause` or `entities with=mira.Camera`, as the request
 /// the debug connection takes. Values are read as JSON where they are JSON (numbers, true,
 /// lists) and as words otherwise.
@@ -157,7 +239,11 @@ impl Editor {
                 row()
                     .spacing(6.0)
                     .push(button("Duplicate").on_press_maybe(chosen.then_some(Message::Duplicate)))
-                    .push(button("Delete").on_press_maybe(chosen.then_some(Message::Delete))),
+                    .push(button("Delete").on_press_maybe(chosen.then_some(Message::Delete)))
+                    .push(
+                        button("Save as prefab")
+                            .on_press_maybe(chosen.then_some(Message::SavePrefab)),
+                    ),
             )
             .push(
                 text("New things go on the ground in the middle of the picture. Delete or Backspace takes the chosen one away; Cmd or Ctrl+D copies it.")
@@ -165,6 +251,96 @@ impl Editor {
                     .tone(Tone::Faint),
             );
         page(rows)
+    }
+
+    /// The project's models, pictures and scenes, by folder, to put in the scene.
+    pub(super) fn assets_panel(&self) -> Element<Message> {
+        let search = row()
+            .spacing(6.0)
+            .align(Align::Center)
+            .push(
+                text_input("Show only files with…", self.asset_filter.clone())
+                    .on_input(Message::AssetFilter)
+                    .width(Length::Fill),
+            )
+            .push(button("Look again").on_press(Message::Rescan));
+        let Some(files) = &self.files else {
+            // Not looked for until asked: a project may be large.
+            return column()
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .push(
+                    container(nothing(
+                        icons::LAYERS,
+                        "The project's models, pictures and scenes. Press Look again to find them.",
+                    ))
+                    .height(Length::Fill),
+                )
+                .push(container(search).padding([8.0, 6.0]))
+                .into();
+        };
+        let wanted = self.asset_filter.to_lowercase();
+        let mut rows = column().spacing(1.0).width(Length::Fill);
+        let (mut folder_shown, mut shown) = (None, 0);
+        for file in files {
+            if !wanted.is_empty() && !file.name.to_lowercase().contains(&wanted) {
+                continue;
+            }
+            // No more than can be read through; the box narrows it.
+            if shown == 300 {
+                rows = rows.push(
+                    text("More than this: type something below to narrow it.")
+                        .size(12.0)
+                        .tone(Tone::Faint),
+                );
+                break;
+            }
+            shown += 1;
+            let (folder, called) = file.name.rsplit_once('/').unwrap_or(("", &file.name));
+            if folder_shown != Some(folder) {
+                folder_shown = Some(folder);
+                let said = if folder.is_empty() { "/" } else { folder };
+                rows = rows.push(container(heading(said)).padding([0.0, 4.0]));
+            }
+            let glyph = match file.kind {
+                AssetKind::Model => icons::BOX,
+                AssetKind::Image => icons::SQUARE_DASHED,
+                AssetKind::Scene => icons::LAYERS,
+            };
+            let mut line = row()
+                .spacing(8.0)
+                .align(Align::Center)
+                .push(icon(glyph).size(14.0).tone(Tone::Muted))
+                .push(text(called).size(13.0).no_wrap())
+                .push(Space::fill_x())
+                .push(
+                    text(size_said(file.size))
+                        .mono()
+                        .size(11.5)
+                        .tone(Tone::Faint),
+                );
+            // A model, or a saved scene or prefab, can be put in the scene.
+            let place = match file.kind {
+                AssetKind::Model => Some(Message::PlaceModel(file.name.clone())),
+                AssetKind::Scene => Some(Message::PlaceScene(file.name.clone())),
+                AssetKind::Image => None,
+            };
+            if let Some(place) = place {
+                line = line.push(button("Place").kind(ButtonKind::Ghost).on_press(place));
+            }
+            rows = rows.push(line);
+        }
+        let listed: Element<Message> = if shown == 0 {
+            nothing(icons::LAYERS, "No such files here.")
+        } else {
+            scrollable(container(rows).padding(8.0)).into()
+        };
+        column()
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .push(container(listed).height(Length::Fill))
+            .push(container(search).padding([8.0, 6.0]))
+            .into()
     }
 
     /// What the game and the engine have logged.

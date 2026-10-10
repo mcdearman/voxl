@@ -12,8 +12,9 @@
 use std::{sync::mpsc::Sender, time::Duration};
 
 use mira::{
+    asset_server::AssetServer,
     live::Live,
-    prelude::{Entity, Mesh3d, Parent, Transform},
+    prelude::{Entity, Mesh3d, Name, Parent, Transform},
 };
 use mira_app::editor::{
     agent::{Agent, Heard},
@@ -275,6 +276,45 @@ fn the_app_is_worked_by_clicking_on_it() {
     }
     window.app_mut().update(Message::SceneView(false));
     window.frame(TICK, 1.0);
+
+    // The project's files are found, and a model among them is put in the scene: an entity
+    // named for the file with the model's parts under it, taken back as one thing.
+    let project = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
+    window
+        .app_mut()
+        .game_mut()
+        .world
+        .resource_mut::<AssetServer>()
+        .set_root(project);
+    window.app_mut().update(Message::Rescan);
+    let entities = window.app().game().world.entity_count();
+    let hen = "res/paris/models/animals/hen_white.glb";
+    window.app_mut().update(Message::PlaceModel(hen.to_owned()));
+    window.frame(TICK, 1.0);
+    let placed = window.app().chosen().expect("the model is chosen");
+    let name = window
+        .app()
+        .game()
+        .world
+        .get::<Name>(placed)
+        .expect("named for its file");
+    assert_eq!(name.0, "hen_white");
+    assert!(
+        window.app().game().world.entity_count() > entities + 1,
+        "with its parts"
+    );
+    window.frame(TICK, 1.0);
+    if let Ok(path) = std::env::var("MIRA_EDITOR_SHOT") {
+        window.app_mut().update(Message::Panel("Assets".to_owned()));
+        window.app_mut().update(Message::Panel("Assets".to_owned()));
+        window.frame(TICK, 1.0);
+        window
+            .save_png(format!("{path}.assets.png"), 1.0)
+            .expect("the picture saved");
+    }
+    window.app_mut().update(Message::Undo);
+    window.frame(TICK, 1.0);
+    assert_eq!(window.app().game().world.entity_count(), entities);
 
     // Every other panel opens from the Window menu and draws what it has to show.
     for panel in [
