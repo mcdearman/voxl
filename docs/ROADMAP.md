@@ -238,8 +238,10 @@ and see it change in the running scene.
 - [x] The parallel executor: a pool of worker threads runs each batch, pinned systems stay on
       the main thread, commands are applied between batches in order; results identical to
       running in turn; clean under Miri with worker threads
-- [ ] Splitting one query's work across threads; relaxing "commands end a batch" where a
-      later system needn't see them; a ThreadSanitizer run in CI
+- [x] Splitting one query's work across threads: `Query::par_for_each` and
+      `par_for_each_mut`, on the systems' own pool, whose waiting threads now do queued work
+- [ ] Relaxing "commands end a batch" where a later system needn't see them; a
+      ThreadSanitizer run in CI
 - [x] A faster walk through the storage there is: a query guesses that an entity sits at the
       same place in each component it reads as in the one it walks, which is so for
       components spawned together. Measured with `examples/query_bench` (200,000 entities,

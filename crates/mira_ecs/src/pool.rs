@@ -3,7 +3,7 @@
 use std::{
     panic::{catch_unwind, resume_unwind, AssertUnwindSafe},
     sync::{
-        mpsc::{channel, Sender},
+        mpsc::{channel, Receiver, Sender},
         Arc, Condvar, Mutex, OnceLock,
     },
     thread,
@@ -19,10 +19,16 @@ struct Latch {
 }
 
 impl Latch {
-    fn wait(&self) {
-        let mut running = self.running.lock().unwrap_or_else(|p| p.into_inner());
-        while *running > 0 {
-            running = self.done.wait(running).unwrap_or_else(|p| p.into_inner());
+    fn finished(&self) -> bool {
+        *self.running.lock().unwrap_or_else(|p| p.into_inner()) == 0
+    }
+
+    /// Waits a moment for the count to reach none, or for the time to pass.
+    fn wait_a_moment(&self) {
+        let running = self.running.lock().unwrap_or_else(|p| p.into_inner());
+        if *running > 0 {
+            let moment = std::time::Duration::from_micros(200);
+            drop(self.done.wait_timeout(running, moment));
         }
     }
 }
@@ -30,6 +36,8 @@ impl Latch {
 /// Worker threads that live as long as the program.
 pub struct Pool {
     jobs: Mutex<Sender<Job>>,
+    /// The jobs not yet taken up: by a worker, or by a thread waiting for jobs of its own.
+    queue: Arc<Mutex<Receiver<Job>>>,
     workers: usize,
 }
 
@@ -38,7 +46,7 @@ impl Pool {
         let (jobs, queue) = channel::<Job>();
         let queue = Arc::new(Mutex::new(queue));
         for index in 0..workers {
-            let queue = queue.clone();
+            let queue = Arc::clone(&queue);
             thread::Builder::new()
                 .name(format!("mira systems {index}"))
                 .spawn(move || loop {
@@ -52,6 +60,7 @@ impl Pool {
         }
         Self {
             jobs: Mutex::new(jobs),
+            queue,
             workers,
         }
     }
@@ -81,6 +90,21 @@ impl Pool {
         self.workers
     }
 
+    /// Waits until the latch's jobs have finished, doing queued jobs meanwhile. A thread that
+    /// only slept here could wait for ever: when every worker is itself waiting, as when the
+    /// systems of a batch each share their work out, nobody would be left to do the jobs
+    /// they wait for. An idle worker holds the queue while it sleeps on it, and then the job
+    /// is that worker's to take.
+    fn wait_helping(&self, latch: &Latch) {
+        while !latch.finished() {
+            let job = self.queue.try_lock().ok().and_then(|queue| queue.try_recv().ok());
+            match job {
+                Some(job) => job(),
+                None => latch.wait_a_moment(),
+            }
+        }
+    }
+
     /// Runs `others` on the workers and `mine` on this thread, and returns when all of them
     /// have finished. The jobs may borrow from the caller's stack: nothing outlives the call.
     /// A panic in any of them is raised again here, after the rest have finished.
@@ -88,14 +112,14 @@ impl Pool {
         let latch = Arc::new(Latch::default());
         let panic: Arc<Mutex<Option<Box<dyn std::any::Any + Send>>>> = Arc::default();
         /// Waits for the workers even if this thread unwinds, since they borrow from it.
-        struct Wait<'a>(&'a Latch);
+        struct Wait<'a>(&'a Pool, &'a Latch);
         impl Drop for Wait<'_> {
             fn drop(&mut self) {
-                self.0.wait();
+                self.0.wait_helping(self.1);
             }
         }
         *latch.running.lock().unwrap_or_else(|p| p.into_inner()) = others.len();
-        let wait = Wait(&latch);
+        let wait = Wait(self, &latch);
         for job in others {
             // SAFETY: the job borrows data that lives for 'scope, and `wait` keeps this
             // function from returning (or unwinding) before the job has run to its end, so
@@ -157,6 +181,31 @@ mod tests {
         // No workers: everything waits for nothing, and nothing is lost.
         Pool::new(0).run(Vec::new(), || mine += 1);
         assert_eq!(mine, 211);
+    }
+
+    #[test]
+    fn jobs_that_share_out_work_of_their_own_do_not_wait_for_each_other_for_ever() {
+        // Two workers, and three jobs at once that each hand out more jobs and wait for them.
+        let pool = Pool::new(2);
+        let done = AtomicUsize::new(0);
+        let inner = || {
+            let others: Vec<Box<dyn FnOnce() + Send + '_>> = (0..4)
+                .map(|_| {
+                    Box::new(|| {
+                        done.fetch_add(1, Ordering::Relaxed);
+                    }) as Box<dyn FnOnce() + Send + '_>
+                })
+                .collect();
+            pool.run(others, || {
+                done.fetch_add(1, Ordering::Relaxed);
+            });
+        };
+        for _ in 0..20 {
+            let others: Vec<Box<dyn FnOnce() + Send + '_>> =
+                vec![Box::new(inner), Box::new(inner)];
+            pool.run(others, inner);
+        }
+        assert_eq!(done.load(Ordering::Relaxed), 20 * 3 * 5);
     }
 
     #[test]

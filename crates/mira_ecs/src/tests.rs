@@ -1013,3 +1013,76 @@ mod hooks {
         );
     }
 }
+
+/// One query's work shared between threads comes to what the same work in a row would.
+#[test]
+fn a_querys_work_is_shared_between_threads_and_all_of_it_is_done() {
+    use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
+    // Enough entities that the work is handed out; fewer under Miri, which is slow.
+    let count = if cfg!(miri) { 400 } else { 20_000 };
+    let mut world = World::new();
+    for i in 0..count {
+        let entity = world.spawn((Pos(i), Vel(2)));
+        if i % 3 == 0 {
+            world.insert(entity, Marker);
+        }
+    }
+    // A few without a velocity, which the query must pass over.
+    for _ in 0..10 {
+        world.spawn(Pos(-1));
+    }
+
+    fn step(mut moving: Query<(&mut Pos, &Vel)>) {
+        moving.par_for_each_mut(|(mut pos, vel)| pos.0 += vel.0);
+    }
+    run(&mut world, step);
+    let moved: Vec<i32> = world.query::<(&Pos, &Vel)>().iter().map(|(pos, _)| pos.0).collect();
+    assert_eq!(moved.len(), count as usize);
+    assert!(moved.iter().enumerate().all(|(i, pos)| *pos == i as i32 + 2));
+    assert_eq!(world.query::<&Pos>().iter().filter(|pos| pos.0 == -1).count(), 10);
+
+    // Read only, with a filter, each match met exactly once.
+    static SUM: AtomicI64 = AtomicI64::new(0);
+    static MET: AtomicUsize = AtomicUsize::new(0);
+    fn add_up(marked: Query<(Entity, &Pos), With<Marker>>) {
+        marked.par_for_each(|(_, pos)| {
+            SUM.fetch_add(pos.0 as i64, Ordering::Relaxed);
+            MET.fetch_add(1, Ordering::Relaxed);
+        });
+    }
+    run(&mut world, add_up);
+    let marked = (0..count as i64).filter(|i| i % 3 == 0);
+    assert_eq!(MET.load(Ordering::Relaxed), marked.clone().count());
+    assert_eq!(SUM.load(Ordering::Relaxed), marked.map(|i| i + 2).sum::<i64>());
+
+    // Too few to hand out: done where they stand, and still done.
+    let mut small = World::new();
+    for i in 0..5 {
+        small.spawn((Pos(i), Vel(1)));
+    }
+    run(&mut small, step);
+    assert_eq!(small.query::<&Pos>().iter().map(|pos| pos.0).sum::<i32>(), 15);
+}
+
+/// Systems that run side by side may each share out a query of their own.
+#[test]
+fn systems_running_side_by_side_each_share_out_their_own_query() {
+    let count = if cfg!(miri) { 300 } else { 5_000 };
+    let mut world = World::new();
+    for i in 0..count {
+        world.spawn((Pos(i), Vel(i)));
+    }
+    fn positions(mut all: Query<&mut Pos>) {
+        all.par_for_each_mut(|mut pos| pos.0 += 1);
+    }
+    fn velocities(mut all: Query<&mut Vel>) {
+        all.par_for_each_mut(|mut vel| vel.0 *= 2);
+    }
+    let mut schedule = Schedule::default();
+    schedule.add_systems((positions, velocities));
+    for _ in 0..3 {
+        schedule.run(&mut world);
+    }
+    let after: Vec<(i32, i32)> = world.query::<(&Pos, &Vel)>().iter().map(|(p, v)| (p.0, v.0)).collect();
+    assert!(after.iter().enumerate().all(|(i, (p, v))| *p == i as i32 + 3 && *v == i as i32 * 8));
+}

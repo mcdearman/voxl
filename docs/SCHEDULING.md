@@ -137,12 +137,29 @@ machine: eight systems over 100,000 entities each ran 5.2 times faster on a ten-
 A panic on a worker thread is caught like any other in a debug build ([LIVE.md](LIVE.md)): the
 system is suspended, the rest of its batch finishes, and the game pauses.
 
+## One system on many threads
+
+A system whose query covers many entities, each one's work independent of the rest, can
+share that work between the same threads:
+
+```rust
+fn steer(mut boids: Query<(&Transform, &mut Velocity)>, flock: Res<Flock>) {
+    boids.par_for_each_mut(|(at, mut velocity)| velocity.0 = flock.pull(at));
+}
+```
+
+`par_for_each` is the same for a query that only reads. The closure runs on several threads
+at once, so what it takes from outside must be shareable (a `Res`, an atomic, a lock), and
+the order entities are met in is not kept. Fewer than a few hundred entities are done where
+they stand: handing them out would cost more than doing them. Systems in one batch may each
+do this at the same moment; a thread waiting for its own shares does other queued work
+meanwhile.
+
 ## What isn't here yet
 
 - Batches are made in the order systems are written, so two systems that could share a
   batch but have a clashing one between them don't. Queued commands end a batch; there is no
   way yet to say that a later system needn't see them.
-- Work inside one system (a query over a million entities) is not split across threads.
 - Hooks are for components with a Rust type; a plugin can't yet hook its own.
 - A condition on a tuple is asked once per system, not once for the group.
 - Plugins can order their systems ([PLUGINS.md](PLUGINS.md#order)) but can't yet give them
