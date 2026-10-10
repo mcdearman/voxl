@@ -103,6 +103,10 @@ pub enum Message {
     Place(Placed),
     /// A model file is put in the scene, by the name the asset server knows it by.
     PlaceModel(String),
+    /// A program is run for a panel (the panel's name, and which of its programs), its
+    /// output shown there as it comes; or the one running for that panel is stopped.
+    RunFor(String, usize),
+    StopFor(String),
     /// A saved scene or prefab is put in the scene, added to what is there.
     PlaceScene(String),
     /// The chosen entity and everything under it is saved as a prefab, in the project's
@@ -252,11 +256,15 @@ const STATISTICS: &str = "Statistics";
 const GRAPH: &str = "Signal graph";
 const PLACE: &str = "Place";
 const ASSETS: &str = "Assets";
+const CHANGES: &str = "Changes";
+const TESTS: &str = "Tests";
+const BUILD: &str = "Build";
+const REFERENCES: &str = "References";
 
 /// Every panel there is, in the order the Window menu lists them.
-const PANELS: [&str; 18] = [
+const PANELS: [&str; 22] = [
     GAME, ENTITIES, PLACE, ASSETS, INSPECTOR, WORLD, SIGNALS, GRAPH, AGENT, LOG, CONSOLE, PROFILER,
-    SYSTEMS, HISTORY, TIME, FAILURES, PLUGINS, STATISTICS,
+    SYSTEMS, HISTORY, TIME, FAILURES, PLUGINS, STATISTICS, REFERENCES, CHANGES, TESTS, BUILD,
 ];
 
 /// Where the arrangement of the panels is kept, in the folder the app is run from.
@@ -406,6 +414,9 @@ pub struct Editor {
     naming: Option<(Entity, String)>,
     /// The game's rules as a circuit, as `mira_ui` draws them inside a game.
     graph: mira_ui::signal_graph::SignalGraph,
+    /// Programs run for panels (git, cargo), by panel, and where what they say comes in.
+    runs: Vec<(String, panels::Run)>,
+    said_by_runs: (Sender<panels::Ran>, Receiver<panels::Ran>),
     /// The project's files that the engine can use, found by looking through its folder;
     /// nothing until they are first asked for. And what their names must have in them to be
     /// listed.
@@ -465,6 +476,8 @@ impl Editor {
             told: String::new(),
             naming: None,
             graph: Default::default(),
+            runs: Vec::new(),
+            said_by_runs: channel(),
             files: None,
             asset_filter: String::new(),
             command: String::new(),
@@ -1564,6 +1577,10 @@ impl Editor {
             }
             PLACE => self.place_panel(),
             ASSETS => self.assets_panel(),
+            CHANGES => self.run_panel(CHANGES),
+            TESTS => self.run_panel(TESTS),
+            BUILD => self.run_panel(BUILD),
+            REFERENCES => self.references_panel(),
             LOG => self.log_panel(),
             CONSOLE => self.console_panel(),
             PROFILER => self.profiler_panel(),
@@ -2132,6 +2149,7 @@ impl App for Editor {
         }
         self.game.update();
         let mut changed = self.listen();
+        changed |= self.hear_runs();
         let frame = frame_texture(&self.game.world);
         if frame.as_ref() != self.shown.as_ref().map(|(texture, _)| texture) {
             self.shown = frame.map(|texture| {
@@ -2253,6 +2271,8 @@ impl App for Editor {
             Message::SceneView(own) => self.look_through(own),
             Message::Place(what) => self.put_in(what),
             Message::PlaceModel(name) => self.put_in_model(&name),
+            Message::RunFor(panel, which) => self.run_for(&panel, which),
+            Message::StopFor(panel) => self.stop_for(&panel),
             Message::PlaceScene(name) => self.put_in_scene(&name),
             Message::SavePrefab => self.save_prefab(),
             Message::Rescan => self.files = Some(panels::project_files(&self.assets_root())),
@@ -3702,6 +3722,66 @@ mod tests {
         assert!(editor.told.contains("could not be read"), "{}", editor.told);
         assert_eq!(editor.game().world.entity_count(), 2);
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_panel_runs_a_program_and_shows_what_it_says() {
+        // git's own log of this repository: something short that is always there.
+        let mut editor = Editor::new(mira::app::App::new());
+        assert_eq!(panels::programs(CHANGES).len(), 3);
+        assert!(panels::programs("Nothing").is_empty());
+        editor.update(Message::RunFor(CHANGES.into(), 2));
+        let started = Instant::now();
+        loop {
+            editor.hear_runs();
+            let run = &editor.runs[0].1;
+            if run.ended.is_some() {
+                break;
+            }
+            assert!(
+                started.elapsed() < Duration::from_secs(20),
+                "git did not finish"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let (panel, run) = &editor.runs[0];
+        assert_eq!(
+            (panel.as_str(), run.which, run.ended),
+            (CHANGES, 2, Some(true))
+        );
+        assert!(!run.lines.is_empty() && run.running.is_none());
+        // Run again, it starts afresh; one that isn't there is not run; stopping one that
+        // has ended does nothing.
+        editor.update(Message::RunFor(CHANGES.into(), 9));
+        editor.update(Message::StopFor(CHANGES.into()));
+        editor.update(Message::StopFor(TESTS.into()));
+        assert_eq!(editor.runs.len(), 1);
+        assert_eq!(editor.runs[0].1.ended, Some(true));
+
+        // What a scene uses by name is found wherever in a component it is.
+        let value = Value::Map(vec![
+            (
+                "mesh".into(),
+                Value::Asset {
+                    kind: "mesh".into(),
+                    name: "hen.glb#mesh0".into(),
+                },
+            ),
+            (
+                "textures".into(),
+                Value::List(vec![
+                    Value::Null,
+                    Value::Asset {
+                        kind: "image".into(),
+                        name: "wall.png".into(),
+                    },
+                ]),
+            ),
+            ("size".into(), Value::Float(1.0)),
+        ]);
+        let mut named = Vec::new();
+        panels::assets_in(&value, &mut named);
+        assert_eq!(named, ["mesh  hen.glb#mesh0", "image  wall.png"]);
     }
 
     #[test]

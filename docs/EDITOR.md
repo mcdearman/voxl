@@ -70,6 +70,10 @@ agent's group, and can be dragged anywhere from there.
 | Failures | Systems that panicked: what they said, where, the stack; a button to forget them and go on |
 | Plugins | The plugins the game is made of, and a button to reload what has changed |
 | Statistics | How many entities, signals, systems and frames; how many entities have each component |
+| References | Every model part, picture and shape the scene uses, by the name the asset server knows it by, with the entities that use it (click one to choose it) |
+| Changes | What git says of the project: what has changed, by how much, and the last commits. It only looks; nothing is committed from here |
+| Tests | Runs the project's tests in its folder (unit tests, the pictures of scenes, or everything) and shows what they say as they say it, failures in red |
+| Build | Checks or builds the project with cargo, for trying or for shipping, the same way |
 
 ### Working in the picture
 
@@ -226,10 +230,10 @@ having each. "Ready" means the engine already holds the data and only the panel 
 | Game UI designer | UMG, UI Builder | A visual layout for `mira_ui` interfaces |
 | Physics debugger | Physics Debugger, Collision view | Drawing colliders, contacts and joints over the scene |
 | Lighting | Lightmass, Light Mixer | Baked or dynamic global illumination (Phase 6) |
-| Reference viewer, size map | Reference Viewer, Size Map | Dependencies between assets |
-| Build | Project Launcher, Build Settings | Packaging a game for a platform |
-| Source control | Revision Control | Git status and diffs for scenes and assets |
-| Tests | Session Frontend, Test Runner | Running the game's tests and the frame comparisons from the app |
+| Size map (references are built) | Size Map | How much each asset weighs, and what depends on what |
+| Packaging (building is built) | Project Launcher, Build Settings | Packaging a game for a platform |
+| Source control (looking is built) | Revision Control | Diffs of scenes read as changes to entities; committing from the app |
+| Test results as a list (running them is built) | Session Frontend, Test Runner | Each test as a row to run alone; frame differences shown side by side |
 
 ## What Neo is to provide
 
