@@ -212,6 +212,15 @@ fn the_app_is_worked_by_clicking_on_it() {
     window.frame(TICK, 1.0);
 
     if let Ok(path) = std::env::var("MIRA_EDITOR_SHOT") {
+        window.save_png(&path, 1.0).expect("the picture saved");
+    }
+
+    // The bar's Settings button opens the panel every Neo app has, over the rest.
+    window.click(Point::new(554.0, 73.0));
+    window.frame(TICK, 1.0);
+    assert!(window.app().settings_open());
+    if let Ok(path) = std::env::var("MIRA_EDITOR_SHOT") {
+        let path = format!("{path}.settings.png");
         window.save_png(path, 1.0).expect("the picture saved");
     }
 }

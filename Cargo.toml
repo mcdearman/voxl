@@ -7,7 +7,7 @@ edition = "2021"
 [features]
 default = ["editor"]
 # The engine app: the game in a Neo window, with its panels. `mira::editor`.
-editor = ["dep:neo"]
+editor = ["dep:neo", "dep:neo-desktop"]
 
 [[bin]]
 name = "mira"
@@ -28,6 +28,7 @@ mira_ecs = { path = "crates/mira_ecs" }
 # The engine app is built with Neo. A game that uses mira as a library and wants none of the
 # app turns the `editor` feature off.
 neo = { git = "https://github.com/mcdearman/neo", rev = "a0db82404e8e48410a7c99478da6f7f70a27923f", optional = true }
+neo-desktop = { git = "https://github.com/mcdearman/neo", rev = "a0db82404e8e48410a7c99478da6f7f70a27923f", optional = true }
 libloading = "0.8"
 anyhow = "1"
 bytemuck = { version = "1.13", features = ["derive"] }

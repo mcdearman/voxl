@@ -96,7 +96,12 @@ fn starter_scene(
     ));
     let tall = Transform::from_xyz(0.0, 1.0, -1.5).with_scale(Vec3::new(1.0, 2.0, 1.0));
     let tall = commands
-        .spawn((tall, Mesh3d(cube), colour(0.9, 0.75, 0.3)))
+        .spawn((
+            tall,
+            Mesh3d(cube),
+            colour(0.9, 0.75, 0.3),
+            Name::new("Pillar"),
+        ))
         .id();
     // One thing on top of another, to show a parent and its child.
     commands.spawn((

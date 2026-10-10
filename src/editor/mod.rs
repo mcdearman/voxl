@@ -40,6 +40,7 @@ use crate::{
 };
 use neo::prelude::*;
 use neo::{wgpu, Color, Graphics, Image, Key, KeyEvent, Point, PointerButton, Rect};
+use neo_desktop::{AppPrefs, Desktop, DesktopMsg};
 
 /// What happens in the window.
 #[derive(Clone, Debug)]
@@ -82,6 +83,9 @@ pub enum Message {
     Save,
     /// An entity's name is being typed over in the tree.
     Naming(TreeEdit<Entity>),
+    /// The settings every Neo app has: the panel opened or shut, the window's glass turned
+    /// on or off, the desktop's appearance looked at again.
+    Desktop(DesktopMsg),
 }
 
 /// One thing changed in the game from the app: a component of an entity as it was and as
@@ -232,6 +236,9 @@ pub struct Editor {
     told: String,
     /// The entity whose name is being typed in the tree, and what has been typed.
     naming: Option<(Entity, String)>,
+    /// How the app looks: Neo's appearance as the person has set it for their desktop, and
+    /// this app's own say in whether its window is glass.
+    desktop: Desktop,
     agent: Box<dyn Agent>,
     said: Vec<Entry<String, Message>>,
     writing: Document,
@@ -271,6 +278,8 @@ impl Editor {
             scene: "scene.json".into(),
             told: String::new(),
             naming: None,
+            // By the app's name, not the program's, so that an example of it is the same app.
+            desktop: Desktop::with_prefs_file(AppPrefs::path_for("mira")),
             agent: Box::new(NoAgent),
             said: Vec::new(),
             writing: Document::new(""),
@@ -343,6 +352,11 @@ impl Editor {
         }
         self.joins = self.scrubbing;
         self.undone.clear();
+    }
+
+    /// Whether the settings panel is showing.
+    pub fn settings_open(&self) -> bool {
+        self.desktop.settings_open
     }
 
     /// Whether there is a change to take back, and one to make again.
@@ -917,6 +931,25 @@ pub fn key_code(key: &KeyEvent) -> Option<KeyCode> {
 impl App for Editor {
     type Message = Message;
 
+    /// Neo's look, as the person has set it for their desktop (light or dark, accent,
+    /// corners, how see-through and how blurred), with the window glass unless it was
+    /// turned off for this app in its settings. Glass is the app's default whatever the
+    /// desktop's own windows are.
+    fn theme(&self, system: Scheme) -> Theme {
+        let mut theme = self.desktop.theme(system);
+        theme.glass.enabled = self.desktop.prefs.glass;
+        theme
+    }
+
+    fn app_menu(&self) -> Vec<MenuEntry<Message>> {
+        self.desktop.app_menu(Message::Desktop)
+    }
+
+    fn subscriptions(&self) -> Vec<Subscription<Message>> {
+        // Follows the desktop's appearance when it is changed elsewhere.
+        vec![Desktop::subscription(Message::Desktop(DesktopMsg::Poll))]
+    }
+
     fn on_key(&self, key: &KeyEvent) -> Option<Message> {
         // Command on a Mac, Control elsewhere; with Shift, Z goes the other way.
         let held = key.modifiers.logo || key.modifiers.ctrl;
@@ -1051,6 +1084,9 @@ impl App for Editor {
                     self.change(entity, &component, path, Some(whole));
                 }
             }
+            Message::Desktop(message) => {
+                self.desktop.update(message);
+            }
             Message::Scrub(began) => {
                 self.scrubbing = began;
                 self.joins = false;
@@ -1156,6 +1192,7 @@ impl App for Editor {
             .push(button("Undo").on_press_maybe(self.can_undo().0.then_some(Message::Undo)))
             .push(button("Redo").on_press_maybe(self.can_undo().1.then_some(Message::Redo)))
             .push(button("Save").on_press(Message::Save))
+            .push(button("Settings").on_press(Message::Desktop(DesktopMsg::OpenSettings)))
             .push(text(format!(
                 "frame {frame}{}{}{}",
                 if paused { ", paused" } else { "" },
@@ -1168,12 +1205,14 @@ impl App for Editor {
             |panel| self.panel(panel),
             Message::Arranged,
         );
-        column()
+        let whole = column()
             .width(Length::Fill)
             .height(Length::Fill)
             .push(container(bar).padding(8.0))
-            .push(panels)
-            .into()
+            .push(panels);
+        // The settings panel, over everything while it is open.
+        self.desktop
+            .with_settings(whole, "mira Settings", Message::Desktop, vec![])
     }
 }
 
@@ -1694,6 +1733,28 @@ mod tests {
         let mut nowhere = Editor::new(build()).with_scene("/no/such/folder/scene.json");
         nowhere.update(Message::Save);
         assert!(nowhere.told.starts_with("not saved"), "{}", nowhere.told);
+    }
+
+    #[test]
+    fn the_window_is_glass_unless_turned_off_for_the_app() {
+        let mut editor = Editor::new(crate::app::App::new());
+        // Whatever the desktop's own windows are, and whatever was last chosen here.
+        editor.desktop.appearance.glass.enabled = false;
+        editor.desktop.prefs.glass = true;
+        let theme = editor.theme(Scheme::Dark);
+        assert!(theme.glass.enabled, "glass by default");
+        assert_eq!(
+            theme.scheme,
+            editor.desktop.appearance.theme(Scheme::Dark).scheme
+        );
+        editor.desktop.prefs.glass = false;
+        assert!(!editor.theme(Scheme::Dark).glass.enabled);
+        // The settings panel opens from the bar and from the app's menu, and shuts.
+        assert!(!editor.settings_open() && editor.app_menu().len() == 1);
+        editor.update(Message::Desktop(DesktopMsg::OpenSettings));
+        assert!(editor.settings_open());
+        editor.update(Message::Desktop(DesktopMsg::CloseSettings));
+        assert!(!editor.settings_open());
     }
 
     #[test]
