@@ -101,6 +101,17 @@ pub enum Message {
     SceneView(bool),
     /// Something new is put in the scene.
     Place(Placed),
+    /// A model file is put in the scene, by the name the asset server knows it by.
+    PlaceModel(String),
+    /// A saved scene or prefab is put in the scene, added to what is there.
+    PlaceScene(String),
+    /// The chosen entity and everything under it is saved as a prefab, in the project's
+    /// `prefabs` folder, under its name.
+    SavePrefab,
+    /// The project's files are looked through again; only those with this in their names
+    /// are listed.
+    Rescan,
+    AssetFilter(String),
     /// The chosen entity, and everything under it, is taken out of the scene; or a copy of
     /// it is made beside it.
     Delete,
@@ -240,10 +251,11 @@ const PLUGINS: &str = "Plugins";
 const STATISTICS: &str = "Statistics";
 const GRAPH: &str = "Signal graph";
 const PLACE: &str = "Place";
+const ASSETS: &str = "Assets";
 
 /// Every panel there is, in the order the Window menu lists them.
-const PANELS: [&str; 17] = [
-    GAME, ENTITIES, PLACE, INSPECTOR, WORLD, SIGNALS, GRAPH, AGENT, LOG, CONSOLE, PROFILER,
+const PANELS: [&str; 18] = [
+    GAME, ENTITIES, PLACE, ASSETS, INSPECTOR, WORLD, SIGNALS, GRAPH, AGENT, LOG, CONSOLE, PROFILER,
     SYSTEMS, HISTORY, TIME, FAILURES, PLUGINS, STATISTICS,
 ];
 
@@ -255,7 +267,11 @@ const LAYOUT_FILE: &str = ".mira/editor.layout";
 /// signals behind them) over what the chosen one is made of.
 fn first_layout() -> Dock {
     Dock::beside(
-        Dock::above(Dock::tabs([GAME]), 0.66, Dock::tabs([AGENT, LOG, CONSOLE])),
+        Dock::above(
+            Dock::tabs([GAME]),
+            0.66,
+            Dock::tabs([AGENT, ASSETS, LOG, CONSOLE]),
+        ),
         0.7,
         Dock::above(
             Dock::tabs([ENTITIES, PLACE, SIGNALS]),
@@ -390,6 +406,11 @@ pub struct Editor {
     naming: Option<(Entity, String)>,
     /// The game's rules as a circuit, as `mira_ui` draws them inside a game.
     graph: mira_ui::signal_graph::SignalGraph,
+    /// The project's files that the engine can use, found by looking through its folder;
+    /// nothing until they are first asked for. And what their names must have in them to be
+    /// listed.
+    files: Option<Vec<panels::AssetFile>>,
+    asset_filter: String,
     /// What is typed in the console, and what was asked there with what came back.
     command: String,
     asked: Vec<(String, String)>,
@@ -444,6 +465,8 @@ impl Editor {
             told: String::new(),
             naming: None,
             graph: Default::default(),
+            files: None,
+            asset_filter: String::new(),
             command: String::new(),
             asked: Vec::new(),
             log_filter: String::new(),
@@ -709,6 +732,153 @@ impl Editor {
         self.chosen = Some(entity);
         let made = self.whole(entity);
         self.remember(entity, None, Some(made));
+    }
+
+    /// The folder asset names are counted from: the asset server's, or where the app runs.
+    fn assets_root(&self) -> std::path::PathBuf {
+        self.game
+            .world
+            .get_resource::<AssetServer>()
+            .map_or_else(|| ".".into(), |server| server.root().to_owned())
+    }
+
+    /// Puts a model file in the scene, on the ground in the middle of the picture: an
+    /// entity named for the file, with each part of the model under it. Says in the bar
+    /// why not, if it can't be read.
+    fn put_in_model(&mut self, name: &str) {
+        let at = self.before_the_eye();
+        let world = &mut self.game.world;
+        let ready = world.contains_resource::<AssetServer>()
+            && world.contains_resource::<Assets<Mesh>>()
+            && world.contains_resource::<Assets<mira::render::Image>>();
+        if !ready {
+            self.told = "this game has nowhere to keep models".to_owned();
+            return;
+        }
+        // The file is read here, on the spot, the first time it is asked for.
+        let model = world.resource_scope(|world, server: &mut AssetServer| {
+            world.resource_scope(|world, meshes: &mut Assets<Mesh>| {
+                world.resource_scope(|_, images: &mut Assets<mira::render::Image>| {
+                    server.load_gltf(name, meshes, images)
+                })
+            })
+        });
+        let model = match model {
+            Ok(model) => model,
+            Err(why) => {
+                self.told = format!("{name} could not be read: {why:#}");
+                return;
+            }
+        };
+        let called = std::path::Path::new(name)
+            .file_stem()
+            .map_or(name.to_owned(), |stem| stem.to_string_lossy().into_owned());
+        // Standing on the ground: lifted by however far it reaches below its own middle.
+        let lifted = at - Vec3::Y * model.min.y.min(0.0);
+        let root = world.spawn((Transform::from_translation(lifted), Name::new(called)));
+        for part in &model.parts {
+            let (scale, rotation, translation) = part.transform.to_scale_rotation_translation();
+            world.spawn((
+                Transform {
+                    translation,
+                    rotation,
+                    scale,
+                },
+                Mesh3d(part.mesh),
+                part.material,
+                Parent(root),
+            ));
+        }
+        // So that what is under it is known at once, to be kept with it and shown.
+        mira::relation::sync::<Parent>(world);
+        self.chosen = Some(root);
+        let made = self.whole(root);
+        self.remember(root, None, Some(made));
+    }
+
+    /// Adds what a saved scene or prefab holds to the scene, its top entities moved so that
+    /// the first stands on the ground in the middle of the picture. Each top entity is one
+    /// thing to take back.
+    fn put_in_scene(&mut self, name: &str) {
+        let at = self.before_the_eye();
+        let file = self.assets_root().join(name);
+        let scene = match Scene::load(&file) {
+            Ok(scene) => scene,
+            Err(why) => {
+                self.told = format!("{name} could not be read: {why:#}");
+                return;
+            }
+        };
+        let world = &mut self.game.world;
+        let spawned =
+            world.resource_scope(|world, registry: &mut TypeRegistry| scene.spawn(world, registry));
+        mira::relation::sync::<Parent>(world);
+        // Its top entities: the ones under nothing that came with them.
+        let tops: Vec<Entity> = spawned
+            .entities
+            .iter()
+            .copied()
+            .filter(|entity| {
+                world
+                    .get::<Parent>(*entity)
+                    .is_none_or(|parent| !spawned.entities.contains(&parent.0))
+            })
+            .collect();
+        let first = tops
+            .iter()
+            .find_map(|top| world.get::<Transform>(*top).map(|place| place.translation));
+        if let Some(first) = first {
+            let by = Vec3::new(at.x - first.x, 0.0, at.z - first.z);
+            for top in &tops {
+                if let Some(place) = world.get_mut::<Transform>(*top) {
+                    place.translation += by;
+                }
+            }
+        }
+        if !spawned.skipped.is_empty() {
+            self.told = format!("{name}: {} parts left out", spawned.skipped.len());
+        }
+        self.chosen = tops.first().copied().or(self.chosen);
+        for top in tops {
+            let made = self.whole(top);
+            self.remember(top, None, Some(made));
+        }
+    }
+
+    /// Saves the chosen entity, with everything under it, as a prefab: a scene file in the
+    /// project's `prefabs` folder, called after the entity.
+    fn save_prefab(&mut self) {
+        let Some(entity) = self.chosen else { return };
+        let world = &self.game.world;
+        let Some(registry) = world.get_resource::<TypeRegistry>() else {
+            return;
+        };
+        let called = world
+            .get::<Name>(entity)
+            .map_or(format!("entity-{}", entity.index()), |name| name.0.clone());
+        // A name that is safe as a file's: letters, digits, dashes.
+        let file: String = called
+            .chars()
+            .map(|letter| {
+                if letter.is_alphanumeric() {
+                    letter.to_ascii_lowercase()
+                } else {
+                    '-'
+                }
+            })
+            .collect();
+        let folder = self.assets_root().join("prefabs");
+        let path = folder.join(format!("{file}.json"));
+        let saved = std::fs::create_dir_all(&folder)
+            .map_err(anyhow::Error::from)
+            .and_then(|()| Scene::capture_tree(world, registry, entity).save(&path));
+        self.told = match saved {
+            Ok(()) => format!("saved prefabs/{file}.json"),
+            Err(why) => format!("not saved: {why}"),
+        };
+        if self.files.is_some() {
+            self.files = Some(panels::project_files(&self.assets_root()));
+        }
     }
 
     /// Changes a component of an entity, and remembers it so that it can be taken back.
@@ -1393,6 +1563,7 @@ impl Editor {
                 self.graph.view().map(Message::Graph)
             }
             PLACE => self.place_panel(),
+            ASSETS => self.assets_panel(),
             LOG => self.log_panel(),
             CONSOLE => self.console_panel(),
             PROFILER => self.profiler_panel(),
@@ -2081,6 +2252,11 @@ impl App for Editor {
             }
             Message::SceneView(own) => self.look_through(own),
             Message::Place(what) => self.put_in(what),
+            Message::PlaceModel(name) => self.put_in_model(&name),
+            Message::PlaceScene(name) => self.put_in_scene(&name),
+            Message::SavePrefab => self.save_prefab(),
+            Message::Rescan => self.files = Some(panels::project_files(&self.assets_root())),
+            Message::AssetFilter(filter) => self.asset_filter = filter,
             Message::Delete => {
                 if let Some(entity) = self.chosen {
                     self.joins = false;
@@ -3430,6 +3606,102 @@ mod tests {
         // Asked for twice, or given back twice, nothing more happens.
         editor.update(Message::SceneView(false));
         assert_eq!(editor.game().world.entity_count(), 1);
+    }
+
+    #[test]
+    fn the_projects_files_are_found_by_name() {
+        use panels::{project_files, AssetKind};
+        let root = std::env::temp_dir().join(format!("mira-project-{}", std::process::id()));
+        for folder in [
+            "res/models",
+            "res/textures",
+            "target/debug",
+            ".git",
+            "scenes",
+        ] {
+            std::fs::create_dir_all(root.join(folder)).unwrap();
+        }
+        for (file, bytes) in [
+            ("res/models/hen.glb", 2048),
+            ("res/models/notes.txt", 10),
+            ("res/textures/Wall.PNG", 300),
+            ("scenes/level.json", 40),
+            ("target/debug/built.json", 5),
+            (".git/index.json", 5),
+            ("top.hdr", 1),
+        ] {
+            std::fs::write(root.join(file), vec![0u8; bytes]).unwrap();
+        }
+        let found: Vec<(String, AssetKind, u64)> = project_files(&root)
+            .into_iter()
+            .map(|file| (file.name, file.kind, file.size))
+            .collect();
+        // By name, sorted; what tools keep and what the engine can't use left out.
+        assert_eq!(
+            found,
+            [
+                ("res/models/hen.glb".to_owned(), AssetKind::Model, 2048),
+                ("res/textures/Wall.PNG".to_owned(), AssetKind::Image, 300),
+                ("scenes/level.json".to_owned(), AssetKind::Scene, 40),
+                ("top.hdr".to_owned(), AssetKind::Image, 1),
+            ]
+        );
+        assert!(project_files(&root.join("nowhere")).is_empty());
+        let _ = std::fs::remove_dir_all(&root);
+
+        // A game with nowhere to keep models says so, and nothing is made.
+        let mut editor = Editor::new(mira::app::App::new());
+        editor.update(Message::PlaceModel("res/models/hen.glb".into()));
+        assert_eq!(editor.game().world.entity_count(), 0);
+        assert!(editor.told.contains("nowhere to keep models"));
+    }
+
+    #[test]
+    fn an_entity_is_saved_as_a_prefab_and_placed_again() {
+        use mira::prelude::*;
+        let root = std::env::temp_dir().join(format!("mira-prefabs-{}", std::process::id()));
+        let mut game = mira::app::App::new();
+        game.add_plugins(mira::transform::TransformPlugin)
+            .insert_resource(AssetServer::new(&root));
+        let tank = game
+            .world
+            .spawn((Transform::from_xyz(3.0, 0.0, 4.0), Name::new("Light Tank")));
+        game.world.spawn((
+            Transform::from_xyz(0.0, 1.0, 0.0),
+            Name::new("Turret"),
+            Parent(tank),
+        ));
+        game.update();
+        let mut editor = Editor::new(game);
+        editor.update(Message::Chosen(tank));
+        editor.update(Message::SavePrefab);
+        assert_eq!(editor.told, "saved prefabs/light-tank.json");
+        // It is among the project's files, and placed, it is a second tank with its turret.
+        editor.update(Message::Rescan);
+        let files = editor.files.clone().expect("looked for");
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].name, "prefabs/light-tank.json");
+        editor.update(Message::PlaceScene(files[0].name.clone()));
+        assert_eq!(editor.game().world.entity_count(), 4);
+        let copy = editor.chosen().expect("the placed one is chosen");
+        assert_ne!(copy, tank);
+        assert_eq!(
+            editor.game().world.get::<Name>(copy),
+            Some(&Name::new("Light Tank"))
+        );
+        assert_eq!(
+            mira::relation::related::<Parent>(&editor.game().world, copy).len(),
+            1
+        );
+        // Taken back as one thing.
+        editor.update(Message::Undo);
+        assert_eq!(editor.game().world.entity_count(), 2);
+        // A file that is no scene says so and adds nothing.
+        std::fs::write(root.join("prefabs/broken.json"), "not a scene").unwrap();
+        editor.update(Message::PlaceScene("prefabs/broken.json".into()));
+        assert!(editor.told.contains("could not be read"), "{}", editor.told);
+        assert_eq!(editor.game().world.entity_count(), 2);
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

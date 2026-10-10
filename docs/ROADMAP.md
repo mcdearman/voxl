@@ -371,7 +371,9 @@ editor needs from it.
 - [x] Colours picked as colours, and entity references set by dragging from the tree
 - [ ] In the inspector still: text and asset references, and
       one undo step per edit; renaming (mira has no name component yet); transform gizmos
-- [ ] Asset browser, drag to place, prefab editing
+- [x] An Assets panel listing the project's models, pictures, scenes and prefabs; placing a
+      model or a saved scene; saving the chosen entity as a prefab
+- [ ] Thumbnails and drag to place; prefab copies that follow their file
 - [x] Neo's look: the desktop's appearance, a glass window by default with a switch in
       Settings, and a tool bar of mira's own
 - [x] Choosing an entity by clicking it in the picture, and moving it over the ground by
