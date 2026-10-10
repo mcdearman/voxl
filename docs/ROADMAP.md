@@ -241,7 +241,8 @@ and see it change in the running scene.
 - [x] Splitting one query's work across threads: `Query::par_for_each` and
       `par_for_each_mut`, on the systems' own pool, whose waiting threads now do queued work
 - [x] A ThreadSanitizer run of the ECS's tests in CI
-- [ ] Relaxing "commands end a batch" where a later system needn't see them
+- [x] Relaxing "commands end a batch" where a later system needn't see them:
+      `.commands_can_wait()`
 - [x] A faster walk through the storage there is: a query guesses that an entity sits at the
       same place in each component it reads as in the one it walks, which is so for
       components spawned together. Measured with `examples/query_bench` (200,000 entities,

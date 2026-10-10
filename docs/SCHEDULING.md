@@ -177,6 +177,15 @@ machine: eight systems over 100,000 entities each ran 5.2 times faster on a ten-
 A panic on a worker thread is caught like any other in a debug build ([LIVE.md](LIVE.md)): the
 system is suspended, the rest of its batch finishes, and the game pauses.
 
+A system that queues commands ends its batch, so that the system after it sees them done.
+Where nothing in the stage needs to, say so, and it shares a batch like any other:
+
+```rust
+app.add_systems(Stage::Update, (spawn_sparks.commands_can_wait(), move_units, tick_timers));
+```
+
+The commands are still applied when the batch has run.
+
 ## One system on many threads
 
 A system whose query covers many entities, each one's work independent of the rest, can
@@ -213,8 +222,7 @@ fn start(pool: Res<TaskPool>, found: Res<Mailbox<Path>>) {
 ## What isn't here yet
 
 - Batches are made in the order systems are written, so two systems that could share a
-  batch but have a clashing one between them don't. Queued commands end a batch; there is no
-  way yet to say that a later system needn't see them.
+  batch but have a clashing one between them don't.
 - Hooks and observers are for Rust types; a plugin can't yet hook its own components or
   observe events.
 - A condition on a tuple is asked once per system, not once for the group.

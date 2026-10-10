@@ -619,6 +619,28 @@ mod batches {
             .collect()
     }
 
+    fn spawns(mut commands: Commands, _: Query<&Vel>) {
+        commands.spawn(Pos(0));
+    }
+
+    #[test]
+    fn a_system_whose_commands_can_wait_does_not_end_its_batch() {
+        // What a system queues, the next is meant to see: so the batch ends with it.
+        assert_eq!(plan((spawns, reads_pos, reads_count)), [0, 1, 1]);
+        // Told the commands can wait, it shares a batch with what it has nothing in common
+        // with, and still not with what it clashes with.
+        assert_eq!(plan((spawns.commands_can_wait(), reads_pos, reads_count)), [0, 0, 0]);
+        assert_eq!(plan((spawns.commands_can_wait(), writes_vel, reads_pos)), [0, 1, 1]);
+
+        // They are applied all the same, when the batch has run.
+        let mut world = World::new();
+        world.insert_resource(Counter(0));
+        let mut schedule = Schedule::default();
+        schedule.add_systems((spawns.commands_can_wait(), reads_pos, reads_count));
+        schedule.run(&mut world);
+        assert_eq!(world.query::<&Pos>().iter().count(), 1);
+    }
+
     #[test]
     fn systems_that_touch_nothing_in_common_share_a_batch() {
         // Readers together; a writer of what they read comes after; then readers again.
