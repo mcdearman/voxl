@@ -6,6 +6,11 @@ pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 /// The scene is lit and blended in linear HDR, then tone mapped onto the swapchain.
 pub const HDR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 pub const MSAA_SAMPLES: u32 = 4;
+/// How far things have moved across the picture in a frame (see `motion.rs`).
+pub const MOTION_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg16Float;
+/// What the motion target holds where nothing that moved was drawn: further than anything
+/// can move in a frame.
+pub const MOTION_CLEAR: wgpu::Color = wgpu::Color { r: 4.0, g: 4.0, b: 0.0, a: 0.0 };
 /// Depth is reversed (near = 1, far = 0) for precision far from the camera, so nearer
 /// fragments have *greater* depth. Pipelines drawing into the main pass should use this.
 pub const DEPTH_COMPARE: wgpu::CompareFunction = wgpu::CompareFunction::GreaterEqual;
@@ -51,6 +56,8 @@ pub struct Targets {
     /// Multisampled HDR color, resolved into `hdr` at the end of the main pass.
     pub hdr_msaa: wgpu::TextureView,
     pub hdr: wgpu::TextureView,
+    /// Where moving things write how far they have come, for TAA.
+    pub motion: wgpu::TextureView,
 }
 
 impl Gpu {
@@ -258,6 +265,7 @@ impl Targets {
             // Read after the main pass, by the light shafts and TAA.
             depth: texture("depth", DEPTH_FORMAT, MSAA_SAMPLES, attachment | wgpu::TextureUsages::TEXTURE_BINDING),
             hdr_msaa: texture("hdr msaa", HDR_FORMAT, MSAA_SAMPLES, attachment),
+            motion: texture("motion", MOTION_FORMAT, MSAA_SAMPLES, attachment | wgpu::TextureUsages::TEXTURE_BINDING),
             hdr: texture(
                 "hdr",
                 HDR_FORMAT,

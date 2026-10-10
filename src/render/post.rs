@@ -39,10 +39,9 @@ impl Default for PostProcess {
     fn default() -> Self {
         Self {
             // The defaults suit a plain scene under the built-in sky and a sun of the default
-            // strength. With exposure 1 and the flat curve such a scene comes out pale and
-            // washed, and much below 0.7 the sky goes dark; scenes lit by a photographed sky
-            // set their own.
-            exposure: 0.7,
+            // strength: a grey card in that sun comes out mid-grey. Scenes lit by a
+            // photographed sky, whose values are relative, set their own.
+            exposure: 1.0,
             bloom: 0.04,
             vignette: 0.3,
             saturation: 1.0,

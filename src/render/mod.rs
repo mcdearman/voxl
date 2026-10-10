@@ -8,6 +8,7 @@ mod gltf_scene;
 mod gpu;
 mod image;
 mod mesh;
+mod motion;
 mod post;
 mod probes;
 mod raytrace;
@@ -342,6 +343,20 @@ impl Environment {
     }
 }
 
+/// Keeps a built-in sky about its sun: when the scene's light has turned from where the sky
+/// has its sun, the sky is made again for where the light now comes from.
+fn follow_sun(mut sky: ResMut<Environment>, lights: Query<(&DirectionalLight, &GlobalTransform)>) {
+    let (Some(made_for), Some((_, light))) = (sky.follows(), lights.iter().next()) else {
+        return;
+    };
+    let sun = -light.forward();
+    // Half a degree: less can't be seen, and a sun that creeps doesn't remake the sky
+    // every frame.
+    if sun.is_finite() && sun.dot(made_for) < 0.999_96 {
+        *sky = Environment::clear_sky(sun);
+    }
+}
+
 /// Extra flat light from every direction, on top of the sky's.
 #[derive(Clone, Copy, Debug, PartialEq, Reflect)]
 #[reflect(name = "mira.AmbientLight", default)]
@@ -420,6 +435,12 @@ pub struct RenderFrame {
     /// The camera this frame is seen through, when it is not the active one: a view with a
     /// target of its own (see `views`).
     pub(crate) through: Option<crate::ecs::Entity>,
+    /// The camera a frame ago, without the jitter.
+    pub(crate) previous_view_proj: Mat4,
+    /// Where each mesh drawn last frame was, to tell what has moved.
+    pub(crate) previous_models: std::collections::HashMap<crate::ecs::Entity, Mat4>,
+    /// The meshes in view that are not where they were (see `motion`).
+    pub(crate) moved: Vec<motion::Moved>,
 }
 
 /// A function that records draw calls. In the main pass the view is bound at group 0; in the
@@ -613,6 +634,7 @@ fn extract(
     if let Some((camera, transform, _)) = camera {
         let view = transform.0.inverse();
         let projection = camera.projection(gpu.aspect_ratio());
+        frame.previous_view_proj = frame.unjittered_view_proj;
         frame.unjittered_view_proj = projection * view;
         frame.temporal = post.taa;
         frame.frame_index = frame.frame_index.wrapping_add(1);
@@ -634,12 +656,18 @@ fn extract(
     }
 
     frame.objects.clear();
+    frame.moved.clear();
+    // What moves is found only when frames are blended over time, which is what asks.
+    let mut models = std::collections::HashMap::new();
+    if post.taa {
+        models.reserve(frame.previous_models.len());
+    }
     let planes = frustum_planes(frame.view_proj);
     let camera = frame.camera_position;
     // Casters beyond this can't shadow anything the cascades cover.
     let shadow_reach = shadow_settings.max_distance * 1.2 + 40.0;
     let shadows = frame.shadows;
-    for (mesh, lods, transform, material, no_shadow) in &objects {
+    for (entity, mesh, lods, transform, material, no_shadow) in &objects {
         let distance = camera.distance(transform.translation());
         let (mesh, material) = match (lods, mesh) {
             (Some(lods), _) => match lods.pick(distance) {
@@ -664,6 +692,14 @@ fn extract(
                 flags &= !CASTS_SHADOW;
             }
         }
+        if post.taa && flags & VISIBLE != 0 && !material.decal {
+            models.insert(entity, transform.0);
+            if let Some(was) = frame.previous_models.get(&entity) {
+                if motion::has_moved(&transform.0, was) {
+                    frame.moved.push(motion::Moved { mesh: mesh.id(), model: transform.0, was: *was });
+                }
+            }
+        }
         if flags != 0 {
             frame.objects.push(RenderObject {
                 key: BatchKey::new(mesh.id(), &material),
@@ -673,10 +709,12 @@ fn extract(
             });
         }
     }
+    frame.previous_models = models;
 }
 
 /// What `extract` reads from each entity that might be drawn.
 type Drawable = (
+    crate::ecs::Entity,
     Option<&'static Mesh3d>,
     Option<&'static Lods>,
     &'static GlobalTransform,
@@ -955,10 +993,20 @@ fn render(world: &mut World) {
         let frame = world.resource::<RenderFrame>();
         (frame.unjittered_view_proj, frame.time)
     };
+    // What moved writes how far, so the blend over time can look for it where it was.
+    let moving = settings.taa && {
+        if !world.contains_resource::<motion::MotionRenderer>() {
+            let renderer = motion::MotionRenderer::new(world.resource::<Gpu>());
+            world.insert_resource(renderer);
+        }
+        world.resource_scope(|world, motion: &mut motion::MotionRenderer| {
+            motion.render(world.resource::<Gpu>(), &mut encoder, world.resource::<MeshRenderer>(), world.resource::<RenderFrame>())
+        })
+    };
     let scene = world.resource_scope(|world, taa: &mut taa::Taa| {
         let gpu = world.resource::<Gpu>();
         if settings.taa {
-            taa.resolve(gpu, &mut encoder, unjittered).clone()
+            taa.resolve(gpu, &mut encoder, unjittered, moving).clone()
         } else {
             taa.reset();
             gpu.targets.hdr.clone()
@@ -1102,6 +1150,7 @@ impl Plugin for RenderPlugin {
             .add_systems(Stage::PreStartup, init_gpu)
             .add_systems(Stage::PreUpdate, resize)
             .add_systems(Stage::PostUpdate, (animate, gait::walk, reach::reach))
+            .add_systems(Stage::Last, follow_sun)
             .add_systems(Stage::Extract, (extract, extract_skins))
             .add_systems(Stage::Prepare, prepare)
             .add_systems(Stage::Render, render);

@@ -497,6 +497,11 @@ impl MeshRenderer {
         }
     }
 
+    /// A mesh's vertex and index buffers on the GPU, and how many indices there are.
+    pub(crate) fn buffers(&self, mesh: u32) -> Option<(&wgpu::Buffer, &wgpu::Buffer, u32)> {
+        self.meshes.get(&mesh).map(|m| (&m.vertices, &m.indices, m.index_count))
+    }
+
     /// A mesh's vertex and index buffers on the GPU.
     pub(crate) fn vertex_buffer(&self, mesh: u32) -> Option<&wgpu::Buffer> {
         self.meshes.get(&mesh).map(|m| &m.vertices)

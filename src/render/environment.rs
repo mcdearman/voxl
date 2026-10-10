@@ -36,6 +36,8 @@ pub struct Environment {
     pub rotation: f32,
     /// Multiplies the sky's brightness, background and lighting alike.
     pub intensity: f32,
+    /// For a built-in sky, where the sun it was made for is.
+    follows: Option<Vec3>,
     pub(crate) generation: u64,
 }
 
@@ -51,6 +53,61 @@ pub fn uv_to_direction(uv: Vec2) -> Vec3 {
         theta.cos(),
         -theta.sin() * phi.cos(),
     )
+}
+
+/// The angle from its middle within which the built-in sky draws its sun, in radians.
+const SUN_DISK: f32 = 0.02;
+
+/// How much of each colour the clear air overhead scatters out of a beam (optical depths
+/// of red, green and blue light), and the same for the dust and droplets in it.
+const AIR: Vec3 = Vec3::new(0.046, 0.108, 0.265);
+const DUST: f32 = 0.025;
+
+/// Light scattered more than once fills the sky in; this stands in for it.
+const SCATTERED_AGAIN: f32 = 2.2;
+
+fn luminance(c: Vec3) -> f32 {
+    c.dot(Vec3::new(0.2126, 0.7152, 0.0722))
+}
+
+/// How many thicknesses of air a ray crosses at this height above the horizon (the sine of
+/// the angle): one straight up, about 38 along the ground. Kasten and Young's fit.
+fn air_mass(up: f32) -> f32 {
+    let up = up.clamp(0.0, 1.0);
+    let from_zenith = up.acos().to_degrees();
+    1.0 / (up + 0.505_72 * (96.079_95 - from_zenith).powf(-1.636_4))
+}
+
+/// The light above the air, set so that a sun half way up the sky delivers 3 at the ground.
+fn sun_above_the_air() -> Vec3 {
+    let through = (-(AIR + DUST) * air_mass(std::f32::consts::FRAC_1_SQRT_2)).exp();
+    Vec3::splat(3.0 / luminance(through))
+}
+
+/// The sun's light on a surface facing it at the ground: less, and redder, the lower it is.
+fn sunlight(sun: Vec3) -> Vec3 {
+    // A sun below the horizon still lights the air above for a while.
+    let fade = ((sun.y + 0.1) / 0.1).clamp(0.0, 1.0);
+    sun_above_the_air() * (-(AIR + DUST) * air_mass(sun.y)).exp() * fade
+}
+
+/// The light of a clear sky from direction `d` (at or above the horizon): sunlight scattered
+/// once on its way down, by the air evenly and by dust mostly forward.
+fn sky_radiance(d: Vec3, sun: Vec3) -> Vec3 {
+    let toward = d.dot(sun).clamp(-1.0, 1.0);
+    let by_air = 3.0 / (16.0 * PI) * (1.0 + toward * toward);
+    let g = 0.76f32;
+    let by_dust = (1.0 - g * g) / (4.0 * PI * (1.0 + g * g - 2.0 * g * toward).powf(1.5));
+    let depth = AIR + DUST;
+    let scattered = (AIR * by_air + Vec3::splat(DUST * by_dust)) / depth;
+    let reached = Vec3::ONE - (-depth * air_mass(d.y)).exp();
+    let mut day = sunlight(sun) * scattered * reached * SCATTERED_AGAIN;
+    // Toward the horizon the light has been scattered many times over: brighter than once
+    // would make it, and nearly white.
+    let low = (1.0 - d.y.clamp(0.0, 1.0)).powi(5);
+    day = day.lerp(Vec3::splat(luminance(day)) * Vec3::new(0.95, 1.0, 1.08), low * 0.6) * (1.0 + low * 0.9);
+    // What is left when the sun has gone.
+    day + Vec3::new(0.002, 0.003, 0.006)
 }
 
 fn sh_basis(d: Vec3) -> [f32; 9] {
@@ -93,32 +150,55 @@ impl Environment {
         Ok(Self::from_pixels(width, height, pixels, orientation))
     }
 
-    /// A plain blue-to-haze gradient with a sun, for when no sky image is given.
+    /// The built-in sky, for when no sky image is given: a clear day with the sun in this
+    /// direction. See [`Environment::clear_sky`].
     pub fn gradient(sun_direction: Vec3) -> Self {
+        Self::clear_sky(sun_direction)
+    }
+
+    /// A clear sky worked out from where the sun is: deep blue overhead, pale toward the
+    /// horizon, bright and warm about the sun, red when it is low, and a sun whose light is
+    /// the colour the air has left it. Its strength suits a `DirectionalLight` of about 3.
+    ///
+    /// A sky made this way follows the sun: while it is the world's sky and the scene's
+    /// directional light turns, it is made again to match.
+    pub fn clear_sky(sun_direction: Vec3) -> Self {
         let (width, height) = (256, 128);
-        let sun = sun_direction.normalize();
+        let sun = sun_direction.normalize_or(Vec3::Y);
+        let sunlight = sunlight(sun);
+        let disk = sunlight / (PI * SUN_DISK * SUN_DISK);
+        // The ground far off, lit by that sun and sky; nearer the horizon it is lost in haze.
+        let ground = Vec3::new(0.2, 0.19, 0.17) * (luminance(sunlight) * sun.y.max(0.0) + 0.5) / PI;
         let mut pixels = Vec::with_capacity((width * height) as usize);
         for y in 0..height {
             for x in 0..width {
                 let uv = Vec2::new((x as f32 + 0.5) / width as f32, (y as f32 + 0.5) / height as f32);
                 let d = uv_to_direction(uv);
-                let up = d.y.max(0.0);
-                let horizon = Vec3::new(0.75, 0.85, 1.0);
-                let zenith = Vec3::new(0.25, 0.45, 0.95);
-                let ground = Vec3::new(0.25, 0.23, 0.2);
                 let mut c = if d.y >= 0.0 {
-                    horizon.lerp(zenith, up.powf(0.5))
+                    sky_radiance(d, sun)
                 } else {
-                    horizon.lerp(ground, (-d.y * 4.0).min(1.0))
+                    let level = Vec3::new(d.x, 0.0, d.z).normalize_or(Vec3::X);
+                    let below = (-d.y / 0.3).clamp(0.0, 1.0);
+                    sky_radiance(level, sun).lerp(ground, below * below * (3.0 - 2.0 * below))
                 };
-                c += Vec3::new(1.0, 0.9, 0.7) * d.dot(sun).max(0.0).powf(16.0) * 2.0;
-                if d.dot(sun) > (0.02f32).cos() {
-                    c = Vec3::splat(8_000.0);
+                if d.dot(sun) > SUN_DISK.cos() {
+                    c = disk;
                 }
-                pixels.push(c * 0.35);
+                pixels.push(c);
             }
         }
-        Self::from_pixels(width, height, pixels, Orientation::Rotation(0.0))
+        let mut sky = Self::from_pixels(width, height, pixels, Orientation::Rotation(0.0));
+        // The picture is too coarse to measure so small a sun from; what it was drawn
+        // from is known exactly.
+        sky.sun_direction = sun;
+        sky.sun_illuminance = sunlight;
+        sky.follows = Some(sun);
+        sky
+    }
+
+    /// The direction of the sun a built-in sky was made for; none for a sky from a picture.
+    pub fn follows(&self) -> Option<Vec3> {
+        self.follows
     }
 
     fn from_pixels(width: u32, height: u32, mut pixels: Vec<Vec3>, orientation: Orientation) -> Self {
@@ -132,7 +212,6 @@ impl Environment {
             let theta = (y as f32 + 0.5) / height as f32 * PI;
             (TAU / width as f32) * (PI / height as f32) * theta.sin()
         };
-        let luminance = |c: Vec3| c.dot(Vec3::new(0.2126, 0.7152, 0.0722));
 
         // The sun is the brightest thing in the sky.
         let brightest = (0..pixels.len())
@@ -224,6 +303,7 @@ impl Environment {
             sun_illuminance,
             rotation,
             intensity: 1.0,
+            follows: None,
             generation: NEXT_GENERATION.fetch_add(1, Ordering::Relaxed),
         }
     }
@@ -329,12 +409,36 @@ mod tests {
     }
 
     #[test]
+    fn a_clear_sky_is_blue_overhead_and_its_sun_reddens_as_it_sinks() {
+        let noon = Vec3::new(1.0, 1.0, 0.0).normalize();
+        let overhead = sky_radiance(Vec3::Y, noon);
+        assert!(overhead.z > overhead.y && overhead.y > overhead.x, "overhead is {overhead}");
+        // Paler and brighter toward the horizon, as far from the sun.
+        let level = sky_radiance(Vec3::new(1.0, 0.02, 0.0).normalize(), noon);
+        assert!(luminance(level) > luminance(overhead));
+        assert!(level.x / level.z > overhead.x / overhead.z);
+        // The sun half way up delivers 3; lower, less of it and less blue in it.
+        let half = sunlight(Vec3::new(1.0, 1.0, 0.0).normalize());
+        assert!((luminance(half) - 3.0).abs() < 0.01);
+        let low = sunlight(Vec3::new(1.0, 0.08, 0.0).normalize());
+        assert!(luminance(low) < luminance(half) * 0.5);
+        assert!(low.z / low.x < half.z / half.x * 0.5);
+        assert_eq!(sunlight(Vec3::new(1.0, -0.3, 0.0).normalize()), Vec3::ZERO);
+    }
+
+    #[test]
+    fn a_built_in_sky_remembers_the_sun_it_was_made_for() {
+        let sun = Vec3::new(0.3, 0.5, -0.4).normalize();
+        assert_eq!(Environment::clear_sky(sun).follows(), Some(sun));
+    }
+
+    #[test]
     fn gradient_sky_finds_its_sun() {
         let sun = Vec3::new(-0.5, 0.6, 0.4).normalize();
         let env = Environment::gradient(sun);
         assert!(env.sun_direction.dot(sun) > 0.999);
         assert!(env.sun_illuminance.x > 0.0);
-        // More light from above than below.
-        assert!(env.sh[1].y > 0.0);
+        // The light from above is bluer than the light from the ground below.
+        assert!(env.sh[1].z > env.sh[1].x);
     }
 }
