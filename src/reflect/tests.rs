@@ -389,6 +389,7 @@ fn engine_plugins_register_their_components() {
         [
             "mira.Transform",
             "mira.Parent",
+            "mira.Name",
             "mira.Interpolate",
             "test.Health"
         ]

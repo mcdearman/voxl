@@ -43,8 +43,9 @@ The app is a Neo app and looks like one: it follows the appearance set for the N
 behind it blurred. Glass is the app's default; **Settings** (the gear at the right of the
 tool bar, or Cmd/Ctrl+comma) has the switch to make the window solid, and the choice is
 kept. The tool bar is the one part that is mira's own and not Neo's standard buttons: flat
-icons in groups on one strip (run or pause, step; undo, redo, save; mouselook), with the
-frame count and the settings gear at the right. The window opens at 1440 by 900.
+icons set edge to edge with no room between or around them, a thin line between one group
+and the next (run or pause, step; undo, redo, save; mouselook), the frame count and the
+settings gear at the right, and one line under the bar to part it from the panels. The window opens at 1440 by 900.
 
 ### Changing things, and keeping them
 

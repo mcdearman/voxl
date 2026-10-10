@@ -1251,8 +1251,9 @@ impl App for Editor {
 
     fn view(&self) -> Element<Message> {
         let Status { paused, frame } = self.status;
-        // The tool bar is mira's own, not a row of Neo's buttons: small flat icons in
-        // groups on one lifted strip, with the one filled button the one that runs the game.
+        // The tool bar is mira's own, not a row of Neo's buttons: small flat icons side by
+        // side with nothing between them, a thin line between one group and the next, and
+        // the one filled button the one that runs the game.
         let tool = |glyph, press: Option<Message>| {
             icon_button(glyph, 30.0)
                 .kind(ButtonKind::Ghost)
@@ -1270,7 +1271,6 @@ impl App for Editor {
             format!("{}  ·  frame {frame}", self.told)
         };
         let bar = row()
-            .spacing(2.0)
             .align(Align::Center)
             .push(
                 icon_button(if paused { icons::PLAY } else { icons::PAUSE }, 30.0)
@@ -1299,11 +1299,12 @@ impl App for Editor {
                 icons::SETTINGS,
                 Some(Message::Desktop(DesktopMsg::OpenSettings)),
             ));
-        let bar = container(bar)
-            .surface(Surface::Card)
-            .radius(12.0)
-            .padding([4.0, 6.0])
-            .width(Length::Fill);
+        // No strip of its own and no room round it: the buttons sit against the window's
+        // edge, and one line marks where the bar ends and the panels begin.
+        let bar = column()
+            .width(Length::Fill)
+            .push(container(bar).padding([2.0, 6.0]).width(Length::Fill))
+            .push(Divider::horizontal());
         let panels = dock(
             &self.layout,
             |panel| panel.to_owned(),
@@ -1313,7 +1314,7 @@ impl App for Editor {
         let whole = column()
             .width(Length::Fill)
             .height(Length::Fill)
-            .push(container(bar).padding([4.0, 8.0, 6.0, 8.0]))
+            .push(bar)
             .push(panels);
         // The settings panel, over everything while it is open.
         self.desktop
