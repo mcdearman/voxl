@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use neo::prelude::*;
 
-use super::{fields_of, short, Editor, Message, AGENT, GAME};
+use super::{fields_of, short, Editor, Message, Placed, AGENT, GAME};
 use mira::{
     app::Stage,
     live::{FrameStats, History, Live},
@@ -125,6 +125,46 @@ impl Editor {
         let over = self.asked.len().saturating_sub(50);
         self.asked.drain(..over);
         self.lists = super::Lists::of(&self.game, self.chosen);
+    }
+
+    /// Things to put in the scene, and what can be done with the chosen one.
+    pub(super) fn place_panel(&self) -> Element<Message> {
+        let thing = |glyph, name: &str, what: Placed| {
+            Button::new(
+                row()
+                    .spacing(8.0)
+                    .align(Align::Center)
+                    .push(icon(glyph).size(15.0))
+                    .push(text(name)),
+            )
+            .kind(ButtonKind::Ghost)
+            .width(Length::Fill)
+            .on_press(Message::Place(what))
+        };
+        let chosen = self.chosen.is_some();
+        let rows = column()
+            .spacing(2.0)
+            .push(heading("Put in the scene"))
+            .push(thing(icons::BOX, "Cube", Placed::Cube))
+            .push(thing(icons::CIRCLE_DOT, "Ball", Placed::Ball))
+            .push(thing(icons::SQUARE_DASHED, "Floor", Placed::Floor))
+            .push(thing(icons::SUN, "Sun", Placed::Sun))
+            .push(thing(icons::VIDEO, "Camera", Placed::Camera))
+            .push(thing(icons::LAYERS, "Empty", Placed::Empty))
+            .push(container(Divider::horizontal()).padding([0.0, 6.0]))
+            .push(heading("The chosen one"))
+            .push(
+                row()
+                    .spacing(6.0)
+                    .push(button("Duplicate").on_press_maybe(chosen.then_some(Message::Duplicate)))
+                    .push(button("Delete").on_press_maybe(chosen.then_some(Message::Delete))),
+            )
+            .push(
+                text("New things go on the ground in the middle of the picture. Delete or Backspace takes the chosen one away; Cmd or Ctrl+D copies it.")
+                    .size(12.0)
+                    .tone(Tone::Faint),
+            );
+        page(rows)
     }
 
     /// What the game and the engine have logged.
@@ -366,6 +406,14 @@ impl Editor {
                     }),
                 None => "the world".to_owned(),
             };
+            if change.component == super::WHOLE {
+                let did = if change.after.is_some() {
+                    "made"
+                } else {
+                    "took away"
+                };
+                return format!("{did} {whose}");
+            }
             let what = match change.path.last() {
                 Some(field) => format!("{} {field}", short(&change.component)),
                 None => short(&change.component).to_owned(),

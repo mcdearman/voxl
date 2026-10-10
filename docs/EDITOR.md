@@ -57,6 +57,7 @@ agent's group, and can be dragged anywhere from there.
 
 | Panel | What it shows |
 |---|---|
+| Place | Things to put in the scene: a cube, a ball, a floor, a sun, a camera, an empty entity to hang others on. Each goes on the ground in the middle of the picture, named and chosen. Also Duplicate and Delete for the chosen entity (Cmd/Ctrl+D; Delete or Backspace), which take everything under it along. All of it can be taken back |
 | Log | What the engine and the game have logged, newest at the bottom, by level; a box to show only lines with some text in them |
 | Console | A line to type anything the debug connection understands (`pause`, `entities with=mira.Camera`, `signal_set name=open value=true`), with the answers |
 | Profiler | The last frames as a graph, the usual and the worst frame, the time each stage took, and the slowest systems |
@@ -194,7 +195,7 @@ having each. "Ready" means the engine already holds the data and only the panel 
 | Panel | In other engines | What is missing |
 |---|---|---|
 | Assets | Content Browser, Project, FileSystem | Thumbnails; a listing of files on disk and not only what is loaded; dragging into the scene |
-| Place | Place Actors, Create menu | A palette of shapes, lights, cameras and prefabs to drag in; needs spawn and delete from the app |
+| Place (built, but for prefabs and dragging in) | Place Actors, Create menu | Prefabs in the palette; dragging a thing to where it is wanted |
 | Prefab editor | Blueprint/Prefab mode | Opening a prefab by itself, its overrides shown apart |
 | Scene camera | Editor viewport camera, view modes | A camera of the app's own to fly about with, apart from the game's; wireframe, unlit, overdraw views |
 | Game view | Unity's Game beside Scene | A second viewport: the game as the player sees it beside the scene as the editor does |

@@ -32,6 +32,7 @@ use agent::{Agent, Heard, NoAgent};
 use glam::{Mat4, Vec3};
 
 use mira::{
+    asset_server::AssetServer,
     assets::Assets,
     ecs::Entity,
     input::{ButtonInput, KeyCode, Mouse, MouseButton},
@@ -39,11 +40,11 @@ use mira::{
     prelude::Vec2,
     reflect::{Scene, TypeRegistry, Value},
     render::frame_texture,
-    render::{Camera, Mesh, Mesh3d},
+    render::{Camera, DirectionalLight, Material, Mesh, Mesh3d},
     signal::{Signal, Signals},
     time::Time,
-    transform::GlobalTransform,
     transform::Parent,
+    transform::{GlobalTransform, Name, Transform},
 };
 use neo::prelude::*;
 use neo::{wgpu, Color, Graphics, Image, Key, KeyEvent, Point, PointerButton, Rect};
@@ -95,6 +96,12 @@ pub enum Message {
     Setting(String, Vec<String>, Value),
     /// Something done in the signal graph: a wire pulled, a lamp clicked, a box moved.
     Graph(mira_ui::signal_graph::Message),
+    /// Something new is put in the scene.
+    Place(Placed),
+    /// The chosen entity, and everything under it, is taken out of the scene; or a copy of
+    /// it is made beside it.
+    Delete,
+    Duplicate,
     /// A panel is opened, or shut if it is open.
     Panel(String),
     /// What is typed in the console, and the console's command being run.
@@ -118,6 +125,25 @@ pub enum Message {
     /// on or off, the desktop's appearance looked at again.
     Desktop(DesktopMsg),
 }
+
+/// A thing that can be put in the scene from the Place panel.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Placed {
+    Cube,
+    Ball,
+    Floor,
+    Sun,
+    Camera,
+    /// An entity with a place and a name and nothing else: something to hang others on.
+    Empty,
+}
+
+/// The name a change goes by when it is to a whole entity and not one component of it:
+/// the entity made, or taken away, with everything under it.
+const WHOLE: &str = "*";
+
+/// The field of a kept entity that says which entity it was.
+const WAS: &str = "$entity";
 
 /// What the pointer does in the picture of the game.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -194,11 +220,12 @@ const FAILURES: &str = "Failures";
 const PLUGINS: &str = "Plugins";
 const STATISTICS: &str = "Statistics";
 const GRAPH: &str = "Signal graph";
+const PLACE: &str = "Place";
 
 /// Every panel there is, in the order the Window menu lists them.
-const PANELS: [&str; 16] = [
-    GAME, ENTITIES, INSPECTOR, WORLD, SIGNALS, GRAPH, AGENT, LOG, CONSOLE, PROFILER, SYSTEMS,
-    HISTORY, TIME, FAILURES, PLUGINS, STATISTICS,
+const PANELS: [&str; 17] = [
+    GAME, ENTITIES, PLACE, INSPECTOR, WORLD, SIGNALS, GRAPH, AGENT, LOG, CONSOLE, PROFILER,
+    SYSTEMS, HISTORY, TIME, FAILURES, PLUGINS, STATISTICS,
 ];
 
 /// Where the arrangement of the panels is kept, in the folder the app is run from.
@@ -212,7 +239,7 @@ fn first_layout() -> Dock {
         Dock::above(Dock::tabs([GAME]), 0.66, Dock::tabs([AGENT, LOG, CONSOLE])),
         0.7,
         Dock::above(
-            Dock::tabs([ENTITIES, SIGNALS]),
+            Dock::tabs([ENTITIES, PLACE, SIGNALS]),
             0.5,
             Dock::tabs([INSPECTOR, WORLD]),
         ),
@@ -427,6 +454,9 @@ impl Editor {
     /// data.
     fn part(&self, of: Option<Entity>, name: &str) -> Option<Value> {
         let world = &self.game.world;
+        if let (Some(entity), WHOLE) = (of, name) {
+            return world.contains_entity(entity).then(|| self.whole(entity));
+        }
         let registry = world.get_resource::<TypeRegistry>()?;
         match of {
             Some(entity) => (registry.get(name)?.get)(world, entity),
@@ -437,6 +467,20 @@ impl Editor {
     /// Makes a component of an entity, or a setting, what `to` says (nothing takes a
     /// component away), without remembering that it was done. Says whether the game took it.
     fn put_part(&mut self, of: Option<Entity>, name: &str, to: Option<&Value>) -> bool {
+        if let (Some(entity), WHOLE) = (of, name) {
+            match to {
+                // Back again, it is the one chosen, as it was when it went.
+                Some(kept) => self.chosen = self.remake(kept, true).or(self.chosen),
+                None => {
+                    mira::transform::despawn_recursive(&mut self.game.world, entity);
+                    if self.chosen == Some(entity) {
+                        self.chosen = None;
+                    }
+                }
+            }
+            self.lists = Lists::of(&self.game, self.chosen);
+            return true;
+        }
         let taken = self
             .game
             .world
@@ -461,6 +505,184 @@ impl Editor {
             });
         self.lists = Lists::of(&self.game, self.chosen);
         taken
+    }
+
+    /// An entity and everything under it, as plain data: each with which entity it was
+    /// and every registered component it has. What taking it away keeps, to put it back.
+    fn whole(&self, entity: Entity) -> Value {
+        let world = &self.game.world;
+        let mut kept = Vec::new();
+        let mut next = vec![entity];
+        while let Some(entity) = next.pop() {
+            let mut parts = vec![(WAS.to_owned(), Value::Entity(entity.to_bits()))];
+            if let Some(registry) = world.get_resource::<TypeRegistry>() {
+                for kind in registry.iter() {
+                    if let Some(value) = (kind.get)(world, entity) {
+                        parts.push((kind.name.to_owned(), value));
+                    }
+                }
+            }
+            kept.push(Value::Map(parts));
+            next.extend(
+                mira::relation::related::<Parent>(world, entity)
+                    .iter()
+                    .rev(),
+            );
+        }
+        Value::List(kept)
+    }
+
+    /// Makes entities again from what [`whole`](Self::whole) kept, and returns the first of
+    /// them. They are new entities; with `in_place_of`, everything the app remembers about
+    /// the old ones (changes made to them, which is chosen) now means the new ones.
+    fn remake(&mut self, kept: &Value, in_place_of: bool) -> Option<Entity> {
+        let Value::List(kept) = kept else { return None };
+        // New entities first, so that what points at another of them can be pointed right.
+        let became: Vec<(u64, Entity)> = kept
+            .iter()
+            .filter_map(|parts| match parts.field(WAS) {
+                Some(Value::Entity(was)) => Some((*was, self.game.world.spawn(()))),
+                _ => None,
+            })
+            .collect();
+        for (parts, (_, entity)) in kept.iter().zip(&became) {
+            let Value::Map(parts) = parts else { continue };
+            for (name, value) in parts.iter().filter(|(name, _)| name != WAS) {
+                let mut value = value.clone();
+                for (was, now) in &became {
+                    repoint(&mut value, *was, now.to_bits());
+                }
+                self.game
+                    .world
+                    .resource_scope(|world, registry: &mut TypeRegistry| {
+                        if let Some(kind) = registry.get(name) {
+                            let _ = (kind.insert)(world, *entity, &value);
+                        }
+                    });
+            }
+        }
+        if in_place_of {
+            for (was, now) in &became {
+                self.now_means(Entity::from_bits(*was), *now);
+            }
+        }
+        became.first().map(|(_, entity)| *entity)
+    }
+
+    /// From now on, what the app remembers of one entity is of another: after an entity
+    /// that was taken away has been made again, as a new one.
+    fn now_means(&mut self, was: Entity, now: Entity) {
+        for change in self.done.iter_mut().chain(&mut self.undone) {
+            if change.entity == Some(was) {
+                change.entity = Some(now);
+            }
+            for value in change.before.iter_mut().chain(&mut change.after) {
+                repoint(value, was.to_bits(), now.to_bits());
+            }
+        }
+        if self.chosen == Some(was) {
+            self.chosen = Some(now);
+        }
+        for shut in &mut self.shut {
+            if *shut == was {
+                *shut = now;
+            }
+        }
+    }
+
+    /// Remembers something already done to the game, so that it can be taken back.
+    fn remember(&mut self, entity: Entity, before: Option<Value>, after: Option<Value>) {
+        self.done.push(Change {
+            entity: Some(entity),
+            component: WHOLE.to_owned(),
+            path: Vec::new(),
+            before,
+            after,
+        });
+        self.joins = false;
+        self.undone.clear();
+        self.lists = Lists::of(&self.game, self.chosen);
+    }
+
+    /// Where on the ground the middle of the picture is: where a new thing goes.
+    fn before_the_eye(&mut self) -> Vec3 {
+        let Some((camera, eye)) = self.eye() else {
+            return Vec3::ZERO;
+        };
+        let aspect = self.place(Point::new(0.0, 0.0)).0;
+        let ray = scene::sight(&camera, eye, Vec2::new(0.5, 0.5), aspect);
+        scene::on_ground(ray, 0.0)
+            // Not somewhere off at the horizon.
+            .filter(|at| (*at - ray.from).length() < 200.0)
+            .unwrap_or(Vec3::ZERO)
+    }
+
+    /// Puts a new thing in the scene, on the ground in the middle of the picture, and
+    /// chooses it.
+    fn put_in(&mut self, what: Placed) {
+        let at = self.before_the_eye();
+        let world = &mut self.game.world;
+        let shape = |world: &mut mira::ecs::World, what: Placed| {
+            world.resource_scope(|world, server: &mut AssetServer| {
+                let meshes = world.resource_mut::<Assets<Mesh>>();
+                match what {
+                    Placed::Cube => server.cube(meshes, 1.0),
+                    Placed::Ball => server.sphere(meshes, 0.5),
+                    _ => server.plane(meshes, 10.0),
+                }
+            })
+        };
+        let has_shapes =
+            world.contains_resource::<AssetServer>() && world.contains_resource::<Assets<Mesh>>();
+        let above = |height: f32| Transform::from_translation(at + Vec3::Y * height);
+        let entity = match what {
+            Placed::Cube | Placed::Ball | Placed::Floor if !has_shapes => return,
+            Placed::Cube => {
+                let mesh = shape(world, what);
+                world.spawn((
+                    above(0.5),
+                    Mesh3d(mesh),
+                    Material::default(),
+                    Name::new("Cube"),
+                ))
+            }
+            Placed::Ball => {
+                let mesh = shape(world, what);
+                world.spawn((
+                    above(0.5),
+                    Mesh3d(mesh),
+                    Material::default(),
+                    Name::new("Ball"),
+                ))
+            }
+            Placed::Floor => {
+                let mesh = shape(world, what);
+                world.spawn((
+                    above(0.0),
+                    Mesh3d(mesh),
+                    Material::default(),
+                    Name::new("Floor"),
+                ))
+            }
+            Placed::Sun => world.spawn((
+                Transform::IDENTITY.looking_at(Vec3::new(-0.5, -1.0, -0.35), Vec3::Y),
+                DirectionalLight::default(),
+                Name::new("Sun"),
+            )),
+            // Not looked through until it is made the active one: the game keeps its view.
+            Placed::Camera => world.spawn((
+                above(2.0),
+                Camera {
+                    active: false,
+                    ..Camera::default()
+                },
+                Name::new("Camera"),
+            )),
+            Placed::Empty => world.spawn((above(0.0), Name::new("Empty"))),
+        };
+        self.chosen = Some(entity);
+        let made = self.whole(entity);
+        self.remember(entity, None, Some(made));
     }
 
     /// Changes a component of an entity, and remembers it so that it can be taken back.
@@ -1013,6 +1235,7 @@ impl Editor {
                 use mira_ui::armature::App as _;
                 self.graph.view().map(Message::Graph)
             }
+            PLACE => self.place_panel(),
             LOG => self.log_panel(),
             CONSOLE => self.console_panel(),
             PROFILER => self.profiler_panel(),
@@ -1188,6 +1411,18 @@ impl neo::Widget<Message> for Outline {
 
     fn event(&mut self, _: &mut neo::EventCx<Message>, _: &neo::Event) -> neo::Status {
         neo::Status::Ignored
+    }
+}
+
+/// Makes every mention of one entity in a value a mention of another.
+fn repoint(value: &mut Value, was: u64, now: u64) {
+    match value {
+        Value::Entity(entity) if *entity == was => *entity = now,
+        Value::List(items) => items.iter_mut().for_each(|item| repoint(item, was, now)),
+        Value::Map(fields) => fields
+            .iter_mut()
+            .for_each(|(_, field)| repoint(field, was, now)),
+        _ => {}
     }
 }
 
@@ -1499,6 +1734,14 @@ impl App for Editor {
 
     fn on_key(&self, key: &KeyEvent) -> Option<Message> {
         // Command on a Mac, Control elsewhere; with Shift, Z goes the other way.
+        // Delete or Backspace, with nothing being typed anywhere, takes the chosen entity away.
+        if key.pressed
+            && matches!(key.key, Key::Delete | Key::Backspace)
+            && self.chosen.is_some()
+            && self.naming.is_none()
+        {
+            return Some(Message::Delete);
+        }
         let held = key.modifiers.logo || key.modifiers.ctrl;
         let Key::Character(letter) = &key.key else {
             return None;
@@ -1508,6 +1751,7 @@ impl App for Editor {
             (true, "z") => Some(Message::Undo),
             (true, "y") => Some(Message::Redo),
             (true, "s") => Some(Message::Save),
+            (true, "d") => Some(Message::Duplicate),
             _ => None,
         }
     }
@@ -1671,6 +1915,27 @@ impl App for Editor {
                 }
                 self.lists = Lists::of(&self.game, self.chosen);
             }
+            Message::Place(what) => self.put_in(what),
+            Message::Delete => {
+                if let Some(entity) = self.chosen {
+                    self.joins = false;
+                    self.change_of(Some(entity), WHOLE, Vec::new(), None);
+                }
+            }
+            Message::Duplicate => {
+                let Some(entity) = self.chosen else { return };
+                let kept = self.whole(entity);
+                let Some(copy) = self.remake(&kept, false) else {
+                    return;
+                };
+                // A little to one side, so that it can be seen to be there.
+                if let Some(place) = self.game.world.get_mut::<Transform>(copy) {
+                    place.translation += Vec3::new(0.6, 0.0, 0.6);
+                }
+                self.chosen = Some(copy);
+                let made = self.whole(copy);
+                self.remember(copy, None, Some(made));
+            }
             Message::Panel(panel) => self.toggle_panel(&panel),
             Message::Command(typed) => self.command = typed,
             Message::Run => self.run_command(),
@@ -1711,17 +1976,19 @@ impl App for Editor {
                 self.scrubbing = began;
                 self.joins = false;
             }
+            // The change goes on the other list before it is carried out, so that if carrying
+            // it out makes an entity again, as a new one, the change is told of it too.
             Message::Undo => {
                 if let Some(change) = self.done.pop() {
+                    self.undone.push(change.clone());
                     self.put_part(change.entity, &change.component, change.before.as_ref());
-                    self.undone.push(change);
                     self.joins = false;
                 }
             }
             Message::Redo => {
                 if let Some(change) = self.undone.pop() {
+                    self.done.push(change.clone());
                     self.put_part(change.entity, &change.component, change.after.as_ref());
-                    self.done.push(change);
                     self.joins = false;
                 }
             }
@@ -2745,6 +3012,139 @@ mod tests {
         editor.update(press(at));
         editor.update(Message::Input(ViewportEvent::Moved(Point::new(10.0, 10.0))));
         assert_eq!(place(&editor, carried), before);
+    }
+
+    #[test]
+    fn things_are_put_in_the_scene_copied_and_taken_away() {
+        use mira::prelude::*;
+        let mut game = mira::app::App::new();
+        game.add_plugins(mira::transform::TransformPlugin);
+        let mut editor = Editor::new(game);
+        let count = |editor: &Editor| editor.game().world.entity_count();
+        let named = |editor: &Editor, entity: Entity| {
+            editor
+                .game()
+                .world
+                .get::<Name>(entity)
+                .map(|name| name.0.clone())
+        };
+
+        // A new thing is chosen, named, and can be taken back and made again.
+        editor.update(Message::Place(Placed::Empty));
+        let parent = editor.chosen().expect("the new one is chosen");
+        assert_eq!(
+            (count(&editor), named(&editor, parent).as_deref()),
+            (1, Some("Empty"))
+        );
+        editor.update(Message::Place(Placed::Camera));
+        let camera = editor.chosen().unwrap();
+        assert!(!editor.game().world.get::<Camera>(camera).unwrap().active);
+        editor.update(Message::Undo);
+        assert_eq!((count(&editor), editor.chosen()), (1, None));
+        editor.update(Message::Redo);
+        assert_eq!(count(&editor), 2);
+        let camera = editor
+            .done
+            .last()
+            .unwrap()
+            .entity
+            .expect("the camera, made again");
+        assert_eq!(named(&editor, camera).as_deref(), Some("Camera"));
+        // Shapes need the game's meshes; without them nothing is made.
+        editor.update(Message::Place(Placed::Cube));
+        assert_eq!(count(&editor), 2);
+
+        // The camera under the empty; then the empty taken away takes it too.
+        editor.update(Message::Moved(camera, parent, Place::Into));
+        editor.game_mut().update();
+        editor.update(Message::Chosen(parent));
+        editor.update(Message::Delete);
+        assert_eq!((count(&editor), editor.chosen()), (0, None));
+        // Taken back, both are there again, the one under the other, as new entities, and
+        // what was done to them before still undoes.
+        editor.update(Message::Undo);
+        assert_eq!(count(&editor), 2);
+        let lists = Lists::of(editor.game(), None);
+        let empty = lists
+            .names
+            .iter()
+            .find(|(_, name)| name == "Empty")
+            .unwrap()
+            .0;
+        let camera = lists
+            .names
+            .iter()
+            .find(|(_, name)| name == "Camera")
+            .unwrap()
+            .0;
+        assert_eq!(
+            editor.game().world.get::<Parent>(camera),
+            Some(&Parent(empty))
+        );
+        assert_eq!(
+            editor.chosen(),
+            Some(empty),
+            "the one that was chosen is chosen again"
+        );
+        editor.update(Message::Undo);
+        assert_eq!(
+            editor.game().world.get::<Parent>(camera),
+            None,
+            "the move, taken back"
+        );
+        editor.update(Message::Redo);
+        editor.update(Message::Redo);
+        assert_eq!(count(&editor), 0, "taken away again");
+        editor.update(Message::Undo);
+        assert_eq!(count(&editor), 2, "and back, a third lot of entities");
+
+        // A copy is beside the one copied, with its children, and is one thing to take back.
+        editor.game_mut().update();
+        let lists = Lists::of(editor.game(), None);
+        let empty = lists
+            .names
+            .iter()
+            .find(|(_, name)| name == "Empty")
+            .unwrap()
+            .0;
+        editor.update(Message::Chosen(empty));
+        editor.update(Message::Duplicate);
+        assert_eq!(count(&editor), 4);
+        let copy = editor.chosen().unwrap();
+        assert_ne!(copy, empty);
+        let (here, there) = (
+            editor
+                .game()
+                .world
+                .get::<Transform>(empty)
+                .unwrap()
+                .translation,
+            editor
+                .game()
+                .world
+                .get::<Transform>(copy)
+                .unwrap()
+                .translation,
+        );
+        assert!((there - here).length() > 0.5);
+        editor.update(Message::Undo);
+        assert_eq!(count(&editor), 2);
+
+        // The keys for these: only with something chosen, and not while a name is typed.
+        let key = |key: Key| KeyEvent {
+            key,
+            pressed: true,
+            repeat: false,
+            modifiers: Default::default(),
+            text: None,
+        };
+        editor.update(Message::Chosen(empty));
+        assert!(matches!(
+            editor.on_key(&key(Key::Delete)),
+            Some(Message::Delete)
+        ));
+        editor.update(Message::Naming(TreeEdit::Begin(empty)));
+        assert!(editor.on_key(&key(Key::Backspace)).is_none());
     }
 
     #[test]
