@@ -238,6 +238,8 @@ impl App {
             }
             self.run_stage(stage);
         }
+        // Cameras that draw into pictures of their own, now that the frame is drawn.
+        crate::render::draw_extra_views(self);
     }
 
     /// Settles what this frame does about the simulation: runs, steps or holds.
@@ -288,7 +290,7 @@ impl App {
             .is_some_and(|events| !events.is_empty())
     }
 
-    fn run_stage(&mut self, stage: Stage) {
+    pub(crate) fn run_stage(&mut self, stage: Stage) {
         let Some(schedule) = self.schedules.get_mut(&stage) else {
             return;
         };

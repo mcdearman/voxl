@@ -72,6 +72,7 @@ its top; panels meet each other at single lines, which can be dragged to resize.
 | Profiler | The last frames as a graph, the usual and the worst frame, the time each stage took, and the slowest systems |
 | Signal graph | The game's rules as a circuit, the one `mira_ui` draws inside a game: wires lit while true, rewired by dragging, lamps clicked to force a signal, lines clicked to type over them |
 | Systems | Every system by stage, in the order and the batch it runs in, with how much it reads and writes; one that has failed is red |
+| Player view | The game through its own camera, in a picture of its own, while the scene is looked at through the app's camera: what the player sees beside what you are doing to it |
 | Physics | Switches that draw physics over the scene as lines (colliders coloured by what moves them, contacts, velocities, joints), and what the last step found: bodies, how many are asleep, colliders, contacts, gravity |
 | World | The world's settings (ambient light, fog, post-processing, shadows, voxels: every registered resource), each field a control like the inspector's, with undo |
 | History | Every change made from the app, to click back and forward through |
@@ -227,7 +228,6 @@ having each. "Ready" means the engine already holds the data and only the panel 
 | Place (built, but for prefabs and dragging in) | Place Actors, Create menu | Prefabs in the palette; dragging a thing to where it is wanted |
 | Prefab editor (saving and placing are built) | Blueprint/Prefab mode | Opening a prefab by itself; placed copies that follow the file, their overrides shown apart |
 | More view modes (five are built) | View modes | Overdraw, shader cost, light and collision views |
-| Game view | Unity's Game beside Scene | A second viewport: the game as the player sees it beside the scene as the editor does |
 | Material editor | Material Editor, Shader Graph | A material system with graphs (Phase 3) |
 | Voxel tools | Landscape, Foliage, Modeling modes; Tile Palette | Brushes for sculpting and painting blocks; a block palette |
 | Agent tasks | (none) | What the agent is doing as a list of steps with approvals; several agents at once |

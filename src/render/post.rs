@@ -206,6 +206,11 @@ impl PostRenderer {
         &self.bloom.as_ref().unwrap().2
     }
 
+    /// Changes the blur's textures for another view's, which are another size.
+    pub(crate) fn swap_bloom(&mut self, other: &mut Option<(u32, u32, Vec<wgpu::TextureView>)>) {
+        std::mem::swap(&mut self.bloom, other);
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn render(
         &mut self,

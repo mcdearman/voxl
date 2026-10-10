@@ -234,6 +234,18 @@ that are readings and not pictures skip the haze, bloom and film curve, over a p
 cargo run --bin mira-debug -- resource name=mira.ViewMode value=Wireframe
 ```
 
+A camera can also draw into a picture of its own, beside the frame the window shows. Give it
+a `ViewTarget` with a size, and `render::view_texture(world, camera)` is its picture, drawn
+every frame whether or not the camera is `active`:
+
+```rust
+let mirror = commands.spawn((at, Camera::default(), ViewTarget::new(512, 512))).id();
+```
+
+Each such view is the whole renderer run again for that camera, with its own targets and
+its own history for temporal anti-aliasing, so it costs what the frame does. The app's
+Player view is one.
+
 ## What isn't here yet
 
 - A timeline of a frame (which system ran on which thread, when), and marks inside a system.

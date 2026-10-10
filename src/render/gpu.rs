@@ -234,7 +234,7 @@ impl Gpu {
 }
 
 impl Targets {
-    fn new(device: &wgpu::Device, config: &wgpu::SurfaceConfiguration) -> Self {
+    pub(crate) fn new(device: &wgpu::Device, config: &wgpu::SurfaceConfiguration) -> Self {
         let texture = |label, format, samples, usage| {
             device
                 .create_texture(&wgpu::TextureDescriptor {

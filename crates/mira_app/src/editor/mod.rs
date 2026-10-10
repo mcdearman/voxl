@@ -40,8 +40,8 @@ use mira::{
     physics::PhysicsDebug,
     prelude::Vec2,
     reflect::{NotSaved, Scene, TypeRegistry, Value},
-    render::frame_texture,
-    render::{Camera, DirectionalLight, Material, Mesh, Mesh3d, ViewMode},
+    render::{frame_texture, view_texture},
+    render::{Camera, DirectionalLight, Material, Mesh, Mesh3d, ViewMode, ViewTarget},
     signal::{Signal, Signals},
     time::Time,
     transform::Parent,
@@ -56,6 +56,8 @@ use neo_desktop::{AppPrefs, Desktop, DesktopMsg};
 pub enum Message {
     /// The viewport has this much room, at this many pixels to the point.
     Resized(Rect, f32),
+    /// The Player view has this much room.
+    PlayerResized(Rect, f32),
     /// Something done in the viewport: the game's to hear.
     Input(ViewportEvent),
     /// Pause the game, or let it run again.
@@ -246,6 +248,18 @@ struct Change {
     after: Option<Value>,
 }
 
+/// A frame of the game, and the picture of it the window draws.
+fn pictured(texture: wgpu::Texture) -> (wgpu::Texture, Image) {
+    // The window's canvas holds colours as they are stored, so it is given the frame's
+    // bytes and not what an sRGB view would make of them.
+    let view = texture.create_view(&wgpu::TextureViewDescriptor {
+        format: Some(texture.format().remove_srgb_suffix()),
+        ..Default::default()
+    });
+    let image = Image::from_texture(view, texture.width(), texture.height());
+    (texture, image)
+}
+
 /// A part of physics that can be drawn over the scene.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Drawn {
@@ -279,10 +293,11 @@ const TESTS: &str = "Tests";
 const BUILD: &str = "Build";
 const REFERENCES: &str = "References";
 const PHYSICS: &str = "Physics";
+const PLAYER: &str = "Player view";
 
 /// Every panel there is, in the order the Window menu lists them.
-const PANELS: [&str; 23] = [
-    GAME, ENTITIES, PLACE, ASSETS, INSPECTOR, WORLD, SIGNALS, GRAPH, AGENT, LOG, CONSOLE, PROFILER,
+const PANELS: [&str; 24] = [
+    GAME, PLAYER, ENTITIES, PLACE, ASSETS, INSPECTOR, WORLD, SIGNALS, GRAPH, AGENT, LOG, CONSOLE, PROFILER,
     SYSTEMS, PHYSICS, HISTORY, TIME, FAILURES, PLUGINS, STATISTICS, REFERENCES, CHANGES, TESTS,
     BUILD,
 ];
@@ -413,6 +428,11 @@ pub struct Editor {
     /// The game's frame, and the picture of it the window draws. Kept while the game keeps
     /// drawing into the same texture.
     shown: Option<(wgpu::Texture, Image)>,
+    /// The game through its own camera, while the scene is looked at through the app's:
+    /// the camera drawing it, its frame, and the picture of that.
+    player: Option<(Entity, Option<(wgpu::Texture, Image)>)>,
+    /// The room the Player view has, in pixels.
+    player_size: (u32, u32),
     tool: Tool,
     /// The entity being dragged in the picture, and the part of the picture the chosen one
     /// covers (left, top, right, bottom, each from 0 to 1).
@@ -491,6 +511,8 @@ impl Editor {
             size: (0, 0),
             scale: 1.0,
             shown: None,
+            player: None,
+            player_size: (0, 0),
             tool: Tool::default(),
             held: None,
             outline: None,
@@ -1105,6 +1127,58 @@ impl Editor {
         self.game.world.get_resource_mut::<R>()
     }
 
+    /// Has the game's own camera draw a picture for the Player view while that panel is in
+    /// front and the scene is looked at through the app's camera, and not otherwise.
+    fn aim_player(&mut self) {
+        let (width, height) = self.player_size;
+        let wanted = self
+            .view
+            .as_ref()
+            .and_then(|view| view.games.first().copied())
+            .filter(|_| self.layout.shown().contains(&PLAYER) && width > 0 && height > 0);
+        let world = &mut self.game.world;
+        let drawing = self.player.as_ref().map(|(camera, _)| *camera);
+        if drawing != wanted {
+            if let Some(camera) = drawing {
+                world.remove::<ViewTarget>(camera);
+            }
+            self.player = wanted.map(|camera| (camera, None));
+        }
+        if let Some(camera) = wanted {
+            let target = ViewTarget::new(width, height);
+            if world.get::<ViewTarget>(camera).copied() != Some(target) {
+                world.insert(camera, (target,));
+            }
+        }
+    }
+
+    /// How big the picture in the Player view is, when there is one.
+    pub fn player_picture(&self) -> Option<(u32, u32)> {
+        let (_, shown) = self.player.as_ref()?;
+        shown.as_ref().map(|(texture, _)| (texture.width(), texture.height()))
+    }
+
+    /// The game through its own camera, beside the scene.
+    fn player_view(&self) -> Element<Message> {
+        if self.view.is_none() {
+            return container(
+                text("The game's own camera is in the Game panel. Look at the scene through the app's camera, and the player's view is kept here.")
+                    .size(13.0)
+                    .tone(Tone::Muted),
+            )
+            .padding(14.0)
+            .into();
+        }
+        let picture = self
+            .player
+            .as_ref()
+            .and_then(|(_, shown)| shown.as_ref().map(|(_, image)| image));
+        viewport(picture)
+            .on_resize(Message::PlayerResized)
+            .playing(true)
+            .into()
+    }
+
     /// The camera the game is seen through, and where it is.
     fn eye(&mut self) -> Option<(Camera, Mat4)> {
         let world = &mut self.game.world;
@@ -1547,6 +1621,7 @@ impl Editor {
                     )))
                     .into()
             }
+            PLAYER => self.player_view(),
             ENTITIES => scrollable(
                 container(
                     tree(&self.entity_tree(None), self.chosen.as_ref())
@@ -2231,21 +2306,20 @@ impl App for Editor {
             self.game.host(device, queue, format, width, height);
             self.hosted = true;
         }
+        self.aim_player();
         self.game.update();
         let mut changed = self.listen();
         changed |= self.hear_runs();
+        if let Some((camera, shown)) = &mut self.player {
+            let frame = view_texture(&self.game.world, *camera);
+            if frame.as_ref() != shown.as_ref().map(|(texture, _)| texture) {
+                *shown = frame.map(pictured);
+                changed = true;
+            }
+        }
         let frame = frame_texture(&self.game.world);
         if frame.as_ref() != self.shown.as_ref().map(|(texture, _)| texture) {
-            self.shown = frame.map(|texture| {
-                // The window's canvas holds colours as they are stored, so it is given the
-                // frame's bytes and not what an sRGB view would make of them.
-                let view = texture.create_view(&wgpu::TextureViewDescriptor {
-                    format: Some(texture.format().remove_srgb_suffix()),
-                    ..Default::default()
-                });
-                let image = Image::from_texture(view, texture.width(), texture.height());
-                (texture, image)
-            });
+            self.shown = frame.map(pictured);
             changed = true;
         }
         // The circuit of rules follows the game's signals as they are now.
@@ -2279,6 +2353,12 @@ impl App for Editor {
                 if std::mem::replace(&mut self.size, size) != size && self.hosted {
                     self.game.host_resized(size.0, size.1);
                 }
+            }
+            Message::PlayerResized(bounds, scale) => {
+                self.player_size = (
+                    (bounds.w * scale).round() as u32,
+                    (bounds.h * scale).round() as u32,
+                );
             }
             Message::Input(event) => self.hear(event),
             Message::Pause => {

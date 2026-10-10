@@ -45,7 +45,7 @@ pub mod prelude {
         render::{
             AmbientLight, Animator, Camera, Color, DebugLines, DirectionalLight, Environment, Fog, Gait,
             GltfScene, Image, Leg, Limb, LodLevel, Lods, Material, Mesh, Mesh3d, NotShadowCaster,
-            Pattern, PostProcess, RayTracingSettings, Reach, ShadowSettings, ViewMode, VolumetricLight,
+            Pattern, PostProcess, RayTracingSettings, Reach, ShadowSettings, ViewMode, ViewTarget, VolumetricLight,
         },
         relation::{Related, Relation},
         signal::{

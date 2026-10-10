@@ -19,6 +19,7 @@ mod skin;
 mod taa;
 mod texture;
 mod view;
+mod views;
 mod volumetric;
 
 use glam::{Mat4, Vec2, Vec3, Vec4};
@@ -45,6 +46,8 @@ pub use screenshot::Screenshot;
 pub use shadow::{shadow_depth_state, CascadeData, ShadowMaps, ShadowSettings, CASCADES};
 pub use texture::TextureArray;
 pub use view::{ViewBinding, ViewMode};
+pub(crate) use views::draw as draw_extra_views;
+pub use views::{view_texture, ViewTarget};
 use probes::ProbeBaker;
 
 use crate::{
@@ -414,6 +417,9 @@ pub struct RenderFrame {
     /// Skinned meshes to pose this frame.
     pub(crate) skinned: Vec<skin::SkinJob>,
     pub has_camera: bool,
+    /// The camera this frame is seen through, when it is not the active one: a view with a
+    /// target of its own (see `views`).
+    pub(crate) through: Option<crate::ecs::Entity>,
 }
 
 /// A function that records draw calls. In the main pass the view is bound at group 0; in the
@@ -570,7 +576,7 @@ fn extract(
     environment: Res<Environment>,
     shadow_settings: Res<ShadowSettings>,
     post: Res<PostProcess>,
-    cameras: Query<(&Camera, &GlobalTransform)>,
+    cameras: Query<(&Camera, &GlobalTransform, Option<&ViewTarget>)>,
     lights: Query<(&DirectionalLight, &GlobalTransform)>,
     renderer: Res<MeshRenderer>,
     objects: Query<Drawable>,
@@ -597,9 +603,14 @@ fn extract(
         }
     }
 
-    let camera = cameras.iter().find(|(camera, _)| camera.active);
+    // A view of its own is seen through its camera; the frame, through the active camera
+    // that has no such view.
+    let camera = match frame.through {
+        Some(camera) => cameras.get(camera),
+        None => cameras.iter().find(|(camera, _, target)| camera.active && target.is_none()),
+    };
     frame.has_camera = camera.is_some();
-    if let Some((camera, transform)) = camera {
+    if let Some((camera, transform, _)) = camera {
         let view = transform.0.inverse();
         let projection = camera.projection(gpu.aspect_ratio());
         frame.unjittered_view_proj = projection * view;
@@ -1095,6 +1106,7 @@ impl Plugin for RenderPlugin {
             .add_systems(Stage::Prepare, prepare)
             .add_systems(Stage::Render, render);
         app.world.init_resource::<Overlays>();
+        app.world.init_resource::<views::ExtraViews>();
         app.world.init_resource::<DebugLines>();
         app.world.resource_mut::<Overlays>().0.push(debug_lines::draw);
         app.world.init_resource::<DrawFunctions>();

@@ -285,8 +285,31 @@ fn the_app_is_worked_by_clicking_on_it() {
             .save_png(format!("{path}.scene.png"), 1.0)
             .expect("the picture saved");
     }
+    // With the scene looked at from elsewhere, the Player view keeps the game's own camera
+    // in a picture of its own, the size of the room the panel has.
+    assert_eq!(window.app().player_picture(), None);
+    window
+        .app_mut()
+        .update(Message::Panel("Player view".to_owned()));
+    for _ in 0..4 {
+        window.frame(TICK, 1.0);
+    }
+    let (wide, tall) = window
+        .app()
+        .player_picture()
+        .expect("the game's camera draws a picture of its own");
+    assert!(wide > 100 && tall > 100, "a picture {wide} by {tall}");
+    if let Ok(path) = std::env::var("MIRA_EDITOR_SHOT") {
+        window
+            .save_png(format!("{path}.player.png"), 1.0)
+            .expect("the picture saved");
+    }
+    window
+        .app_mut()
+        .update(Message::Panel("Player view".to_owned()));
     window.app_mut().update(Message::SceneView(false));
     window.frame(TICK, 1.0);
+    assert_eq!(window.app().player_picture(), None);
 
     // The project's files are found, and a model among them is put in the scene: an entity
     // named for the file with the model's parts under it, taken back as one thing.
