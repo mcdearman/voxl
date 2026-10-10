@@ -1,13 +1,24 @@
 # mira
 
-A small game engine in Rust, built from scratch on winit and wgpu around a Bevy-style ECS,
-with voxel terrain.
+A game engine in Rust, built from scratch on winit and wgpu around a Bevy-style ECS, with
+voxel terrain. The engine is an app: a window, built with
+[Neo](https://github.com/mcdearman/neo), in which a game is shown, looked into and changed
+while it runs, with an AI agent beside it that can do the same.
 
 ```
-cargo run --release
+cargo run                         # the app, on a small scene to start from
+cargo run -- chase scoreboard     # the app, on a game made of plugins
 ```
 
-Click to capture the mouse, then: WASD / Space / Shift to fly (Ctrl to go fast), left click to
+The game is in one panel; around it are its entities as a tree, an inspector that edits the
+chosen one, its signals, and a conversation with an agent. See [docs/EDITOR.md](docs/EDITOR.md).
+Everything else here is an example, run by name:
+
+```
+cargo run --release --example voxel_world
+```
+
+In the voxel world, click to capture the mouse, then: WASD / Space / Shift to fly (Ctrl to go fast), left click to
 break a block, right click to place one (1-4 picks which), F to throw a ball, F2 for a
 screenshot, Esc to release the mouse and again to quit.
 
@@ -103,7 +114,7 @@ Where the engine is headed: [docs/ROADMAP.md](docs/ROADMAP.md).
 ```
 cargo test
 cargo +nightly miri test -p mira_ecs        # the ECS's unsafe code
-MIRA_SCREENSHOT=frame.png cargo run --release   # render a frame to a file and quit
+MIRA_SCREENSHOT=frame.png cargo run --release --example voxel_world   # render a frame to a file and quit
 MIRA_FRAME_TESTS=1 cargo test --test frames     # draw fixed scenes and compare with stored frames
 ```
 

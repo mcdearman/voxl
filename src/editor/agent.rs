@@ -12,7 +12,7 @@ use std::{
     sync::{mpsc::Sender, Arc, Mutex},
 };
 
-use mira::reflect::{json, Value};
+use crate::reflect::{json, Value};
 
 /// What an agent says back while it works on what it was asked.
 #[derive(Clone, Debug, PartialEq)]
