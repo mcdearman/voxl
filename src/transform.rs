@@ -118,6 +118,20 @@ impl GlobalTransform {
     }
 }
 
+/// What an entity is called, for people: in the app's tree, in logs, in what an agent is
+/// told. Nothing in the engine goes by it, and two entities may have the same one.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Reflect)]
+#[reflect(name = "mira.Name")]
+pub struct Name(pub String);
+
+impl Component for Name {}
+
+impl Name {
+    pub fn new(name: impl Into<String>) -> Self {
+        Self(name.into())
+    }
+}
+
 /// Makes this entity's `Transform` relative to another entity.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Reflect)]
 #[reflect(name = "mira.Parent")]
@@ -272,6 +286,7 @@ impl Plugin for TransformPlugin {
     fn build(&self, app: &mut App) {
         app.register_type::<Transform>()
             .register_type::<Parent>()
+            .register_type::<Name>()
             .register_type::<Interpolate>();
         if TRANSFORM_MATCHES_HEADER {
             app.world.export_component::<Transform>("mira.Transform");

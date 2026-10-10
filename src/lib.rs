@@ -55,7 +55,9 @@ pub mod prelude {
         },
         state::{in_state, NextState, State, States},
         time::{FixedTime, Time},
-        transform::{Children, GlobalTransform, HierarchyCommands, Interpolate, Parent, Transform},
+        transform::{
+            Children, GlobalTransform, HierarchyCommands, Interpolate, Name, Parent, Transform,
+        },
         voxel::{BlockId, BlockRegistry, ChunkViewer, VoxelPlugin, VoxelSettings, VoxelWorld},
         window::{Window, WindowFocused, WindowResized, WindowSettings},
     };
